@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <h1>AI Translator</h1>
+
+    <div class="section">
+      <label for="apiKey">OpenAI API Key</label>
+      <div class="key-row">
+        <input
+          type="password"
+          id="apiKey"
+          placeholder="sk-..."
+          autocomplete="off"
+        />
+        <button id="toggleKey" title="Show/Hide">👁</button>
+      </div>
+      <button id="saveKey" class="btn-primary">Save Key</button>
+    </div>
+
+    <div class="section">
+      <label>Translation Style</label>
+      <div class="radio-group">
+        <label class="radio-label">
+          <input type="radio" name="style" value="casual" checked />
+          <span>Casual</span>
+        </label>
+        <label class="radio-label">
+          <input type="radio" name="style" value="polite" />
+          <span>Polite</span>
+        </label>
+        <label class="radio-label">
+          <input type="radio" name="style" value="business" />
+          <span>Business</span>
+        </label>
+      </div>
+    </div>
+
+    <div class="section">
+      <label for="targetLang">Target Language</label>
+      <select id="targetLang" class="select-field">
+        <option value="vietnamese">Vietnamese (Tiếng Việt)</option>
+        <option value="english">English</option>
+        <option value="japanese">Japanese (日本語)</option>
+        <option value="chinese">Chinese (中文)</option>
+        <option value="korean">Korean (한국어)</option>
+        <option value="french">French (Français)</option>
+        <option value="german">German (Deutsch)</option>
+        <option value="spanish">Spanish (Español)</option>
+        <option value="portuguese">Portuguese (Português)</option>
+        <option value="russian">Russian (Русский)</option>
+        <option value="thai">Thai (ไทย)</option>
+        <option value="indonesian">Indonesian (Bahasa)</option>
+        <option value="italian">Italian (Italiano)</option>
+        <option value="dutch">Dutch (Nederlands)</option>
+        <option value="arabic">Arabic (العربية)</option>
+        <option value="hindi">Hindi (हिन्दी)</option>
+      </select>
+    </div>
+
+    <div id="status" class="status hidden"></div>
+
+    <p class="hint">Select text on any page to translate!</p>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
