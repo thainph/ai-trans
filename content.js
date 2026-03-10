@@ -3,6 +3,7 @@
   let popupHost = null;
   let shadowRoot = null;
   let currentSelection = "";
+  let lastDetectedSourceLang = null;
 
   function isExtensionValid() {
     try {
@@ -54,39 +55,61 @@
     return "english";
   }
 
+  // --- Helper: check if element is editable ---
+  function isEditableElement(el) {
+    if (!el) return false;
+    const tag = el.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA") return true;
+    if (el.isContentEditable) return true;
+    return false;
+  }
+
   // --- Trigger Button ---
-  function showTrigger(rect) {
+  function showTrigger(rect, anchorEl) {
     removeTrigger();
-    triggerBtn = document.createElement("button");
-    triggerBtn.className = "ai-translator-trigger";
-    triggerBtn.textContent = "T";
-    triggerBtn.title = "Translate";
+
+    const container = document.createElement("div");
+    container.className = "ai-translator-trigger-container";
+
+    // Always create the translate button
+    const tBtn = document.createElement("button");
+    tBtn.className = "ai-translator-trigger";
+    tBtn.textContent = "T";
+    tBtn.title = "Translate";
+    tBtn.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); });
+    tBtn.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); onTriggerClick(); });
+    container.appendChild(tBtn);
+
+    // Show reverse button if editable + has previous source lang
+    const showReverse = isEditableElement(anchorEl) && lastDetectedSourceLang !== null;
+    if (showReverse) {
+      const rBtn = document.createElement("button");
+      rBtn.className = "ai-translator-trigger ai-translator-trigger-reverse";
+      rBtn.textContent = "R";
+      rBtn.title = "Reverse Translate";
+      rBtn.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); });
+      rBtn.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); onReverseTriggerClick(); });
+      container.appendChild(rBtn);
+    }
 
     const scrollX = window.scrollX;
     const scrollY = window.scrollY;
     const triggerSize = 32;
+    const btnCount = showReverse ? 2 : 1;
+    const gapBetween = 4;
+    const totalWidth = triggerSize * btnCount + gapBetween * (btnCount - 1);
     const gap = 6;
     const spaceBelow = window.innerHeight - rect.bottom;
 
-    triggerBtn.style.left = `${rect.left + scrollX + rect.width / 2 - triggerSize / 2}px`;
+    container.style.left = `${rect.left + scrollX + rect.width / 2 - totalWidth / 2}px`;
     if (spaceBelow < triggerSize + gap) {
-      triggerBtn.style.top = `${rect.top + scrollY - triggerSize - gap}px`;
+      container.style.top = `${rect.top + scrollY - triggerSize - gap}px`;
     } else {
-      triggerBtn.style.top = `${rect.bottom + scrollY + gap}px`;
+      container.style.top = `${rect.bottom + scrollY + gap}px`;
     }
 
-    triggerBtn.addEventListener("mousedown", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-    });
-
-    triggerBtn.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      onTriggerClick();
-    });
-
-    document.body.appendChild(triggerBtn);
+    triggerBtn = container;
+    document.body.appendChild(container);
   }
 
   function removeTrigger() {
@@ -342,6 +365,7 @@
     removeTrigger();
 
     const sourceLang = detectLanguage(text);
+    lastDetectedSourceLang = sourceLang;
 
     // Use saved target language, fallback to vietnamese
     chrome.storage.sync.get({ targetLang: "vietnamese" }, (data) => {
@@ -355,6 +379,37 @@
     });
   }
 
+  function onReverseTriggerClick() {
+    if (!isExtensionValid()) { cleanup(); return; }
+    const text = currentSelection;
+    if (!text) return;
+
+    const sel = window.getSelection();
+    if (!sel.rangeCount) return;
+    const rect = sel.getRangeAt(0).getBoundingClientRect();
+
+    removeTrigger();
+
+    const sourceLang = detectLanguage(text);
+    let targetLang = lastDetectedSourceLang;
+
+    // If reverse target equals detected source, fall back to saved targetLang
+    if (targetLang === sourceLang) {
+      chrome.storage.sync.get({ targetLang: "vietnamese" }, (data) => {
+        let fallback = data.targetLang;
+        if (fallback === sourceLang) {
+          fallback = sourceLang === "english" ? "vietnamese" : "english";
+        }
+        createPopup(rect, sourceLang, fallback);
+        translate(text, sourceLang, fallback);
+      });
+      return;
+    }
+
+    createPopup(rect, sourceLang, targetLang);
+    translate(text, sourceLang, targetLang);
+  }
+
   // --- Selection Listener ---
   document.addEventListener("mouseup", (e) => {
     const target = e.target;
@@ -362,6 +417,7 @@
     if (popupHost && (popupHost === target || popupHost.contains(target))) return;
     if (target.closest?.("#ai-translator-popup-host")) return;
     if (target.closest?.(".ai-translator-trigger")) return;
+    if (target.closest?.(".ai-translator-trigger-container")) return;
 
     setTimeout(() => {
       const sel = window.getSelection();
@@ -377,7 +433,10 @@
         const range = sel.getRangeAt(0);
         const rect = range.getBoundingClientRect();
         if (rect.width === 0 && rect.height === 0) return;
-        showTrigger(rect);
+        const anchorEl = sel.anchorNode?.nodeType === Node.ELEMENT_NODE
+          ? sel.anchorNode
+          : sel.anchorNode?.parentElement;
+        showTrigger(rect, anchorEl);
       } catch (err) {
         // selection lost
       }

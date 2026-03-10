@@ -1,6 +1,11 @@
-.ai-translator-trigger {
+.ai-translator-trigger-container {
   position: absolute;
   z-index: 2147483647;
+  display: flex;
+  gap: 4px;
+}
+
+.ai-translator-trigger {
   width: 32px;
   height: 32px;
   border-radius: 50%;
@@ -21,4 +26,12 @@
 .ai-translator-trigger:hover {
   transform: scale(1.1);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.ai-translator-trigger-reverse {
+  background: #7c3aed;
+}
+
+.ai-translator-trigger-reverse:hover {
+  background: #6d28d9;
 }
