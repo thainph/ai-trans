@@ -1,18 +1,30 @@
 {
   "manifest_version": 3,
   "name": "AI Translator",
-  "version": "1.0.0",
-  "description": "Translate selected text using AI - supports English, Japanese, and Vietnamese",
-  "permissions": ["storage", "activeTab"],
-  "host_permissions": ["https://api.openai.com/*"],
+  "version": "1.0.1",
+  "description": "Translate selected text using AI",
+  "permissions": [
+    "storage",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://api.openai.com/*"
+  ],
   "background": {
     "service_worker": "background.js"
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "js": ["content.js"],
-      "css": ["content.css"]
+      "matches": [
+        "<all_urls>"
+      ],
+      "all_frames": true,
+      "js": [
+        "content.js"
+      ],
+      "css": [
+        "content.css"
+      ]
     }
   ],
   "action": {

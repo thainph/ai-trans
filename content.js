@@ -4,6 +4,19 @@
   let shadowRoot = null;
   let currentSelection = "";
 
+  function isExtensionValid() {
+    try {
+      return !!chrome.runtime?.id;
+    } catch {
+      return false;
+    }
+  }
+
+  function cleanup() {
+    removeTrigger();
+    removePopup();
+  }
+
   // --- Supported Languages ---
   const LANGUAGES = {
     english:    { label: "EN",  name: "English" },
@@ -33,11 +46,11 @@
     if (/[\u0900-\u097F]/.test(text)) return "hindi";
     if (/[\u0600-\u06FF]/.test(text)) return "arabic";
     if (/[\u0400-\u04FF]/.test(text)) return "russian";
-    if (/[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]/i.test(text)) return "vietnamese";
-    if (/[àâæçéèêëïîôœùûüÿ]/i.test(text)) return "french";
+    if (/[ạảầấậẩẫăằắặẳẵẹẻềếệểễịỉĩọỏồốộổỗơờớợởỡụủưừứựửữỵỷỹđ]/i.test(text)) return "vietnamese";
+    if (/[æœïÿ]/i.test(text)) return "french";
     if (/[äöüß]/i.test(text)) return "german";
-    if (/[ñ¿¡áéíóúü]/i.test(text)) return "spanish";
-    if (/[ãõçáéíóú]/i.test(text)) return "portuguese";
+    if (/[ñ¿¡]/i.test(text)) return "spanish";
+    if (/[ãõ]/i.test(text) && !/[ạảậẩẫăằắặẳẵẹẻệểễịỉĩọỏộổỗơờớợởỡụủưừứựửữỵỷỹđ]/i.test(text)) return "portuguese";
     return "english";
   }
 
@@ -51,8 +64,16 @@
 
     const scrollX = window.scrollX;
     const scrollY = window.scrollY;
-    triggerBtn.style.left = `${rect.left + scrollX + rect.width / 2 - 16}px`;
-    triggerBtn.style.top = `${rect.bottom + scrollY + 6}px`;
+    const triggerSize = 32;
+    const gap = 6;
+    const spaceBelow = window.innerHeight - rect.bottom;
+
+    triggerBtn.style.left = `${rect.left + scrollX + rect.width / 2 - triggerSize / 2}px`;
+    if (spaceBelow < triggerSize + gap) {
+      triggerBtn.style.top = `${rect.top + scrollY - triggerSize - gap}px`;
+    } else {
+      triggerBtn.style.top = `${rect.bottom + scrollY + gap}px`;
+    }
 
     triggerBtn.addEventListener("mousedown", (e) => {
       e.preventDefault();
@@ -87,6 +108,7 @@
 
   // --- Popup (Shadow DOM) ---
   function createPopup(rect, sourceLang, targetLang) {
+    if (!isExtensionValid()) { cleanup(); return; }
     removePopup();
 
     popupHost = document.createElement("div");
@@ -97,6 +119,8 @@
     shadowRoot.innerHTML = `
       <style>${getPopupCSS()}</style>
       <div class="popup">
+        <div class="resize-handle resize-left"></div>
+        <div class="resize-handle resize-right"></div>
         <div class="header">
           <div class="lang-pair">
             <span class="lang-badge source">${LANGUAGES[sourceLang]?.label || "?"}</span>
@@ -119,27 +143,64 @@
       </div>
     `;
 
+    // Apply saved width
+    const popup = shadowRoot.querySelector(".popup");
+    chrome.storage.sync.get({ popupWidth: 340 }, (data) => {
+      popup.style.setProperty("--popup-width", `${data.popupWidth}px`);
+    });
+
     // Position popup
     const scrollX = window.scrollX;
     const scrollY = window.scrollY;
-    let top = rect.bottom + scrollY + 10;
-    let left = rect.left + scrollX;
-
     const popupWidth = 340;
+    const gap = 10;
+    const headerFooterHeight = 90; // approximate header + footer height
+    const minResultHeight = 80;
+
+    let left = rect.left + scrollX;
     if (left + popupWidth > window.innerWidth + scrollX) {
-      left = window.innerWidth + scrollX - popupWidth - 10;
+      left = window.innerWidth + scrollX - popupWidth - gap;
     }
-    if (left < scrollX) left = scrollX + 10;
+    if (left < scrollX) left = scrollX + gap;
+
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const spaceAbove = rect.top;
+    const showAbove = spaceBelow < headerFooterHeight + minResultHeight + gap && spaceAbove > spaceBelow;
+    const availableSpace = showAbove ? spaceAbove : spaceBelow;
+    const maxHeight = Math.max(availableSpace - gap * 2, headerFooterHeight + minResultHeight);
+
+    // Set dynamic max-height via CSS variable
+    popup.style.setProperty("--popup-max-height", `${maxHeight}px`);
+
+    let top;
+    if (showAbove) {
+      top = rect.top + scrollY - maxHeight - gap;
+      if (top < scrollY) top = scrollY + gap;
+    } else {
+      top = rect.bottom + scrollY + gap;
+    }
 
     popupHost.style.left = `${left}px`;
     popupHost.style.top = `${top}px`;
 
     document.body.appendChild(popupHost);
 
+    // Adjust position after render using actual height
+    requestAnimationFrame(() => {
+      if (!shadowRoot) return;
+      const popupEl = shadowRoot.querySelector(".popup");
+      if (!popupEl) return;
+      const actualHeight = popupEl.offsetHeight;
+      if (showAbove) {
+        const adjustedTop = rect.top + scrollY - actualHeight - gap;
+        popupHost.style.top = `${Math.max(adjustedTop, scrollY + gap)}px`;
+      }
+    });
+
     // Load saved style
-    chrome.storage.sync.get(["style"], (data) => {
+    chrome.storage.sync.get({ style: "casual" }, (data) => {
       const select = shadowRoot.getElementById("styleSelect");
-      if (data.style && select) select.value = data.style;
+      if (select) select.value = data.style;
     });
 
     // Event listeners
@@ -166,6 +227,50 @@
       chrome.storage.sync.set({ style: e.target.value });
       const targetSel = shadowRoot.getElementById("targetSelect");
       translate(currentSelection, sourceLang, targetSel.value);
+    });
+
+    // Resize handles
+    setupResizeHandle(shadowRoot.querySelector(".resize-right"), "right");
+    setupResizeHandle(shadowRoot.querySelector(".resize-left"), "left");
+  }
+
+  function setupResizeHandle(handle, side) {
+    const minWidth = 240;
+    const maxWidth = 600;
+
+    handle.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const popup = shadowRoot.querySelector(".popup");
+      const startX = e.clientX;
+      const startWidth = popup.offsetWidth;
+      const startLeft = popupHost.offsetLeft;
+
+      function onMouseMove(e) {
+        let delta = e.clientX - startX;
+        let newWidth;
+
+        if (side === "right") {
+          newWidth = Math.min(maxWidth, Math.max(minWidth, startWidth + delta));
+        } else {
+          newWidth = Math.min(maxWidth, Math.max(minWidth, startWidth - delta));
+          popupHost.style.left = `${startLeft + (startWidth - newWidth)}px`;
+        }
+
+        popup.style.setProperty("--popup-width", `${newWidth}px`);
+      }
+
+      function onMouseUp() {
+        document.removeEventListener("mousemove", onMouseMove);
+        document.removeEventListener("mouseup", onMouseUp);
+        // Save width preference
+        const finalWidth = popup.offsetWidth;
+        chrome.storage.sync.set({ popupWidth: finalWidth });
+      }
+
+      document.addEventListener("mousemove", onMouseMove);
+      document.addEventListener("mouseup", onMouseUp);
     });
   }
 
@@ -200,13 +305,14 @@
   // --- Translation ---
   function translate(text, sourceLang, targetLang) {
     if (!shadowRoot) return;
+    if (!isExtensionValid()) { cleanup(); return; }
     const resultEl = shadowRoot.getElementById("result");
     resultEl.innerHTML = `<div class="loading"><span class="spinner"></span> Translating...</div>`;
     const copyBtn = shadowRoot.getElementById("copyBtn");
     copyBtn.disabled = true;
 
-    chrome.storage.sync.get(["style"], (data) => {
-      const style = data.style || "casual";
+    chrome.storage.sync.get({ style: "casual" }, (data) => {
+      const style = data.style;
       chrome.runtime.sendMessage(
         { action: "translate", text, sourceLang, targetLang, style },
         (response) => {
@@ -225,6 +331,7 @@
   }
 
   function onTriggerClick() {
+    if (!isExtensionValid()) { cleanup(); return; }
     const text = currentSelection;
     if (!text) return;
 
@@ -237,8 +344,8 @@
     const sourceLang = detectLanguage(text);
 
     // Use saved target language, fallback to vietnamese
-    chrome.storage.sync.get(["targetLang"], (data) => {
-      let targetLang = data.targetLang || "vietnamese";
+    chrome.storage.sync.get({ targetLang: "vietnamese" }, (data) => {
+      let targetLang = data.targetLang;
       // If source and target are the same, switch to english
       if (targetLang === sourceLang) {
         targetLang = sourceLang === "english" ? "vietnamese" : "english";
@@ -277,24 +384,17 @@
     }, 50);
   });
 
-  // Dismiss popup on click outside (but not trigger)
-  document.addEventListener("mousedown", (e) => {
-    const target = e.target;
-    if (target === triggerBtn || triggerBtn?.contains(target)) return;
-    if (target.closest?.(".ai-translator-trigger")) return;
-
-    if (popupHost && popupHost !== target && !popupHost.contains(target) && !target.closest?.("#ai-translator-popup-host")) {
-      removePopup();
-    }
-  });
-
   // --- Popup CSS ---
   function getPopupCSS() {
     return `
       * { margin: 0; padding: 0; box-sizing: border-box; }
 
       .popup {
-        width: 340px;
+        width: var(--popup-width, 340px);
+        max-height: var(--popup-max-height, 70vh);
+        display: flex;
+        flex-direction: column;
+        position: relative;
         background: #ffffff;
         border: 1px solid #e5e7eb;
         border-radius: 10px;
@@ -305,6 +405,28 @@
         overflow: hidden;
       }
 
+      .resize-handle {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 6px;
+        cursor: col-resize;
+        z-index: 10;
+      }
+
+      .resize-right {
+        right: -3px;
+      }
+
+      .resize-left {
+        left: -3px;
+      }
+
+      .resize-handle:hover {
+        background: rgba(37, 99, 235, 0.15);
+        border-radius: 3px;
+      }
+
       .header {
         display: flex;
         align-items: center;
@@ -312,6 +434,7 @@
         padding: 10px 14px;
         background: #f8fafc;
         border-bottom: 1px solid #e5e7eb;
+        flex-shrink: 0;
       }
 
       .lang-pair {
@@ -373,7 +496,7 @@
       .result {
         padding: 14px;
         min-height: 50px;
-        max-height: 200px;
+        flex: 1 1 auto;
         overflow-y: auto;
         line-height: 1.6;
         white-space: pre-wrap;
@@ -413,6 +536,7 @@
         padding: 8px 14px;
         border-top: 1px solid #e5e7eb;
         background: #f8fafc;
+        flex-shrink: 0;
       }
 
       .copy-btn {

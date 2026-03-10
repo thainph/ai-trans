@@ -5,15 +5,16 @@ const statusEl = document.getElementById("status");
 const styleRadios = document.querySelectorAll('input[name="style"]');
 const targetLangSelect = document.getElementById("targetLang");
 
-// Load saved settings
-chrome.storage.sync.get(["apiKey", "style", "targetLang"], (data) => {
-  if (data.apiKey) apiKeyInput.value = data.apiKey;
-  if (data.style) {
+// Load saved settings with defaults
+chrome.storage.sync.get(
+  { apiKey: "", style: "casual", targetLang: "vietnamese" },
+  (data) => {
+    if (data.apiKey) apiKeyInput.value = data.apiKey;
     const radio = document.querySelector(`input[name="style"][value="${data.style}"]`);
     if (radio) radio.checked = true;
+    targetLangSelect.value = data.targetLang;
   }
-  if (data.targetLang) targetLangSelect.value = data.targetLang;
-});
+);
 
 // Toggle API key visibility
 toggleKeyBtn.addEventListener("click", () => {

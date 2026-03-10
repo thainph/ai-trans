@@ -1,3 +1,30 @@
+// --- Default Settings ---
+const DEFAULT_SETTINGS = {
+  targetLang: "vietnamese",
+  style: "casual",
+  popupWidth: 340,
+};
+
+// Initialize defaults on first install
+chrome.runtime.onInstalled.addListener((details) => {
+  if (details.reason === "install") {
+    chrome.storage.sync.set(DEFAULT_SETTINGS);
+  } else {
+    // On update, fill in any missing keys without overwriting existing values
+    chrome.storage.sync.get(Object.keys(DEFAULT_SETTINGS), (data) => {
+      const missing = {};
+      for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) {
+        if (data[key] === undefined || data[key] === null) {
+          missing[key] = value;
+        }
+      }
+      if (Object.keys(missing).length > 0) {
+        chrome.storage.sync.set(missing);
+      }
+    });
+  }
+});
+
 const STYLE_PROMPTS = {
   casual: "Use a casual, friendly, conversational tone",
   polite: "Use a polite, respectful, and formal tone",
