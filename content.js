@@ -73,7 +73,7 @@
 
     // Always create the translate button
     const tBtn = document.createElement("button");
-    tBtn.className = "ai-translator-trigger";
+    tBtn.className = "ai-translator-trigger ai-translator-trigger-translate";
     tBtn.textContent = "T";
     tBtn.title = "Translate";
     tBtn.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); });
@@ -90,20 +90,21 @@
       rBtn.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); });
       rBtn.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); onReverseTriggerClick(); });
       container.appendChild(rBtn);
+    } else {
+      container.classList.add("single");
     }
 
     const scrollX = window.scrollX;
     const scrollY = window.scrollY;
-    const triggerSize = 32;
-    const btnCount = showReverse ? 2 : 1;
-    const gapBetween = 4;
-    const totalWidth = triggerSize * btnCount + gapBetween * (btnCount - 1);
+    const btnSize = 34;
+    const totalWidth = showReverse ? btnSize * 2 : btnSize;
+    const containerHeight = btnSize;
     const gap = 6;
     const spaceBelow = window.innerHeight - rect.bottom;
 
     container.style.left = `${rect.left + scrollX + rect.width / 2 - totalWidth / 2}px`;
-    if (spaceBelow < triggerSize + gap) {
-      container.style.top = `${rect.top + scrollY - triggerSize - gap}px`;
+    if (spaceBelow < containerHeight + gap) {
+      container.style.top = `${rect.top + scrollY - containerHeight - gap}px`;
     } else {
       container.style.top = `${rect.bottom + scrollY + gap}px`;
     }
