@@ -4,8 +4,7 @@
   "version": "1.0.1",
   "description": "Translate selected text using AI",
   "permissions": [
-    "storage",
-    "activeTab"
+    "storage"
   ],
   "host_permissions": [
     "https://api.openai.com/*"
