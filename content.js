@@ -256,6 +256,9 @@
     // Resize handles
     setupResizeHandle(shadowRoot.querySelector(".resize-right"), "right");
     setupResizeHandle(shadowRoot.querySelector(".resize-left"), "left");
+
+    // Drag handle (header)
+    setupDragHandle(shadowRoot.querySelector(".header"));
   }
 
   function setupResizeHandle(handle, side) {
@@ -291,6 +294,38 @@
         // Save width preference
         const finalWidth = popup.offsetWidth;
         chrome.storage.sync.set({ popupWidth: finalWidth });
+      }
+
+      document.addEventListener("mousemove", onMouseMove);
+      document.addEventListener("mouseup", onMouseUp);
+    });
+  }
+
+  function setupDragHandle(header) {
+    header.addEventListener("mousedown", (e) => {
+      // Don't drag when clicking on buttons or selects
+      if (e.target.closest("button, select")) return;
+      e.preventDefault();
+      e.stopPropagation();
+
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const startLeft = popupHost.offsetLeft;
+      const startTop = popupHost.offsetTop;
+
+      header.style.cursor = "grabbing";
+
+      function onMouseMove(e) {
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+        popupHost.style.left = `${startLeft + dx}px`;
+        popupHost.style.top = `${startTop + dy}px`;
+      }
+
+      function onMouseUp() {
+        document.removeEventListener("mousemove", onMouseMove);
+        document.removeEventListener("mouseup", onMouseUp);
+        header.style.cursor = "";
       }
 
       document.addEventListener("mousemove", onMouseMove);
@@ -495,6 +530,12 @@
         background: #f8fafc;
         border-bottom: 1px solid #e5e7eb;
         flex-shrink: 0;
+        cursor: grab;
+        user-select: none;
+      }
+
+      .header:active {
+        cursor: grabbing;
       }
 
       .lang-pair {
