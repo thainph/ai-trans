@@ -8,7 +8,15 @@
     <h1>AI Translator</h1>
 
     <div class="section">
-      <label for="apiKey">OpenAI API Key</label>
+      <label>Provider</label>
+      <div class="provider-tabs">
+        <button class="provider-tab active" data-provider="openai">OpenAI</button>
+        <button class="provider-tab" data-provider="ollama">Ollama</button>
+      </div>
+    </div>
+
+    <div id="openaiSettings" class="section">
+      <label for="apiKey">API Key</label>
       <div class="key-row">
         <input
           type="password"
@@ -18,7 +26,35 @@
         />
         <button id="toggleKey" title="Show/Hide">👁</button>
       </div>
-      <button id="saveKey" class="btn-primary">Save Key</button>
+      <label for="openaiModel">Model</label>
+      <select id="openaiModel" class="select-field">
+        <option value="gpt-4o-mini">gpt-4o-mini</option>
+        <option value="gpt-4o">gpt-4o</option>
+        <option value="gpt-4-turbo">gpt-4-turbo</option>
+        <option value="gpt-4.1-nano">gpt-4.1-nano</option>
+        <option value="gpt-4.1-mini">gpt-4.1-mini</option>
+        <option value="gpt-4.1">gpt-4.1</option>
+        <option value="gpt-3.5-turbo">gpt-3.5-turbo</option>
+      </select>
+      <button id="saveKey" class="btn-primary" style="margin-top: 8px">Save</button>
+    </div>
+
+    <div id="ollamaSettings" class="section hidden">
+      <label for="ollamaUrl">Ollama URL</label>
+      <input
+        type="text"
+        id="ollamaUrl"
+        class="input-field"
+        placeholder="http://localhost:11434"
+      />
+      <label for="ollamaModel" style="margin-top: 8px">Model</label>
+      <div class="model-row">
+        <select id="ollamaModel" class="select-field">
+          <option value="">-- Load models --</option>
+        </select>
+        <button id="refreshOllama" class="btn-icon" title="Refresh models">&#x21bb;</button>
+      </div>
+      <button id="saveOllama" class="btn-primary" style="margin-top: 8px">Save</button>
     </div>
 
     <div class="section">
@@ -59,6 +95,10 @@
         <option value="arabic">Arabic (العربية)</option>
         <option value="hindi">Hindi (हिन्दी)</option>
       </select>
+    </div>
+
+    <div class="section">
+      <button id="translatePage" class="btn-translate-page">Translate This Page</button>
     </div>
 
     <div id="status" class="status hidden"></div>

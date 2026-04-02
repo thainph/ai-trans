@@ -58,6 +58,81 @@ label {
   font-size: 14px;
 }
 
+.provider-tabs {
+  display: flex;
+  gap: 0;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.provider-tab {
+  flex: 1;
+  padding: 7px;
+  border: none;
+  background: #f9fafb;
+  font-size: 13px;
+  font-weight: 500;
+  color: #6b7280;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.provider-tab + .provider-tab {
+  border-left: 1px solid #d1d5db;
+}
+
+.provider-tab.active {
+  background: #2563eb;
+  color: white;
+}
+
+.provider-tab:hover:not(.active) {
+  background: #f3f4f6;
+}
+
+.input-field {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 13px;
+  outline: none;
+  margin-top: 4px;
+}
+
+.input-field:focus {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+}
+
+.model-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.model-row .select-field {
+  flex: 1;
+  margin-top: 0;
+}
+
+.btn-icon {
+  padding: 6px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #f9fafb;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  color: #374151;
+  transition: background 0.15s;
+}
+
+.btn-icon:hover {
+  background: #e5e7eb;
+}
+
 .btn-primary {
   width: 100%;
   padding: 8px;
@@ -130,6 +205,36 @@ label {
 .select-field:focus {
   border-color: #2563eb;
   box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+}
+
+.btn-translate-page {
+  width: 100%;
+  padding: 10px;
+  background: #16a34a;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.btn-translate-page:hover {
+  background: #15803d;
+}
+
+.btn-translate-page:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.btn-translate-page.revert {
+  background: #ea580c;
+}
+
+.btn-translate-page.revert:hover {
+  background: #c2410c;
 }
 
 .hidden {

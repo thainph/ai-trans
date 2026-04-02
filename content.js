@@ -5,6 +5,17 @@
   let currentSelection = "";
   let lastDetectedSourceLang = null;
 
+  // --- Full Page Translation State ---
+  let pageTranslationState = "idle"; // "idle" | "translating" | "translated"
+  const originalTexts = new Map();
+  let translationCancelled = false;
+  let loadingHost = null;
+  let loadingShadow = null;
+  let domObserver = null;
+  let pendingNewNodes = [];
+  let pendingTimer = null;
+  let lastTranslationLangs = null; // { sourceLang, targetLang, style }
+
   function isExtensionValid() {
     try {
       return !!chrome.runtime?.id;
@@ -477,6 +488,357 @@
         // selection lost
       }
     }, 50);
+  });
+
+  // --- Full Page Translation ---
+  const SKIP_TAGS = new Set([
+    "SCRIPT", "STYLE", "NOSCRIPT", "SVG", "CANVAS",
+    "TEXTAREA", "INPUT", "SELECT", "CODE", "PRE", "KBD", "SAMP",
+  ]);
+
+  function collectTranslatableTextNodes() {
+    const nodes = [];
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        const parent = node.parentElement;
+        if (!parent) return NodeFilter.FILTER_REJECT;
+        if (SKIP_TAGS.has(parent.tagName)) return NodeFilter.FILTER_REJECT;
+        if (parent.isContentEditable) return NodeFilter.FILTER_REJECT;
+        if (parent.closest("#ai-translator-popup-host, #ai-translator-loading-host, .ai-translator-trigger-container")) {
+          return NodeFilter.FILTER_REJECT;
+        }
+        const text = node.textContent.trim();
+        if (!text || text.length < 2) return NodeFilter.FILTER_REJECT;
+        if (!needsTranslation(text)) return NodeFilter.FILTER_REJECT;
+        const style = getComputedStyle(parent);
+        if (style.display === "none" || style.visibility === "hidden") return NodeFilter.FILTER_REJECT;
+        return NodeFilter.FILTER_ACCEPT;
+      },
+    });
+    while (walker.nextNode()) {
+      nodes.push(walker.currentNode);
+    }
+    return nodes;
+  }
+
+  // Skip text that doesn't need translation
+  function needsTranslation(text) {
+    if (/^\d[\d\s.,:%/\-+()]*$/.test(text)) return false;  // numbers only
+    if (/^https?:\/\/\S+$/.test(text)) return false;        // URLs
+    if (/^[^a-zA-Z\u00C0-\u024F\u0400-\u04FF\u0600-\u06FF\u0900-\u097F\u0E00-\u0E7F\u3040-\u30FF\u4E00-\u9FFF\uAC00-\uD7AF]+$/.test(text)) return false; // no letters at all
+    return true;
+  }
+
+  function createBatches(textNodes, maxChars = 3000) {
+    const batches = [];
+    let current = [];
+    let currentLen = 0;
+    for (const node of textNodes) {
+      const text = node.textContent.trim();
+      if (currentLen + text.length > maxChars && current.length > 0) {
+        batches.push(current);
+        current = [];
+        currentLen = 0;
+      }
+      current.push(node);
+      currentLen += text.length;
+    }
+    if (current.length > 0) batches.push(current);
+    return batches;
+  }
+
+  async function translatePage() {
+    if (!isExtensionValid()) return;
+    if (pageTranslationState === "translating") return;
+
+    const settings = await new Promise((r) =>
+      chrome.storage.sync.get({ apiKey: "", targetLang: "vietnamese", style: "casual", provider: "openai" }, r)
+    );
+    if (settings.provider !== "ollama" && !settings.apiKey) {
+      showLoadingError("No API key set. Open extension settings.");
+      return;
+    }
+
+    pageTranslationState = "translating";
+    translationCancelled = false;
+    originalTexts.clear();
+    showLoading();
+
+    const textNodes = collectTranslatableTextNodes();
+    if (textNodes.length === 0) {
+      pageTranslationState = "idle";
+      hideLoading();
+      return;
+    }
+
+    const batches = createBatches(textNodes);
+    const totalBatches = batches.length;
+
+    // Detect source language from page sample
+    const sampleText = textNodes.slice(0, 10).map((n) => n.textContent).join(" ");
+    let sourceLang = detectLanguage(sampleText);
+    let targetLang = settings.targetLang;
+    if (targetLang === sourceLang) {
+      targetLang = sourceLang === "english" ? "vietnamese" : "english";
+    }
+
+    const CONCURRENCY = settings.provider === "ollama" ? 2 : 5;
+    let completed = 0;
+    let failed = false;
+
+    function translateBatch(batch) {
+      return new Promise((resolve, reject) => {
+        const texts = batch.map((n) => n.textContent.trim());
+        chrome.runtime.sendMessage(
+          { action: "translateBatch", texts, sourceLang, targetLang, style: settings.style },
+          (response) => {
+            if (chrome.runtime.lastError) {
+              reject(new Error(chrome.runtime.lastError.message));
+              return;
+            }
+            if (response && response.success) {
+              resolve(response.translations);
+            } else {
+              reject(new Error(response?.error || "Translation failed"));
+            }
+          }
+        );
+      });
+    }
+
+    function applyBatchResult(batch, result) {
+      for (let j = 0; j < batch.length; j++) {
+        const node = batch[j];
+        if (!originalTexts.has(node)) {
+          originalTexts.set(node, node.textContent);
+        }
+        if (result[j]) {
+          node.textContent = result[j];
+        }
+      }
+    }
+
+    // Process batches with concurrency limit
+    for (let i = 0; i < batches.length; i += CONCURRENCY) {
+      if (translationCancelled || failed) break;
+
+      const chunk = batches.slice(i, i + CONCURRENCY);
+      const promises = chunk.map((batch) => translateBatch(batch));
+
+      try {
+        const results = await Promise.all(promises);
+        results.forEach((result, idx) => applyBatchResult(chunk[idx], result));
+        completed += chunk.length;
+        showLoading(`Translating... ${completed}/${totalBatches}`);
+      } catch (err) {
+        console.warn("AI Translator: batch failed", err.message);
+        showLoadingError(`Error: ${err.message}`);
+        pageTranslationState = originalTexts.size > 0 ? "translated" : "idle";
+        failed = true;
+      }
+    }
+
+    if (failed) return;
+
+    hideLoading();
+
+    if (translationCancelled) {
+      pageTranslationState = originalTexts.size > 0 ? "translated" : "idle";
+    } else {
+      pageTranslationState = "translated";
+    }
+
+    if (pageTranslationState === "translated") {
+      lastTranslationLangs = { sourceLang, targetLang, style: settings.style };
+      startDomObserver();
+    }
+  }
+
+  function revertPageTranslation() {
+    stopDomObserver();
+    for (const [node, original] of originalTexts) {
+      try {
+        node.textContent = original;
+      } catch {
+        // Node may have been removed from DOM
+      }
+    }
+    originalTexts.clear();
+    lastTranslationLangs = null;
+    pageTranslationState = "idle";
+  }
+
+  function cancelPageTranslation() {
+    translationCancelled = true;
+  }
+
+  // --- MutationObserver for dynamic content ---
+  function isTranslatableTextNode(node) {
+    const parent = node.parentElement;
+    if (!parent) return false;
+    if (SKIP_TAGS.has(parent.tagName)) return false;
+    if (parent.isContentEditable) return false;
+    if (parent.closest("#ai-translator-popup-host, #ai-translator-loading-host, .ai-translator-trigger-container")) return false;
+    const text = node.textContent.trim();
+    if (text.length < 2) return false;
+    if (!needsTranslation(text)) return false;
+    if (originalTexts.has(node)) return false;
+    return true;
+  }
+
+  function collectNewTextNodes(root) {
+    const nodes = [];
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        return isTranslatableTextNode(node) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+      },
+    });
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+    return nodes;
+  }
+
+  function startDomObserver() {
+    if (domObserver) return;
+    domObserver = new MutationObserver((mutations) => {
+      if (pageTranslationState !== "translated") return;
+
+      for (const mutation of mutations) {
+        for (const added of mutation.addedNodes) {
+          if (added.nodeType === Node.TEXT_NODE) {
+            if (isTranslatableTextNode(added)) pendingNewNodes.push(added);
+          } else if (added.nodeType === Node.ELEMENT_NODE) {
+            pendingNewNodes.push(...collectNewTextNodes(added));
+          }
+        }
+      }
+
+      if (pendingNewNodes.length > 0 && !pendingTimer) {
+        pendingTimer = setTimeout(flushPendingNodes, 500);
+      }
+    });
+
+    domObserver.observe(document.body, { childList: true, subtree: true });
+  }
+
+  function stopDomObserver() {
+    if (domObserver) { domObserver.disconnect(); domObserver = null; }
+    pendingNewNodes = [];
+    clearTimeout(pendingTimer);
+    pendingTimer = null;
+  }
+
+  async function flushPendingNodes() {
+    pendingTimer = null;
+    const nodes = pendingNewNodes.filter((n) => n.isConnected && !originalTexts.has(n) && n.textContent.trim().length >= 2);
+    pendingNewNodes = [];
+    if (nodes.length === 0 || !lastTranslationLangs || !isExtensionValid()) return;
+
+    const { sourceLang, targetLang, style } = lastTranslationLangs;
+    const batches = createBatches(nodes);
+
+    for (const batch of batches) {
+      const texts = batch.map((n) => n.textContent.trim());
+      try {
+        const result = await new Promise((resolve, reject) => {
+          chrome.runtime.sendMessage(
+            { action: "translateBatch", texts, sourceLang, targetLang, style },
+            (response) => {
+              if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
+              if (response?.success) resolve(response.translations);
+              else reject(new Error(response?.error || "Translation failed"));
+            }
+          );
+        });
+        for (let j = 0; j < batch.length; j++) {
+          if (!originalTexts.has(batch[j])) originalTexts.set(batch[j], batch[j].textContent);
+          if (result[j]) batch[j].textContent = result[j];
+        }
+      } catch (err) {
+        console.warn("AI Translator: dynamic translate failed", err.message);
+      }
+    }
+  }
+
+  // --- Loading Indicator ---
+  function showLoading(progress) {
+    if (!loadingHost) {
+      loadingHost = document.createElement("div");
+      loadingHost.id = "ai-translator-loading-host";
+      loadingShadow = loadingHost.attachShadow({ mode: "open" });
+      loadingShadow.innerHTML = `
+        <style>
+          .loading-bar {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 2147483647;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 14px;
+            background: #1e293b;
+            color: #e2e8f0;
+            border-radius: 20px;
+            font-family: system-ui, -apple-system, sans-serif;
+            font-size: 13px;
+            font-weight: 500;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.25), 0 0 0 1px rgba(255,255,255,0.08);
+            animation: fade-in 0.2s ease-out;
+          }
+          .spinner {
+            width: 14px;
+            height: 14px;
+            border: 2px solid rgba(255,255,255,0.2);
+            border-top-color: #60a5fa;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+          }
+          @keyframes spin { to { transform: rotate(360deg); } }
+          @keyframes fade-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+        </style>
+        <div class="loading-bar">
+          <div class="spinner"></div>
+          <span id="loadingText">Translating...</span>
+        </div>
+      `;
+      document.body.appendChild(loadingHost);
+    }
+    const text = loadingShadow.getElementById("loadingText");
+    if (text) text.textContent = progress || "Translating...";
+  }
+
+  function hideLoading() {
+    if (loadingHost) {
+      loadingHost.remove();
+      loadingHost = null;
+      loadingShadow = null;
+    }
+  }
+
+  function showLoadingError(msg) {
+    if (!loadingHost) {
+      showLoading();
+    }
+    const bar = loadingShadow.querySelector(".loading-bar");
+    const spinner = loadingShadow.querySelector(".spinner");
+    const text = loadingShadow.getElementById("loadingText");
+    if (bar) bar.style.background = "#7f1d1d";
+    if (spinner) spinner.style.display = "none";
+    if (text) text.textContent = msg;
+    setTimeout(hideLoading, 5000);
+  }
+
+  // --- Message Listener (from popup.js) ---
+  chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    if (request.action === "translatePage") {
+      translatePage();
+      sendResponse({ ok: true });
+    } else if (request.action === "revertPage") {
+      revertPageTranslation();
+      sendResponse({ ok: true });
+    } else if (request.action === "getPageTranslationState") {
+      sendResponse({ state: pageTranslationState });
+    }
   });
 
   // --- Popup CSS ---

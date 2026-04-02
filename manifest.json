@@ -4,10 +4,14 @@
   "version": "1.0.1",
   "description": "Translate selected text using AI",
   "permissions": [
-    "storage"
+    "storage",
+    "activeTab",
+    "declarativeNetRequest"
   ],
   "host_permissions": [
-    "https://api.openai.com/*"
+    "https://api.openai.com/*",
+    "http://localhost:*/*",
+    "http://127.0.0.1:*/*"
   ],
   "background": {
     "service_worker": "background.js"
