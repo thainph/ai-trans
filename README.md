@@ -2,49 +2,50 @@
 
 ### Overview
 
-AI Translator is a browser extension that lets you **quickly translate selected text on any web page** using OpenAI models.  
-The UX is intentionally simple: select text, click the **T** button, see the translation in place.
+AI Translator is a Chrome extension that translates text on any web page using AI.
+It supports two translation modes: **selected text translation** and **full page translation**, with two AI backend options: **OpenAI** and **Ollama** (local).
 
 ### Key Features
 
-- **Inline translation on page**: Select any text and a small `T` button appears near the selection; click it to open the translation popup.
-- **Automatic source language detection**: Heuristics to detect English, Vietnamese, Japanese, Korean, Chinese, French, German, Spanish, and more based on characters.
-- **Multiple target languages**: Supports many popular languages (EN, VI, JA, ZH, KO, FR, DE, ES, PT, RU, TH, ID, IT, NL, AR, HI…).
-- **Style presets**: Choose translation style: `Casual`, `Polite`, or `Business`.
-- **Compact popup UI**:
-  - Shows source → target language pair.
-  - Allows changing target language directly in the popup.
-  - `Copy` button for quick copy of the translated text.
-- **Chrome cloud storage for settings**:
-  - Stores OpenAI API key.
-  - Stores default style.
-  - Stores default target language.
+- **Select & Translate**: Select any text on a page, click the **T** button to see the translation in a popup.
+- **Reverse Translate**: In editable fields, click the **R** button to translate text back to the detected source language.
+- **Full Page Translation**: Translate the entire page at once from the extension popup. New content added dynamically is auto-translated.
+- **Dual AI Provider**:
+  - **OpenAI**: 7 model options — `gpt-4o-mini`, `gpt-4o`, `gpt-4-turbo`, `gpt-4.1-nano`, `gpt-4.1-mini`, `gpt-4.1`, `gpt-3.5-turbo`.
+  - **Ollama**: Connect to a local Ollama server, auto-loads available models.
+- **Auto Language Detection**: Detects English, Vietnamese, Japanese, Korean, Chinese, French, German, Spanish, Portuguese, Russian, Thai, Indonesian, Italian, Dutch, Arabic, Hindi based on character patterns.
+- **16 Target Languages**: Vietnamese, English, Japanese, Chinese, Korean, French, German, Spanish, Portuguese, Russian, Thai, Indonesian, Italian, Dutch, Arabic, Hindi.
+- **3 Style Presets**: `Casual`, `Polite`, `Business`.
+- **Draggable & Resizable Popup**: Move the translation popup by dragging the header; resize by dragging the edges.
+- **Copy to Clipboard**: One-click copy of translated text.
+- **Smart Language Switching**: If target language matches source language, auto-switches (e.g. English ↔ Vietnamese).
+- **Settings Sync**: All settings stored in `chrome.storage.sync` and synced across devices.
 
 ### How It Works
 
-1. **Content script (`content.js`)**
+1. **Content Script (`content.js`)**
    - Listens for text selection on the page.
-   - Renders a circular `T` button near the selected text.
-   - When the user clicks `T`, opens a popup (Shadow DOM) showing translation status.
-   - Reads the selected text, detects the source language, loads config (style, targetLang) from `chrome.storage.sync`.
-   - Sends a `translate` message with: `text`, `sourceLang`, `targetLang`, `style` to the **background** script.
+   - Shows a floating **T** button (and **R** button for editable fields) near the selection.
+   - Opens a draggable/resizable popup (Shadow DOM) showing the translation result.
+   - Detects source language, loads config from `chrome.storage.sync`, and sends a `translate` message to the background script.
+   - Handles full page translation: walks the DOM, collects text nodes (skipping code/scripts/URLs), sends batches to background, and replaces text with translations.
+   - Uses `MutationObserver` to auto-translate dynamically added content during page translation.
 
-2. **Background service worker (`background.js`)**
-   - Receives `translate` messages from the content script.
-   - Reads `apiKey` from `chrome.storage.sync`.
-   - Builds a **system prompt** based on:
-     - Source and target languages.
-     - Selected style (casual / polite / business).
-   - Calls OpenAI Chat Completions API (`gpt-4o-mini`) via `https://api.openai.com/v1/chat/completions`.
-   - Returns the translated text back to the content script.
+2. **Background Service Worker (`background.js`)**
+   - Receives `translate` and `translateBatch` messages from the content script.
+   - Routes requests to **OpenAI API** or **Ollama API** based on the selected provider.
+   - Builds system prompts with source/target language and style instructions.
+   - Handles batch translation with numbered format for accuracy.
+   - Also handles `getOllamaModels` messages to fetch available models from the Ollama server.
 
-3. **Settings popup (`popup.html`, `popup.js`)**
+3. **Settings Popup (`popup.html`, `popup.js`)**
    - UI shown when clicking the extension icon in the toolbar.
-   - Allows:
-     - Entering and saving the **OpenAI API key**.
-     - Choosing default translation style.
-     - Choosing default target language.
-   - Configuration is stored in `chrome.storage.sync` and used by both the in-page popup and the background script.
+   - **Provider selection**: Toggle between OpenAI and Ollama.
+   - **OpenAI config**: API key input (with show/hide toggle), model selector.
+   - **Ollama config**: Server URL, model selector with refresh button.
+   - **Translation style**: Casual / Polite / Business radio buttons.
+   - **Target language**: Dropdown with 16 languages.
+   - **Translate This Page** button: Triggers full page translation on the active tab.
 
 ### Installation & Usage
 
@@ -56,66 +57,66 @@ The UX is intentionally simple: select text, click the **T** button, see the tra
 4. Enable **Developer mode**.
 5. Click **Load unpacked** and select the `ai-translator` folder.
 
-#### 2. Configure your OpenAI API key
+#### 2. Configure your AI provider
 
 1. Click the **AI Translator** extension icon in the browser toolbar.
-2. In the popup:
-   - Paste your **OpenAI API key** into the `API key` field.
-   - Click **Save**.
-3. Optionally:
-   - Choose the default style: `Casual`, `Polite`, or `Business`.
-   - Choose the default target language (for example: `Vietnamese`).
+2. Choose your provider:
+   - **OpenAI**: Paste your API key, select a model, and click **Save**.
+   - **Ollama**: Enter your Ollama server URL (default: `http://localhost:11434`), click the refresh button to load models, select a model, and click **Save**.
+3. Choose the default **style** and **target language**.
 
-> Note: The API key is stored in `chrome.storage.sync` in your browser and is **not** part of the source code.  
-> When sharing this repo, make sure you never commit the API key to any file.
+> Note: The API key is stored in `chrome.storage.sync` in your browser and is **not** part of the source code.
 
-#### 3. Translate text on a page
+#### 3. Translate selected text
 
-1. Open any web page with text you want to translate.
-2. **Select** the text.
-3. A small `T` button appears under the selection; click it to open the translation popup.
-4. In the popup:
-   - The extension shows the detected source language (for example: `EN` → `VI`).
-   - You can change the target language from the dropdown.
-   - You can change the style if needed (saved automatically).
-5. After translation:
-   - The translated text is shown in the result area.
-   - Click **Copy** to copy the translation to the clipboard.
+1. Open any web page.
+2. **Select** the text you want to translate.
+3. Click the **T** button that appears near the selection.
+4. The translation popup shows:
+   - Detected source language → target language.
+   - Dropdown to change target language or style.
+   - **Copy** button to copy the result.
+5. Drag the popup header to reposition, or drag the edges to resize.
+
+#### 4. Translate an entire page
+
+1. Click the extension icon in the toolbar.
+2. Click **Translate This Page** (green button).
+3. Progress is shown: "Translating... X/Y batches".
+4. Click **Revert Translation** (orange button) to restore the original text.
 
 ### Project Structure
 
-- **`manifest.json`**: Manifest V3 declaration, permissions (`storage`, `activeTab`, `host_permissions` for `api.openai.com`), background service worker, content script, popup, icons.
-- **`background.js`**: Calls the OpenAI API and handles `translate` messages.
-- **`content.js`**: Injects UI, listens for text selection, shows `T` button, popup, and talks to the background script.
-- **`content.css`**: Styles for the trigger button and translation popup (runs in the content script).
-- **`popup.html`**: Popup UI when clicking the extension icon.
-- **`popup.js`**: Loads/saves API key, style, and target language in the popup.
-- **`popup.css`**: Styles for the settings popup.
-- **`icons/`**: 16/48/128 px icons for the extension.
+| File | Description |
+|------|-------------|
+| `manifest.json` | Manifest V3 config: permissions, scripts, icons |
+| `background.js` | Service worker — handles OpenAI/Ollama API calls, batch translation |
+| `content.js` | Core logic — text selection, trigger buttons, popup UI, page translation, DOM observation |
+| `content.css` | Styles for trigger buttons and loading indicator |
+| `popup.html` | Settings popup UI |
+| `popup.js` | Settings logic — provider switching, save/load config, Ollama model loading |
+| `popup.css` | Settings popup styles |
+| `icons/` | Extension icons (16/48/128 px) |
 
 ### Permissions & Security
 
-- **Chrome permissions**:
-  - `storage`: Store the API key, translation style, and target language in the browser.
-  - `activeTab`: Allow the content script to run on the active tab and read selected text.
-  - `host_permissions` for `https://api.openai.com/*`: Send requests to the OpenAI API.
-- **API key security**:
-  - The API key is **only stored locally** in `chrome.storage.sync`.
-  - No config file in the repo contains a hardcoded API key.
-  - When others use this project, they must provide their own key.
+| Permission | Purpose |
+|-----------|---------|
+| `storage` | Store API key, provider, model, style, and target language |
+| `activeTab` | Access the active tab for in-page translation |
+| `declarativeNetRequest` | Strip Origin header for Ollama localhost CORS compatibility |
+| `host_permissions: https://api.openai.com/*` | Connect to OpenAI API |
+| `host_permissions: http://localhost:*/*`, `http://127.0.0.1:*/*` | Connect to local Ollama server |
 
-### Development
+- The API key is **only stored locally** in `chrome.storage.sync`.
+- No config file in the repo contains a hardcoded API key.
 
-- Environment:
-  - Plain JavaScript; no bundler or build step.
-  - Background script runs as a Manifest V3 service worker.
-- Workflow:
-  - Edit JS/CSS/HTML files.
-  - In `chrome://extensions/`, click **Reload** on the extension.
-  - Reload the web page tab so the updated content script is injected.
+### Technical Details
 
-### Notes
-
-- The default model is **`gpt-4o-mini`**.  
-- You can change the model or API parameters inside `background.js` if needed.
-
+- Plain JavaScript, no bundler or build step.
+- Background script runs as a Manifest V3 service worker.
+- Translation popup uses **Shadow DOM** to isolate styles from the host page.
+- Batch translation uses concurrency limits: **5 concurrent requests** for OpenAI, **2** for Ollama.
+- `MutationObserver` watches for dynamically added content during page translation and auto-translates within a 500ms batching window.
+- Text filtering skips code blocks, scripts, stylesheets, canvas, SVG, input fields, URLs, and pure numbers.
+- API parameters: `temperature: 0.3`, `max_tokens: 1024` (single) / `4096` (batch).
