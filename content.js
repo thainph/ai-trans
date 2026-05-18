@@ -156,6 +156,8 @@
       <div class="popup">
         <div class="resize-handle resize-left"></div>
         <div class="resize-handle resize-right"></div>
+        <div class="resize-handle resize-top"></div>
+        <div class="resize-handle resize-bottom"></div>
         <div class="header">
           <div class="lang-pair">
             <span class="lang-badge source">${LANGUAGES[sourceLang]?.label || "?"}</span>
@@ -178,11 +180,8 @@
       </div>
     `;
 
-    // Apply saved width
+    // Apply saved width (height applied after maxHeight is computed below)
     const popup = shadowRoot.querySelector(".popup");
-    chrome.storage.sync.get({ popupWidth: 340 }, (data) => {
-      popup.style.setProperty("--popup-width", `${data.popupWidth}px`);
-    });
 
     // Position popup
     const scrollX = window.scrollX;
@@ -206,6 +205,16 @@
 
     // Set dynamic max-height via CSS variable
     popup.style.setProperty("--popup-max-height", `${maxHeight}px`);
+
+    // Apply saved width + height (clamp height to available space)
+    chrome.storage.sync.get({ popupWidth: 340, popupHeight: 0 }, (data) => {
+      popup.style.setProperty("--popup-width", `${data.popupWidth}px`);
+      if (data.popupHeight > 0) {
+        const clamped = Math.min(data.popupHeight, maxHeight);
+        popup.style.setProperty("--popup-height", `${clamped}px`);
+        popup.style.setProperty("--popup-max-height", `${clamped}px`);
+      }
+    });
 
     let top;
     if (showAbove) {
@@ -267,6 +276,8 @@
     // Resize handles
     setupResizeHandle(shadowRoot.querySelector(".resize-right"), "right");
     setupResizeHandle(shadowRoot.querySelector(".resize-left"), "left");
+    setupResizeHandle(shadowRoot.querySelector(".resize-top"), "top");
+    setupResizeHandle(shadowRoot.querySelector(".resize-bottom"), "bottom");
 
     // Drag handle (header)
     setupDragHandle(shadowRoot.querySelector(".header"));
@@ -275,6 +286,8 @@
   function setupResizeHandle(handle, side) {
     const minWidth = 240;
     const maxWidth = 600;
+    const minHeight = 120;
+    const isVertical = side === "top" || side === "bottom";
 
     handle.addEventListener("mousedown", (e) => {
       e.preventDefault();
@@ -282,29 +295,46 @@
 
       const popup = shadowRoot.querySelector(".popup");
       const startX = e.clientX;
+      const startY = e.clientY;
       const startWidth = popup.offsetWidth;
+      const startHeight = popup.offsetHeight;
       const startLeft = popupHost.offsetLeft;
+      const startTop = popupHost.offsetTop;
+      const maxHeight = Math.max(window.innerHeight - 40, minHeight);
 
       function onMouseMove(e) {
-        let delta = e.clientX - startX;
-        let newWidth;
-
-        if (side === "right") {
-          newWidth = Math.min(maxWidth, Math.max(minWidth, startWidth + delta));
+        if (isVertical) {
+          const delta = e.clientY - startY;
+          let newHeight;
+          if (side === "bottom") {
+            newHeight = Math.min(maxHeight, Math.max(minHeight, startHeight + delta));
+          } else {
+            newHeight = Math.min(maxHeight, Math.max(minHeight, startHeight - delta));
+            popupHost.style.top = `${startTop + (startHeight - newHeight)}px`;
+          }
+          popup.style.setProperty("--popup-height", `${newHeight}px`);
+          popup.style.setProperty("--popup-max-height", `${newHeight}px`);
         } else {
-          newWidth = Math.min(maxWidth, Math.max(minWidth, startWidth - delta));
-          popupHost.style.left = `${startLeft + (startWidth - newWidth)}px`;
+          const delta = e.clientX - startX;
+          let newWidth;
+          if (side === "right") {
+            newWidth = Math.min(maxWidth, Math.max(minWidth, startWidth + delta));
+          } else {
+            newWidth = Math.min(maxWidth, Math.max(minWidth, startWidth - delta));
+            popupHost.style.left = `${startLeft + (startWidth - newWidth)}px`;
+          }
+          popup.style.setProperty("--popup-width", `${newWidth}px`);
         }
-
-        popup.style.setProperty("--popup-width", `${newWidth}px`);
       }
 
       function onMouseUp() {
         document.removeEventListener("mousemove", onMouseMove);
         document.removeEventListener("mouseup", onMouseUp);
-        // Save width preference
-        const finalWidth = popup.offsetWidth;
-        chrome.storage.sync.set({ popupWidth: finalWidth });
+        if (isVertical) {
+          chrome.storage.sync.set({ popupHeight: popup.offsetHeight });
+        } else {
+          chrome.storage.sync.set({ popupWidth: popup.offsetWidth });
+        }
       }
 
       document.addEventListener("mousemove", onMouseMove);
@@ -848,6 +878,7 @@
 
       .popup {
         width: var(--popup-width, 340px);
+        height: var(--popup-height, auto);
         max-height: var(--popup-max-height, 70vh);
         display: flex;
         flex-direction: column;
@@ -864,11 +895,14 @@
 
       .resize-handle {
         position: absolute;
+        z-index: 10;
+      }
+
+      .resize-right, .resize-left {
         top: 0;
         bottom: 0;
         width: 6px;
         cursor: col-resize;
-        z-index: 10;
       }
 
       .resize-right {
@@ -877,6 +911,21 @@
 
       .resize-left {
         left: -3px;
+      }
+
+      .resize-top, .resize-bottom {
+        left: 6px;
+        right: 6px;
+        height: 6px;
+        cursor: row-resize;
+      }
+
+      .resize-top {
+        top: -3px;
+      }
+
+      .resize-bottom {
+        bottom: -3px;
       }
 
       .resize-handle:hover {
