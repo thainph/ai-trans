@@ -1,0 +1,118 @@
+{
+  "extName": {
+    "message": "AI Translator",
+    "description": "Extension name"
+  },
+  "appTitle": {
+    "message": "AI Translator",
+    "description": "App title in header"
+  },
+  "appSubtitle": {
+    "message": "Translate any text with AI",
+    "description": "App subtitle in header"
+  },
+  "provider": {
+    "message": "Provider",
+    "description": "Provider section label"
+  },
+  "apiKey": {
+    "message": "API Key",
+    "description": "API Key label"
+  },
+  "model": {
+    "message": "Model",
+    "description": "Model label"
+  },
+  "ollamaUrl": {
+    "message": "Ollama URL",
+    "description": "Ollama URL label"
+  },
+  "translationStyle": {
+    "message": "Translation Style",
+    "description": "Translation style section label"
+  },
+  "styleCasual": {
+    "message": "Casual",
+    "description": "Casual style option"
+  },
+  "stylePolite": {
+    "message": "Polite",
+    "description": "Polite style option"
+  },
+  "styleBusiness": {
+    "message": "Business",
+    "description": "Business style option"
+  },
+  "targetLanguage": {
+    "message": "Target Language",
+    "description": "Target language section label"
+  },
+  "saveSettings": {
+    "message": "Save Settings",
+    "description": "Save button text"
+  },
+  "translateThisPage": {
+    "message": "Translate This Page",
+    "description": "Translate page button text"
+  },
+  "translating": {
+    "message": "Translating...",
+    "description": "Translating state"
+  },
+  "revertTranslation": {
+    "message": "Revert Translation",
+    "description": "Revert translation button text"
+  },
+  "selectTextHint": {
+    "message": "Select text on any page to translate",
+    "description": "Hint text"
+  },
+  "settingsSaved": {
+    "message": "Settings saved!",
+    "description": "Settings saved message"
+  },
+  "enterApiKey": {
+    "message": "Please enter your OpenAI API key",
+    "description": "Error: API key required"
+  },
+  "enterGeminiApiKey": {
+    "message": "Please enter your Gemini API key",
+    "description": "Error: Gemini API key required"
+  },
+  "selectOllamaModel": {
+    "message": "Please select an Ollama model",
+    "description": "Error: Ollama model required"
+  },
+  "loadingModels": {
+    "message": "Loading...",
+    "description": "Loading models state"
+  },
+  "failedToLoad": {
+    "message": "Failed to load",
+    "description": "Failed to load models"
+  },
+  "noModelsFound": {
+    "message": "No models found",
+    "description": "No models found"
+  },
+  "selectModel": {
+    "message": "-- Select model --",
+    "description": "Select model placeholder"
+  },
+  "cannotConnectOllama": {
+    "message": "Cannot connect to Ollama",
+    "description": "Cannot connect to Ollama error"
+  },
+  "uiLanguage": {
+    "message": "Interface Language",
+    "description": "UI language selector label"
+  },
+  "languageEn": {
+    "message": "English",
+    "description": "English language name"
+  },
+  "languageZh": {
+    "message": "中文",
+    "description": "Chinese language name"
+  }
+}
