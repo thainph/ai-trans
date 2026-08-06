@@ -52,10 +52,14 @@ const DEFAULT_TRANSLATIONS = {
     model: "Model",
     ollamaUrl: "Ollama URL",
     translationStyle: "Translation Style",
+    styleAuto: "Auto",
     styleCasual: "Casual",
     stylePolite: "Polite",
     styleBusiness: "Business",
     targetLanguage: "Target Language",
+    sourceLanguage: "Source Language",
+    autoDetect: "Auto-detect",
+    enableAutoSwap: "Auto-swap when source = target",
     saveSettings: "Save Settings",
     translateThisPage: "Translate This Page",
     translating: "Translating...",
@@ -73,6 +77,9 @@ const DEFAULT_TRANSLATIONS = {
     uiLanguage: "Interface Language",
     languageEn: "English",
     languageZh: "中文",
+    keyboardShortcuts: "Keyboard Shortcuts",
+    translateSelection: "Translate Selection",
+    translatePageShortcut: "Translate Page",
   },
   zh: {
     appTitle: "AI翻译助手",
@@ -82,10 +89,14 @@ const DEFAULT_TRANSLATIONS = {
     model: "模型",
     ollamaUrl: "Ollama服务器地址",
     translationStyle: "翻译风格",
+    styleAuto: "自动",
     styleCasual: "口语化",
     stylePolite: "礼貌",
     styleBusiness: "商务",
     targetLanguage: "目标语言",
+    sourceLanguage: "源语言",
+    autoDetect: "自动检测",
+    enableAutoSwap: "源语言 = 目标语言时自动切换",
     saveSettings: "保存设置",
     translateThisPage: "翻译此页面",
     translating: "翻译中...",
@@ -103,6 +114,9 @@ const DEFAULT_TRANSLATIONS = {
     uiLanguage: "界面语言",
     languageEn: "English",
     languageZh: "中文",
+    keyboardShortcuts: "键盘快捷键",
+    translateSelection: "翻译划选",
+    translatePageShortcut: "翻译整页",
   },
 };
 
@@ -145,11 +159,31 @@ const ollamaModelSelect = document.getElementById("ollamaModel");
 const refreshOllamaBtn = document.getElementById("refreshOllama");
 const saveSettingsBtn = document.getElementById("saveSettings");
 const uiLanguageSelect = document.getElementById("uiLanguage");
+const shortcutSelectionInput = document.getElementById("shortcutTranslateSelection");
+const shortcutPageInput = document.getElementById("shortcutTranslatePage");
+const clearShortcutSelectionBtn = document.getElementById("clearShortcutSelection");
+const clearShortcutPageBtn = document.getElementById("clearShortcutPage");
+const sourceLangSelect = document.getElementById("sourceLang");
+const enableAutoSwapCheckbox = document.getElementById("enableAutoSwap");
 
 // ===== State =====
 let activeProvider = "openai";
 let ollamaLoaded = false;
 let savedOllamaModel = "";
+
+// ===== Default keyboard shortcuts =====
+const DEFAULT_SHORTCUTS = {
+  shortcutTranslateSelection: "Ctrl+Shift+T",
+  shortcutTranslatePage: "Ctrl+Shift+P",
+};
+
+// In-memory recorder state and pending values
+const pendingShortcuts = {
+  shortcutTranslateSelection: DEFAULT_SHORTCUTS.shortcutTranslateSelection,
+  shortcutTranslatePage: DEFAULT_SHORTCUTS.shortcutTranslatePage,
+};
+let activeRecorder = null;
+const IS_MAC = navigator.platform.toLowerCase().includes("mac");
 
 // ===== Populate dropdowns with translations =====
 function populateDropdowns() {
@@ -213,7 +247,7 @@ function init() {
   chrome.storage.sync.get(
     {
       apiKey: "",
-      style: "casual",
+      style: "auto",
       targetLang: "vietnamese",
       provider: "openai",
       ollamaUrl: "http://localhost:11434",
@@ -222,6 +256,10 @@ function init() {
       geminiApiKey: "",
       geminiModel: "gemini-2.5-flash",
       uiLanguage: "en",
+      shortcutTranslateSelection: DEFAULT_SHORTCUTS.shortcutTranslateSelection,
+      shortcutTranslatePage: DEFAULT_SHORTCUTS.shortcutTranslatePage,
+      sourceLang: "auto",
+      enableAutoSwap: true,
     },
     (data) => {
       // Set UI language
@@ -236,6 +274,8 @@ function init() {
       if (radio) radio.checked = true;
 
       targetLangSelect.value = data.targetLang;
+      sourceLangSelect.value = data.sourceLang || "auto";
+      enableAutoSwapCheckbox.checked = data.enableAutoSwap !== false; // default true
       openaiModelSelect.value = data.openaiModel;
       geminiModelSelect.value = data.geminiModel;
 
@@ -243,6 +283,11 @@ function init() {
 
       ollamaUrlInput.value = data.ollamaUrl;
       savedOllamaModel = data.ollamaModel;
+
+      // Restore shortcuts into the pending state and UI
+      pendingShortcuts.shortcutTranslateSelection = data.shortcutTranslateSelection || DEFAULT_SHORTCUTS.shortcutTranslateSelection;
+      pendingShortcuts.shortcutTranslatePage = data.shortcutTranslatePage || DEFAULT_SHORTCUTS.shortcutTranslatePage;
+      renderShortcutInputs();
 
       switchProvider(data.provider);
     }
@@ -322,6 +367,140 @@ refreshOllamaBtn.addEventListener("click", () => {
   loadOllamaModels(ollamaUrlInput.value.trim(), ollamaModelSelect.value);
 });
 
+// ===== Shortcut capture (key recording) =====
+function shortcutToStorage(combo) {
+  // Normalize to a single canonical "Ctrl+..." form so content.js rules match on any OS
+  return combo.replace(/Cmd/g, "Ctrl");
+}
+
+function shortcutToCommandApi(combo) {
+  // Chrome commands API expects "Command+..." on Mac, "Ctrl+..." elsewhere
+  return combo.replace(/Cmd/g, "Command");
+}
+
+function shortcutToDisplay(combo) {
+  if (!combo) return "";
+  if (!IS_MAC) return combo;
+  return combo
+    .replace(/Ctrl\+/g, "⌃")
+    .replace(/Cmd\+/g, "⌘")
+    .replace(/Alt\+/g, "⌥")
+    .replace(/Shift\+/g, "⇧")
+    .replace(/Space/g, "Space");
+}
+
+function normalizeKey(e) {
+  const parts = [];
+  const mod = e.ctrlKey || e.metaKey;
+  if (mod) parts.push(IS_MAC ? "Cmd" : "Ctrl");
+  if (e.altKey) parts.push(IS_MAC ? "Alt" : "Alt");
+  if (e.shiftKey) parts.push("Shift");
+  let key = e.key;
+  if (["Control", "Meta", "Alt", "Shift"].includes(key)) return null;
+  if (key === " ") key = "Space";
+  else if (key.length === 1) key = key.toUpperCase();
+  parts.push(key);
+  return parts.join("+");
+}
+
+function renderShortcutInputs() {
+  if (shortcutSelectionInput) {
+    shortcutSelectionInput.value = shortcutToDisplay(pendingShortcuts.shortcutTranslateSelection);
+  }
+  if (shortcutPageInput) {
+    shortcutPageInput.value = shortcutToDisplay(pendingShortcuts.shortcutTranslatePage);
+  }
+}
+
+function setRecorder(input) {
+  if (activeRecorder && activeRecorder !== input) {
+    activeRecorder.classList.remove("recording");
+  }
+  if (activeRecorder === input) {
+    activeRecorder.classList.remove("recording");
+    activeRecorder = null;
+    return;
+  }
+  activeRecorder = input;
+  input.classList.add("recording");
+  input.value = "Press keys...";
+  input.focus();
+}
+
+function handleRecorderKey(e) {
+  if (!activeRecorder) return;
+  if (e.key === "Escape") {
+    e.preventDefault();
+    activeRecorder.classList.remove("recording");
+    activeRecorder = null;
+    renderShortcutInputs();
+    return;
+  }
+  if (e.key === "Backspace" || e.key === "Delete") {
+    e.preventDefault();
+    const key = activeRecorder === shortcutSelectionInput ? "shortcutTranslateSelection" : "shortcutTranslatePage";
+    pendingShortcuts[key] = "";
+    activeRecorder.classList.remove("recording");
+    activeRecorder = null;
+    renderShortcutInputs();
+    return;
+  }
+  const combo = normalizeKey(e);
+  if (!combo) return;
+  e.preventDefault();
+  if (!e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+    // A bare key without modifiers is not a useful shortcut
+    showStatus("Please include Ctrl / Cmd / Alt / Shift", "error");
+    return;
+  }
+  const key = activeRecorder === shortcutSelectionInput ? "shortcutTranslateSelection" : "shortcutTranslatePage";
+  pendingShortcuts[key] = shortcutToStorage(combo);
+  activeRecorder.classList.remove("recording");
+  activeRecorder = null;
+  renderShortcutInputs();
+}
+
+if (shortcutSelectionInput) {
+  shortcutSelectionInput.addEventListener("focus", () => setRecorder(shortcutSelectionInput));
+  shortcutSelectionInput.addEventListener("click", () => setRecorder(shortcutSelectionInput));
+  shortcutSelectionInput.addEventListener("blur", () => {
+    if (activeRecorder === shortcutSelectionInput) {
+      activeRecorder.classList.remove("recording");
+      activeRecorder = null;
+    }
+  });
+}
+if (shortcutPageInput) {
+  shortcutPageInput.addEventListener("focus", () => setRecorder(shortcutPageInput));
+  shortcutPageInput.addEventListener("click", () => setRecorder(shortcutPageInput));
+  shortcutPageInput.addEventListener("blur", () => {
+    if (activeRecorder === shortcutPageInput) {
+      activeRecorder.classList.remove("recording");
+      activeRecorder = null;
+    }
+  });
+}
+document.addEventListener("keydown", handleRecorderKey, true);
+
+if (clearShortcutSelectionBtn) {
+  clearShortcutSelectionBtn.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    pendingShortcuts.shortcutTranslateSelection = "";
+    renderShortcutInputs();
+    if (shortcutSelectionInput) shortcutSelectionInput.focus();
+  });
+}
+if (clearShortcutPageBtn) {
+  clearShortcutPageBtn.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    pendingShortcuts.shortcutTranslatePage = "";
+    renderShortcutInputs();
+    if (shortcutPageInput) shortcutPageInput.focus();
+  });
+}
+
 // ===== Save settings =====
 saveSettingsBtn.addEventListener("click", () => {
   if (activeProvider === "openai" && !apiKeyInput.value.trim()) {
@@ -337,6 +516,15 @@ saveSettingsBtn.addEventListener("click", () => {
     return;
   }
 
+  // Validate: if a shortcut is set, it must include at least one modifier
+  for (const k of ["shortcutTranslateSelection", "shortcutTranslatePage"]) {
+    const v = pendingShortcuts[k];
+    if (v && !/(Ctrl|Cmd|Alt|Shift)/.test(v)) {
+      showStatus("Shortcuts must include Ctrl / Cmd / Alt / Shift", "error");
+      return;
+    }
+  }
+
   const settings = {
     provider: activeProvider,
     apiKey: apiKeyInput.value.trim(),
@@ -345,12 +533,31 @@ saveSettingsBtn.addEventListener("click", () => {
     geminiModel: geminiModelSelect.value,
     ollamaUrl: ollamaUrlInput.value.trim() || "http://localhost:11434",
     ollamaModel: ollamaModelSelect.value,
-    style: document.querySelector('input[name="style"]:checked')?.value || "casual",
+    style: document.querySelector('input[name="style"]:checked')?.value || "auto",
     targetLang: targetLangSelect.value,
+    sourceLang: sourceLangSelect.value,
+    enableAutoSwap: enableAutoSwapCheckbox.checked,
     uiLanguage: currentLocale,
+    shortcutTranslateSelection:
+      pendingShortcuts.shortcutTranslateSelection || DEFAULT_SHORTCUTS.shortcutTranslateSelection,
+    shortcutTranslatePage:
+      pendingShortcuts.shortcutTranslatePage || DEFAULT_SHORTCUTS.shortcutTranslatePage,
   };
 
   chrome.storage.sync.set(settings, () => {
+    // Sync Chrome's global shortcut bindings so the browser-level commands work
+    try {
+      chrome.commands.update({
+        command: "translate-selection",
+        shortcut: shortcutToCommandApi(settings.shortcutTranslateSelection),
+      });
+      chrome.commands.update({
+        command: "translate-page",
+        shortcut: shortcutToCommandApi(settings.shortcutTranslatePage),
+      });
+    } catch (e) {
+      // chrome.commands.update can throw on invalid combos; ignore and rely on suggested_key
+    }
     showStatus(t("settingsSaved"), "success");
   });
 });
@@ -388,13 +595,15 @@ translatePageBtn.addEventListener("click", () => {
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     if (!tabs[0]) return;
     const action = currentPageState === "translated" ? "revertPage" : "translatePage";
-    chrome.tabs.sendMessage(tabs[0].id, { action }, () => {
-      if (action === "translatePage") {
-        updateTranslatePageBtn("translating");
-        window.close();
-      } else {
+    updateTranslatePageBtn(action === "translatePage" ? "translating" : "idle");
+    chrome.tabs.sendMessage(tabs[0].id, { action }, (response) => {
+      if (chrome.runtime.lastError || !response || !response.ok) {
         updateTranslatePageBtn("idle");
+      } else {
+        // Update to final state based on what was done
+        updateTranslatePageBtn(action === "translatePage" ? "translated" : "idle");
       }
+      window.close();
     });
   });
 });

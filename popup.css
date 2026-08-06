@@ -523,3 +523,181 @@ button:focus-visible {
     transition: none !important;
   }
 }
+
+/* ===== Checkbox row (e.g. auto-swap toggle) ===== */
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  cursor: pointer;
+  margin: 0;
+  padding: 2px 0;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.checkbox-label input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--bg);
+  cursor: pointer;
+  position: relative;
+  flex-shrink: 0;
+  transition: background var(--ease), border-color var(--ease), box-shadow var(--ease);
+}
+
+.checkbox-label input[type="checkbox"]:hover {
+  border-color: var(--primary);
+}
+
+.checkbox-label input[type="checkbox"]:checked {
+  background: var(--primary);
+  border-color: var(--primary);
+}
+
+.checkbox-label input[type="checkbox"]:checked::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 5px;
+  height: 9px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.checkbox-label input[type="checkbox"]:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--primary-ring);
+}
+
+.checkbox-label span {
+  line-height: 1.4;
+}
+
+/* ===== Shortcuts section ===== */
+.shortcuts-section {
+  padding-top: 2px;
+}
+
+.section-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+}
+
+.section-title svg {
+  width: 13px;
+  height: 13px;
+}
+
+.shortcut-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.shortcut-row label {
+  flex: 1;
+  margin-bottom: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.shortcut-input-wrapper {
+  position: relative;
+  flex: 1.1;
+  display: flex;
+  align-items: center;
+}
+
+.shortcut-input {
+  width: 100%;
+  padding: 7px 28px 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  color: var(--text);
+  background: var(--bg-subtle);
+  outline: none;
+  cursor: pointer;
+  transition: border-color var(--ease), box-shadow var(--ease), background var(--ease);
+  text-align: center;
+}
+
+.shortcut-input::placeholder {
+  color: var(--text-faint);
+  font-family: inherit;
+  font-style: italic;
+}
+
+.shortcut-input:hover {
+  border-color: var(--border-strong);
+  background: var(--bg);
+}
+
+.shortcut-input:focus,
+.shortcut-input.recording {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-ring);
+  background: var(--bg);
+}
+
+.shortcut-input.recording {
+  animation: pulse-recording 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse-recording {
+  0%, 100% { box-shadow: 0 0 0 3px var(--primary-ring); }
+  50% { box-shadow: 0 0 0 5px rgba(37, 99, 235, 0.28); }
+}
+
+.shortcut-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-clear-shortcut {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 12px;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: background var(--ease), color var(--ease);
+}
+
+.btn-clear-shortcut:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+

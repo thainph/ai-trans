@@ -115,7 +115,11 @@
       <label class="field-label" data-i18n="translationStyle">Translation Style</label>
       <div class="radio-group">
         <label class="radio-label">
-          <input type="radio" name="style" value="casual" checked />
+          <input type="radio" name="style" value="auto" checked />
+          <span data-i18n="styleAuto">Auto</span>
+        </label>
+        <label class="radio-label">
+          <input type="radio" name="style" value="casual" />
           <span data-i18n="styleCasual">Casual</span>
         </label>
         <label class="radio-label">
@@ -152,6 +156,36 @@
     </div>
 
     <div class="section">
+      <label for="sourceLang" class="field-label" data-i18n="sourceLanguage">Source Language</label>
+      <select id="sourceLang" class="select-field">
+        <option value="auto" data-i18n-option="autoDetect">Auto-detect</option>
+        <option value="english">English</option>
+        <option value="japanese">Japanese (日本語)</option>
+        <option value="vietnamese">Vietnamese (Tiếng Việt)</option>
+        <option value="chinese">Chinese (中文)</option>
+        <option value="korean">Korean (한국어)</option>
+        <option value="french">French (Français)</option>
+        <option value="german">German (Deutsch)</option>
+        <option value="spanish">Spanish (Español)</option>
+        <option value="portuguese">Portuguese (Português)</option>
+        <option value="russian">Russian (Русский)</option>
+        <option value="thai">Thai (ไทย)</option>
+        <option value="indonesian">Indonesian (Bahasa)</option>
+        <option value="italian">Italian (Italiano)</option>
+        <option value="dutch">Dutch (Nederlands)</option>
+        <option value="arabic">Arabic (العربية)</option>
+        <option value="hindi">Hindi (हिन्दी)</option>
+      </select>
+    </div>
+
+    <div class="section">
+      <label class="checkbox-label">
+        <input type="checkbox" id="enableAutoSwap" />
+        <span data-i18n="enableAutoSwap">Auto-swap when source = target</span>
+      </label>
+    </div>
+
+    <div class="section">
       <button id="saveSettings" class="btn-primary btn-save">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
@@ -159,6 +193,46 @@
         </svg>
         <span data-i18n="saveSettings">Save Settings</span>
       </button>
+    </div>
+
+    <hr class="divider" />
+
+    <div class="section shortcuts-section">
+      <div class="section-title">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M18 3a3 3 0 0 0-3 3v12a3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3H6a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3V6a3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3h12a3 3 0 0 0 3-3 3 3 0 0 0-3-3z" />
+        </svg>
+        <span data-i18n="keyboardShortcuts">Keyboard Shortcuts</span>
+      </div>
+
+      <div class="shortcut-row">
+        <label for="shortcutTranslateSelection" data-i18n="translateSelection">Translate Selection</label>
+        <div class="shortcut-input-wrapper">
+          <input
+            type="text"
+            id="shortcutTranslateSelection"
+            class="shortcut-input"
+            placeholder="Click and press keys"
+            readonly
+          />
+          <button id="clearShortcutSelection" class="btn-clear-shortcut" type="button" title="Clear" aria-label="Clear shortcut">✕</button>
+        </div>
+      </div>
+
+      <div class="shortcut-row">
+        <label for="shortcutTranslatePage" data-i18n="translatePageShortcut">Translate Page</label>
+        <div class="shortcut-input-wrapper">
+          <input
+            type="text"
+            id="shortcutTranslatePage"
+            class="shortcut-input"
+            placeholder="Click and press keys"
+            readonly
+          />
+          <button id="clearShortcutPage" class="btn-clear-shortcut" type="button" title="Clear" aria-label="Clear shortcut">✕</button>
+        </div>
+      </div>
+
     </div>
 
     <hr class="divider" />

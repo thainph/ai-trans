@@ -4,6 +4,9 @@
   let shadowRoot = null;
   let currentSelection = "";
   let lastDetectedSourceLang = null;
+  // Source language currently shown in the popup's source dropdown
+  // ("auto" means the detector decides; anything else is a user override).
+  let currentPopupSourceLang = "auto";
 
   // --- Full Page Translation State ---
   let pageTranslationState = "idle"; // "idle" | "translating" | "translated"
@@ -64,6 +67,25 @@
     if (/[ñ¿¡]/i.test(text)) return "spanish";
     if (/[ãõ]/i.test(text) && !/[ạảậẩẫăằắặẳẵẹẻệểễịỉĩọỏộổỗơờớợởỡụủưừứựửữỵỷỹđ]/i.test(text)) return "portuguese";
     return "english";
+  }
+
+  // --- Source/Target resolution (shared by selection + page + shortcut flows) ---
+  // Reads sourceLang + targetLang + enableAutoSwap from storage and applies
+  // the user's "auto" vs manual source choice, plus the optional auto-swap
+  // fallback when the resolved source and target are the same.
+  function resolveLanguages(text, callback) {
+    chrome.storage.sync.get(
+      { sourceLang: "auto", targetLang: "vietnamese", enableAutoSwap: true },
+      (data) => {
+        const sourceLang =
+          data.sourceLang && data.sourceLang !== "auto" ? data.sourceLang : detectLanguage(text);
+        let targetLang = data.targetLang;
+        if (targetLang === sourceLang && data.enableAutoSwap !== false) {
+          targetLang = sourceLang === "english" ? "vietnamese" : "english";
+        }
+        callback(sourceLang, targetLang);
+      }
+    );
   }
 
   // --- Helper: check if element is editable ---
@@ -141,6 +163,20 @@
       .join("");
   }
 
+  // Build source language options. The first entry is "Auto" which lets the
+  // detector run; the rest are explicit overrides that skip detection.
+  function buildSourceLangOptions(selectedLang) {
+    const autoSel = selectedLang === "auto" ? " selected" : "";
+    const list = `<option value="auto"${autoSel}>Auto</option>` +
+      Object.entries(LANGUAGES)
+        .map(([key, { label, name }]) => {
+          const sel = key === selectedLang ? " selected" : "";
+          return `<option value="${key}"${sel}>${label} - ${name}</option>`;
+        })
+        .join("");
+    return list;
+  }
+
   // --- Popup (Shadow DOM) ---
   function createPopup(rect, sourceLang, targetLang) {
     if (!isExtensionValid()) { cleanup(); return; }
@@ -160,9 +196,11 @@
         <div class="resize-handle resize-bottom"></div>
         <div class="header">
           <div class="lang-pair">
-            <span class="lang-badge source">${LANGUAGES[sourceLang]?.label || "?"}</span>
+            <select class="lang-select source-select" id="sourceSelect" title="Source language">
+              ${buildSourceLangOptions(currentPopupSourceLang || "auto")}
+            </select>
             <span class="arrow">\u2192</span>
-            <select class="lang-select" id="targetSelect">${buildLangOptions(targetLang)}</select>
+            <select class="lang-select" id="targetSelect" title="Target language">${buildLangOptions(targetLang)}</select>
           </div>
           <button class="close-btn" id="closeBtn">\u2715</button>
         </div>
@@ -172,6 +210,7 @@
         <div class="footer">
           <button class="copy-btn" id="copyBtn" disabled>Copy</button>
           <select class="style-select" id="styleSelect">
+            <option value="auto">Auto</option>
             <option value="casual">Casual</option>
             <option value="polite">Polite</option>
             <option value="business">Business</option>
@@ -242,7 +281,7 @@
     });
 
     // Load saved style
-    chrome.storage.sync.get({ style: "casual" }, (data) => {
+    chrome.storage.sync.get({ style: "auto" }, (data) => {
       const select = shadowRoot.getElementById("styleSelect");
       if (select) select.value = data.style;
     });
@@ -260,17 +299,36 @@
       });
     });
 
+    // Source language change → re-translate (overrides only this popup, not storage)
+    shadowRoot.getElementById("sourceSelect").addEventListener("change", (e) => {
+      currentPopupSourceLang = e.target.value;
+      const newSource = currentPopupSourceLang === "auto" ? detectLanguage(currentSelection) : currentPopupSourceLang;
+      const targetSel = shadowRoot.getElementById("targetSelect");
+      // Same source==target safeguard, respecting the user's auto-swap preference
+      chrome.storage.sync.get({ enableAutoSwap: true }, (data) => {
+        let target = targetSel.value;
+        if (target === newSource && data.enableAutoSwap !== false) {
+          target = newSource === "english" ? "vietnamese" : "english";
+          targetSel.value = target;
+        }
+        translate(currentSelection, newSource, target);
+      });
+    });
+
     // Target language change → re-translate
     shadowRoot.getElementById("targetSelect").addEventListener("change", (e) => {
       chrome.storage.sync.set({ targetLang: e.target.value });
-      translate(currentSelection, sourceLang, e.target.value);
+      // Use the popup's current source selection (handles user overriding auto-detect)
+      const activeSource = currentPopupSourceLang === "auto" ? detectLanguage(currentSelection) : currentPopupSourceLang;
+      translate(currentSelection, activeSource, e.target.value);
     });
 
     // Style change → re-translate
     shadowRoot.getElementById("styleSelect").addEventListener("change", (e) => {
       chrome.storage.sync.set({ style: e.target.value });
       const targetSel = shadowRoot.getElementById("targetSelect");
-      translate(currentSelection, sourceLang, targetSel.value);
+      const activeSource = currentPopupSourceLang === "auto" ? detectLanguage(currentSelection) : currentPopupSourceLang;
+      translate(currentSelection, activeSource, targetSel.value);
     });
 
     // Resize handles
@@ -411,7 +469,7 @@
     const copyBtn = shadowRoot.getElementById("copyBtn");
     copyBtn.disabled = true;
 
-    chrome.storage.sync.get({ style: "casual" }, (data) => {
+    chrome.storage.sync.get({ style: "auto" }, (data) => {
       const style = data.style;
       chrome.runtime.sendMessage(
         { action: "translate", text, sourceLang, targetLang, style },
@@ -441,16 +499,40 @@
 
     removeTrigger();
 
-    const sourceLang = detectLanguage(text);
-    lastDetectedSourceLang = sourceLang;
+    resolveLanguages(text, (sourceLang, targetLang) => {
+      lastDetectedSourceLang = sourceLang;
+      currentPopupSourceLang = "auto"; // The T button always starts in auto mode
+      createPopup(rect, sourceLang, targetLang);
+      translate(text, sourceLang, targetLang);
+    });
+  }
 
-    // Use saved target language, fallback to vietnamese
-    chrome.storage.sync.get({ targetLang: "vietnamese" }, (data) => {
-      let targetLang = data.targetLang;
-      // If source and target are the same, switch to english
-      if (targetLang === sourceLang) {
-        targetLang = sourceLang === "english" ? "vietnamese" : "english";
-      }
+  // Used by both the T button and a keyboard shortcut. Captures the
+  // current selection (or falls back to the last non-empty one) and runs
+  // the same translation flow as the visible trigger.
+  function triggerFromSelection() {
+    if (!isExtensionValid()) { cleanup(); return; }
+    const sel = window.getSelection();
+    let text = sel?.toString().trim() || "";
+    if (!text && currentSelection) text = currentSelection;
+    if (!text) return;
+
+    let rect;
+    if (sel && sel.rangeCount) {
+      const r = sel.getRangeAt(0).getBoundingClientRect();
+      if (r.width > 0 || r.height > 0) rect = r;
+    }
+    if (!rect) {
+      // Fallback: place popup near the top of the viewport
+      rect = { left: window.innerWidth / 2 - 170, top: 80, right: window.innerWidth / 2 + 170, bottom: 80, width: 340, height: 0 };
+    }
+
+    currentSelection = text;
+    removeTrigger();
+
+    resolveLanguages(text, (sourceLang, targetLang) => {
+      lastDetectedSourceLang = sourceLang;
+      currentPopupSourceLang = "auto";
       createPopup(rect, sourceLang, targetLang);
       translate(text, sourceLang, targetLang);
     });
@@ -467,24 +549,30 @@
 
     removeTrigger();
 
-    const sourceLang = detectLanguage(text);
-    let targetLang = lastDetectedSourceLang;
+    resolveLanguages(text, (sourceLang, targetLang) => {
+      // Reverse: target should be the last detected source
+      let reverseTarget = lastDetectedSourceLang;
+      if (reverseTarget && reverseTarget !== sourceLang) {
+        targetLang = reverseTarget;
+      }
+      // If targetLang still matches sourceLang, fall back to saved target (with auto-swap)
+      if (targetLang === sourceLang) {
+        chrome.storage.sync.get({ targetLang: "vietnamese", enableAutoSwap: true }, (data) => {
+          let fallback = data.targetLang;
+          if (fallback === sourceLang && data.enableAutoSwap !== false) {
+            fallback = sourceLang === "english" ? "vietnamese" : "english";
+          }
+          currentPopupSourceLang = "auto";
+          createPopup(rect, sourceLang, fallback);
+          translate(text, sourceLang, fallback);
+        });
+        return;
+      }
 
-    // If reverse target equals detected source, fall back to saved targetLang
-    if (targetLang === sourceLang) {
-      chrome.storage.sync.get({ targetLang: "vietnamese" }, (data) => {
-        let fallback = data.targetLang;
-        if (fallback === sourceLang) {
-          fallback = sourceLang === "english" ? "vietnamese" : "english";
-        }
-        createPopup(rect, sourceLang, fallback);
-        translate(text, sourceLang, fallback);
-      });
-      return;
-    }
-
-    createPopup(rect, sourceLang, targetLang);
-    translate(text, sourceLang, targetLang);
+      currentPopupSourceLang = "auto";
+      createPopup(rect, sourceLang, targetLang);
+      translate(text, sourceLang, targetLang);
+    });
   }
 
   // --- Selection Listener ---
@@ -495,7 +583,6 @@
     if (target.closest?.("#ai-translator-popup-host")) return;
     if (target.closest?.(".ai-translator-trigger")) return;
     if (target.closest?.(".ai-translator-trigger-container")) return;
-
     setTimeout(() => {
       const sel = window.getSelection();
       const text = sel?.toString().trim();
@@ -582,7 +669,18 @@
     if (pageTranslationState === "translating") return;
 
     const settings = await new Promise((r) =>
-      chrome.storage.sync.get({ apiKey: "", geminiApiKey: "", targetLang: "vietnamese", style: "casual", provider: "openai" }, r)
+      chrome.storage.sync.get(
+        {
+          apiKey: "",
+          geminiApiKey: "",
+          targetLang: "vietnamese",
+          style: "auto",
+          provider: "openai",
+          sourceLang: "auto",
+          enableAutoSwap: true,
+        },
+        r
+      )
     );
     if (settings.provider === "openai" && !settings.apiKey) {
       showLoadingError("No API key set. Open extension settings.");
@@ -608,11 +706,16 @@
     const batches = createBatches(textNodes);
     const totalBatches = batches.length;
 
-    // Detect source language from page sample
+    // Resolve source/target: sourceLang="auto" → detect from a sample, otherwise
+    // honor the user's manual choice. Smart-swap when source equals target,
+    // only if the user has the "auto-swap" toggle enabled.
     const sampleText = textNodes.slice(0, 10).map((n) => n.textContent).join(" ");
-    let sourceLang = detectLanguage(sampleText);
+    const sourceLang =
+      settings.sourceLang && settings.sourceLang !== "auto"
+        ? settings.sourceLang
+        : detectLanguage(sampleText);
     let targetLang = settings.targetLang;
-    if (targetLang === sourceLang) {
+    if (targetLang === sourceLang && settings.enableAutoSwap !== false) {
       targetLang = sourceLang === "english" ? "vietnamese" : "english";
     }
 
@@ -665,7 +768,6 @@
         completed += chunk.length;
         showLoading(`Translating... ${completed}/${totalBatches}`);
       } catch (err) {
-        console.warn("AI Translator: batch failed", err.message);
         showLoadingError(`Error: ${err.message}`);
         pageTranslationState = originalTexts.size > 0 ? "translated" : "idle";
         failed = true;
@@ -788,7 +890,7 @@
           if (result[j]) batch[j].textContent = result[j];
         }
       } catch (err) {
-        console.warn("AI Translator: dynamic translate failed", err.message);
+        // Silently skip failed batches for dynamic translation
       }
     }
   }
@@ -865,15 +967,81 @@
   // --- Message Listener (from popup.js) ---
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === "translatePage") {
-      translatePage();
-      sendResponse({ ok: true });
+      translatePage().then(() => sendResponse({ ok: true })).catch(() => sendResponse({ ok: false }));
+      return true;
     } else if (request.action === "revertPage") {
       revertPageTranslation();
       sendResponse({ ok: true });
     } else if (request.action === "getPageTranslationState") {
       sendResponse({ state: pageTranslationState });
+    } else if (request.action === "triggerFromShortcut") {
+      triggerFromSelection();
+      sendResponse({ ok: true });
     }
   });
+
+  // --- Page-level keyboard shortcuts ---
+  // The user-configured shortcut strings live in chrome.storage.sync.
+  // We capture keystrokes and dispatch based on which combo matches.
+  let shortcutSelection = "";
+  let shortcutPage = "";
+
+  function loadShortcuts() {
+    chrome.storage.sync.get(
+      { shortcutTranslateSelection: "Ctrl+Shift+T", shortcutTranslatePage: "Ctrl+Shift+P" },
+      (data) => {
+        shortcutSelection = data.shortcutTranslateSelection || "";
+        shortcutPage = data.shortcutTranslatePage || "";
+      }
+    );
+  }
+  loadShortcuts();
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== "sync") return;
+    if (changes.shortcutTranslateSelection) shortcutSelection = changes.shortcutTranslateSelection.newValue || "";
+    if (changes.shortcutTranslatePage) shortcutPage = changes.shortcutTranslatePage.newValue || "";
+  });
+
+  function eventToCombo(e) {
+    const parts = [];
+    const mod = e.ctrlKey || e.metaKey;
+    if (mod) parts.push("Ctrl");
+    if (e.altKey) parts.push("Alt");
+    if (e.shiftKey) parts.push("Shift");
+    let key = e.key;
+    if (key === " ") key = "Space";
+    else if (key.length === 1) key = key.toUpperCase();
+    parts.push(key);
+    return parts.join("+");
+  }
+
+  // Don't fire our shortcuts when the user is typing in an input/textarea/
+  // contentEditable (avoid stealing Ctrl+Shift+T from their usual workflow).
+  function isTypingInEditable(target) {
+    if (!target) return false;
+    const tag = target.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+    if (target.isContentEditable) return true;
+    return false;
+  }
+
+  document.addEventListener("keydown", (e) => {
+    if (isTypingInEditable(e.target)) return;
+    const combo = eventToCombo(e);
+    if (shortcutSelection && combo === shortcutSelection) {
+      e.preventDefault();
+      e.stopPropagation();
+      triggerFromSelection();
+    } else if (shortcutPage && combo === shortcutPage) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (pageTranslationState === "translated") {
+        revertPageTranslation();
+      } else if (pageTranslationState !== "translating") {
+        translatePage();
+      }
+    }
+  }, true);
 
   // --- Popup CSS ---
   function getPopupCSS() {
