@@ -96,7 +96,7 @@ const DEFAULT_TRANSLATIONS = {
     targetLanguage: "目标语言",
     sourceLanguage: "源语言",
     autoDetect: "自动检测",
-    enableAutoSwap: "源语言 = 目标语言时自动切换",
+    enableAutoSwap: "源语言 = 目标语言时自动切换为英文",
     saveSettings: "保存设置",
     translateThisPage: "翻译此页面",
     translating: "翻译中...",
@@ -259,7 +259,7 @@ function init() {
       shortcutTranslateSelection: DEFAULT_SHORTCUTS.shortcutTranslateSelection,
       shortcutTranslatePage: DEFAULT_SHORTCUTS.shortcutTranslatePage,
       sourceLang: "auto",
-      enableAutoSwap: true,
+      enableAutoSwap: false,
     },
     (data) => {
       // Set UI language
@@ -275,7 +275,7 @@ function init() {
 
       targetLangSelect.value = data.targetLang;
       sourceLangSelect.value = data.sourceLang || "auto";
-      enableAutoSwapCheckbox.checked = data.enableAutoSwap !== false; // default true
+      enableAutoSwapCheckbox.checked = data.enableAutoSwap === true;
       openaiModelSelect.value = data.openaiModel;
       geminiModelSelect.value = data.geminiModel;
 
