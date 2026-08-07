@@ -249,6 +249,16 @@ label {
   flex: 1;
 }
 
+.select-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.select-row .select-field {
+  flex: 1;
+}
+
 .model-label {
   margin-top: 10px;
   margin-bottom: 6px;

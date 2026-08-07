@@ -69,9 +69,17 @@ const DEFAULT_TRANSLATIONS = {
     enterApiKey: "Please enter your OpenAI API key",
     enterGeminiApiKey: "Please enter your Gemini API key",
     selectOllamaModel: "Please select an Ollama model",
+    enterCustomUrl: "Please enter a custom API URL",
+    enterCustomApiKey: "Please enter a custom API key",
+    selectCustomModel: "Please select a custom model",
     loadingModels: "Loading...",
     failedToLoad: "Failed to load",
     noModelsFound: "No models found",
+    failedToLoadOpenAIModels: "Failed to load OpenAI models",
+    failedToLoadCustomModels: "Failed to load custom models",
+    manualEntry: "Manual entry",
+    manualModelEntryTip: "Model list is not available for this provider. Please enter the model name manually.",
+    customUrl: "API URL",
     selectModel: "-- Select model --",
     cannotConnectOllama: "Cannot connect to Ollama",
     uiLanguage: "Interface Language",
@@ -106,9 +114,17 @@ const DEFAULT_TRANSLATIONS = {
     enterApiKey: "请输入OpenAI API密钥",
     enterGeminiApiKey: "请输入Gemini API密钥",
     selectOllamaModel: "请选择Ollama模型",
+    enterCustomUrl: "请输入自定义API地址",
+    enterCustomApiKey: "请输入自定义API密钥",
+    selectCustomModel: "请选择自定义模型",
     loadingModels: "加载中...",
     failedToLoad: "加载失败",
     noModelsFound: "未找到模型",
+    failedToLoadOpenAIModels: "加载OpenAI模型失败",
+    failedToLoadCustomModels: "加载自定义模型失败",
+    manualEntry: "手动输入",
+    manualModelEntryTip: "当前服务商不支持自动获取模型列表，请手动输入模型名称。",
+    customUrl: "API地址",
     selectModel: "-- 选择模型 --",
     cannotConnectOllama: "无法连接到Ollama",
     uiLanguage: "界面语言",
@@ -157,6 +173,14 @@ const geminiModelSelect = document.getElementById("geminiModel");
 const ollamaUrlInput = document.getElementById("ollamaUrl");
 const ollamaModelSelect = document.getElementById("ollamaModel");
 const refreshOllamaBtn = document.getElementById("refreshOllama");
+const refreshOpenAIModelsBtn = document.getElementById("refreshOpenAIModels");
+const customUrlInput = document.getElementById("customUrl");
+const customApiKeyInput = document.getElementById("customApiKey");
+const toggleCustomKeyBtn = document.getElementById("toggleCustomKey");
+const customModelSelect = document.getElementById("customModel");
+const customModelInput = document.getElementById("customModelInput");
+const refreshCustomBtn = document.getElementById("refreshCustom");
+const customSettings = document.getElementById("customSettings");
 const saveSettingsBtn = document.getElementById("saveSettings");
 const uiLanguageSelect = document.getElementById("uiLanguage");
 const shortcutSelectionInput = document.getElementById("shortcutTranslateSelection");
@@ -169,7 +193,11 @@ const enableAutoSwapCheckbox = document.getElementById("enableAutoSwap");
 // ===== State =====
 let activeProvider = "openai";
 let ollamaLoaded = false;
+let openaiModelsLoaded = false;
+let customModelsLoaded = false;
 let savedOllamaModel = "";
+let savedOpenaiModel = "";
+let savedCustomModel = "";
 
 // ===== Default keyboard shortcuts =====
 const DEFAULT_SHORTCUTS = {
@@ -255,6 +283,9 @@ function init() {
       openaiModel: "gpt-4o-mini",
       geminiApiKey: "",
       geminiModel: "gemini-2.5-flash",
+      customUrl: "",
+      customApiKey: "",
+      customModel: "",
       uiLanguage: "en",
       shortcutTranslateSelection: DEFAULT_SHORTCUTS.shortcutTranslateSelection,
       shortcutTranslatePage: DEFAULT_SHORTCUTS.shortcutTranslatePage,
@@ -277,12 +308,22 @@ function init() {
       sourceLangSelect.value = data.sourceLang || "auto";
       enableAutoSwapCheckbox.checked = data.enableAutoSwap === true;
       openaiModelSelect.value = data.openaiModel;
+      savedOpenaiModel = data.openaiModel;
       geminiModelSelect.value = data.geminiModel;
 
       if (!geminiModelSelect.value) geminiModelSelect.value = "gemini-2.5-flash";
 
       ollamaUrlInput.value = data.ollamaUrl;
       savedOllamaModel = data.ollamaModel;
+
+      // Custom provider settings
+      if (data.customUrl) customUrlInput.value = data.customUrl;
+      if (data.customApiKey) customApiKeyInput.value = data.customApiKey;
+      savedCustomModel = data.customModel;
+      if (data.customModel) {
+        customModelSelect.value = data.customModel;
+        customModelInput.value = data.customModel;
+      }
 
       // Restore shortcuts into the pending state and UI
       pendingShortcuts.shortcutTranslateSelection = data.shortcutTranslateSelection || DEFAULT_SHORTCUTS.shortcutTranslateSelection;
@@ -311,9 +352,16 @@ function switchProvider(provider) {
   openaiSettings.classList.toggle("hidden", provider !== "openai");
   geminiSettings.classList.toggle("hidden", provider !== "gemini");
   ollamaSettings.classList.toggle("hidden", provider !== "ollama");
+  customSettings.classList.toggle("hidden", provider !== "custom");
 
   if (provider === "ollama" && !ollamaLoaded) {
     loadOllamaModels(ollamaUrlInput.value.trim(), savedOllamaModel);
+  }
+  if (provider === "openai" && !openaiModelsLoaded && apiKeyInput.value.trim()) {
+    loadOpenAIModels(apiKeyInput.value.trim(), savedOpenaiModel);
+  }
+  if (provider === "custom" && !customModelsLoaded && customUrlInput.value.trim() && customApiKeyInput.value.trim()) {
+    loadCustomModels(customUrlInput.value.trim(), customApiKeyInput.value.trim(), savedCustomModel);
   }
 }
 
@@ -328,6 +376,10 @@ toggleKeyBtn.addEventListener("click", () => {
 
 toggleGeminiKeyBtn.addEventListener("click", () => {
   geminiApiKeyInput.type = geminiApiKeyInput.type === "password" ? "text" : "password";
+});
+
+toggleCustomKeyBtn.addEventListener("click", () => {
+  customApiKeyInput.type = customApiKeyInput.type === "password" ? "text" : "password";
 });
 
 // ===== Ollama: fetch models =====
@@ -365,6 +417,115 @@ async function loadOllamaModels(url, selectedModel) {
 
 refreshOllamaBtn.addEventListener("click", () => {
   loadOllamaModels(ollamaUrlInput.value.trim(), ollamaModelSelect.value);
+});
+
+// ===== OpenAI: fetch models dynamically =====
+async function loadOpenAIModels(apiKey, selectedModel) {
+  openaiModelsLoaded = true;
+  openaiModelSelect.innerHTML = `<option value="">${t("loadingModels")}</option>`;
+  openaiModelSelect.disabled = true;
+
+  chrome.runtime.sendMessage({ action: "fetchOpenAIModels", apiKey }, (response) => {
+    openaiModelSelect.disabled = false;
+
+    if (chrome.runtime.lastError || !response?.success) {
+      openaiModelsLoaded = false;
+      // Fallback to hardcoded list on error
+      const fallbackModels = [
+        "gpt-4o-mini",
+        "gpt-4o",
+        "gpt-4-turbo",
+        "gpt-4.1-nano",
+        "gpt-4.1-mini",
+        "gpt-4.1",
+        "gpt-3.5-turbo",
+      ];
+      openaiModelSelect.innerHTML = fallbackModels
+        .map((m) => `<option value="${m}">${m}</option>`)
+        .join("");
+      showStatus(response?.error || t("failedToLoadOpenAIModels"), "error");
+      return;
+    }
+
+    const models = response.models;
+    if (models.length === 0) {
+      openaiModelsLoaded = false;
+      openaiModelSelect.innerHTML = `<option value="">${t("noModelsFound")}</option>`;
+      return;
+    }
+
+    openaiModelSelect.innerHTML = models
+      .map((m) => `<option value="${m}">${m}</option>`)
+      .join("");
+
+    if (selectedModel && models.includes(selectedModel)) {
+      openaiModelSelect.value = selectedModel;
+    }
+  });
+}
+
+refreshOpenAIModelsBtn.addEventListener("click", () => {
+  loadOpenAIModels(apiKeyInput.value.trim(), openaiModelSelect.value);
+});
+
+// ===== Custom provider: sync model select and input =====
+customModelSelect.addEventListener("change", () => {
+  if (customModelSelect.value) {
+    customModelInput.value = customModelSelect.value;
+  }
+});
+
+customModelInput.addEventListener("input", () => {
+  if (customModelInput.value.trim()) {
+    customModelSelect.value = "";
+  }
+});
+
+// ===== Custom provider: fetch models dynamically =====
+async function loadCustomModels(url, apiKey, selectedModel) {
+  customModelsLoaded = true;
+  customModelSelect.innerHTML = `<option value="">${t("loadingModels")}</option>`;
+  customModelSelect.disabled = true;
+
+  chrome.runtime.sendMessage({ action: "fetchCustomModels", url, apiKey }, (response) => {
+    customModelSelect.disabled = false;
+
+    if (chrome.runtime.lastError || !response?.success) {
+      customModelsLoaded = false;
+      const errorMsg = response?.error || t("failedToLoadCustomModels");
+      if (errorMsg === "MANUAL_INPUT_REQUIRED") {
+        customModelSelect.innerHTML = `<option value="">${t("manualEntry")}</option>`;
+        customModelInput.classList.remove("hidden");
+        showStatus(t("manualModelEntryTip"), "info");
+      } else {
+        customModelSelect.innerHTML = `<option value="">${t("failedToLoad")}</option>`;
+        customModelInput.classList.remove("hidden");
+        showStatus(errorMsg, "error");
+      }
+      return;
+    }
+
+    const models = response.models;
+    if (models.length === 0) {
+      customModelsLoaded = false;
+      customModelSelect.innerHTML = `<option value="">${t("noModelsFound")}</option>`;
+      customModelInput.classList.remove("hidden");
+      return;
+    }
+
+    customModelSelect.innerHTML = models
+      .map((m) => `<option value="${m}">${m}</option>`)
+      .join("");
+    customModelInput.classList.add("hidden");
+
+    if (selectedModel && models.includes(selectedModel)) {
+      customModelSelect.value = selectedModel;
+    }
+  });
+}
+
+refreshCustomBtn.addEventListener("click", () => {
+  loadCustomModels(customUrlInput.value.trim(), customApiKeyInput.value.trim(), customModelSelect.value);
 });
 
 // ===== Shortcut capture (key recording) =====
@@ -515,6 +676,22 @@ saveSettingsBtn.addEventListener("click", () => {
     showStatus(t("selectOllamaModel"), "error");
     return;
   }
+  if (activeProvider === "custom") {
+    if (!customUrlInput.value.trim()) {
+      showStatus(t("enterCustomUrl"), "error");
+      return;
+    }
+    if (!customApiKeyInput.value.trim()) {
+      showStatus(t("enterCustomApiKey"), "error");
+      return;
+    }
+    // Allow either select or manual input for model
+    const modelValue = customModelInput.value.trim() || customModelSelect.value;
+    if (!modelValue) {
+      showStatus(t("selectCustomModel"), "error");
+      return;
+    }
+  }
 
   // Validate: if a shortcut is set, it must include at least one modifier
   for (const k of ["shortcutTranslateSelection", "shortcutTranslatePage"]) {
@@ -533,6 +710,9 @@ saveSettingsBtn.addEventListener("click", () => {
     geminiModel: geminiModelSelect.value,
     ollamaUrl: ollamaUrlInput.value.trim() || "http://localhost:11434",
     ollamaModel: ollamaModelSelect.value,
+    customUrl: customUrlInput.value.trim(),
+    customApiKey: customApiKeyInput.value.trim(),
+    customModel: customModelInput.value.trim() || customModelSelect.value,
     style: document.querySelector('input[name="style"]:checked')?.value || "auto",
     targetLang: targetLangSelect.value,
     sourceLang: sourceLangSelect.value,
