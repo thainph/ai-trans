@@ -1,13 +1,20 @@
 // --- Default Settings ---
 const DEFAULT_SETTINGS = {
   targetLang: "vietnamese",
-  style: "casual",
+  style: "auto",
   popupWidth: 340,
   provider: "openai",
   ollamaUrl: "http://localhost:11434",
   ollamaModel: "",
   openaiModel: "gpt-4o-mini",
   geminiModel: "gemini-2.5-flash",
+  // Custom provider settings
+  customUrl: "",
+  customApiKey: "",
+  customModel: "",
+  // New: explicit source language override + auto-swap toggle
+  sourceLang: "auto",
+  enableAutoSwap: true,
 };
 
 // Initialize defaults on first install
@@ -61,6 +68,7 @@ chrome.runtime.onInstalled.addListener((details) => {
 });
 
 const STYLE_PROMPTS = {
+  auto: "Analyze the text content and context to determine the most appropriate tone and style for the translation",
   casual: "Use a casual, friendly, conversational tone",
   polite: "Use a polite, respectful, and formal tone",
   business: "Use a formal, professional business tone",
@@ -85,6 +93,19 @@ const LANG_NAMES = {
   hindi: "Hindi",
 };
 
+// ===== Browser-level shortcut commands (manifest.json → commands) =====
+chrome.commands.onCommand.addListener((command) => {
+  if (command === "translate-selection") {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs[0]?.id) chrome.tabs.sendMessage(tabs[0].id, { action: "triggerFromShortcut" });
+    });
+  } else if (command === "translate-page") {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs[0]?.id) chrome.tabs.sendMessage(tabs[0].id, { action: "translatePage" });
+    });
+  }
+});
+
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === "translate") {
     handleTranslate(request.text, request.sourceLang, request.targetLang, request.style)
@@ -94,6 +115,18 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
   if (request.action === "fetchOllamaModels") {
     fetchOllamaModels(request.url)
+      .then((models) => sendResponse({ success: true, models }))
+      .catch((err) => sendResponse({ success: false, error: err.message }));
+    return true;
+  }
+  if (request.action === "fetchOpenAIModels") {
+    fetchOpenAIModels(request.apiKey)
+      .then((models) => sendResponse({ success: true, models }))
+      .catch((err) => sendResponse({ success: false, error: err.message }));
+    return true;
+  }
+  if (request.action === "fetchCustomModels") {
+    fetchCustomModels(request.url, request.apiKey)
       .then((models) => sendResponse({ success: true, models }))
       .catch((err) => sendResponse({ success: false, error: err.message }));
     return true;
@@ -121,10 +154,84 @@ async function fetchOllamaModels(url) {
   return (data.models || []).map((m) => m.name);
 }
 
+async function fetchOpenAIModels(apiKey) {
+  if (!apiKey) {
+    throw new Error("API key is required");
+  }
+  let response;
+  try {
+    response = await fetch("https://api.openai.com/v1/models", {
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+      },
+    });
+  } catch (err) {
+    throw new Error(`Cannot connect to OpenAI — ${err.message}`);
+  }
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.error?.message || `OpenAI error ${response.status}`);
+  }
+  const data = await response.json();
+  // Filter for chat models only (gpt, o1, o3, o4 etc.)
+  const chatModels = (data.data || [])
+    .filter((m) => m.id.startsWith("gpt-") || m.id.startsWith("o1") || m.id.startsWith("o3") || m.id.startsWith("o4"))
+    .map((m) => m.id)
+    .sort();
+  return chatModels;
+}
+
+async function fetchCustomModels(baseUrl, apiKey) {
+  if (!baseUrl) {
+    throw new Error("Custom API URL is required");
+  }
+  if (!apiKey) {
+    throw new Error("API key is required");
+  }
+  let base = baseUrl.replace(/\/+$/, "");
+
+  // Only jbbtoken.cn and jbbt.cc support /v1/models endpoint
+  // Other services: use custom model list API URL entered by user
+  if (!base.includes("jbbtoken.cn") && !base.includes("jbbt.cc")) {
+    throw new Error("MANUAL_INPUT_REQUIRED");
+  }
+
+  // jbbtoken.cn and jbbt.cc: if URL already has /v1, use /models; otherwise use /v1/models
+  const modelsUrl = base.endsWith("/v1") ? `${base}/models` : `${base}/v1/models`;
+
+  let response;
+  try {
+    response = await fetch(modelsUrl, {
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+      },
+    });
+  } catch (err) {
+    throw new Error(`Cannot connect to ${modelsUrl} — ${err.message}`);
+  }
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.error?.message || `API error ${response.status}`);
+  }
+  const data = await response.json();
+  // Try to extract model IDs - handle different API formats
+  if (Array.isArray(data)) {
+    return data.map((m) => typeof m === "string" ? m : m.id || m.name);
+  }
+  if (data.data && Array.isArray(data.data)) {
+    return data.data.map((m) => m.id || m.name);
+  }
+  // jbbtoken.cn might return { models: [...] } format
+  if (data.models && Array.isArray(data.models)) {
+    return data.models.map((m) => typeof m === "string" ? m : m.id || m.name);
+  }
+  throw new Error("Unexpected response format from models endpoint");
+}
+
 async function getProviderConfig() {
   const data = await chrome.storage.sync.get([
     "provider", "apiKey", "ollamaUrl", "ollamaModel", "openaiModel",
-    "geminiApiKey", "geminiModel",
+    "geminiApiKey", "geminiModel", "customUrl", "customApiKey", "customModel",
   ]);
   const provider = data.provider || "openai";
 
@@ -153,6 +260,32 @@ async function getProviderConfig() {
       headers: {
         "Content-Type": "application/json",
         "x-goog-api-key": data.geminiApiKey,
+      },
+    };
+  }
+
+  if (provider === "custom") {
+    if (!data.customUrl) {
+      throw new Error("No Custom API URL set. Click the extension icon to configure.");
+    }
+    if (!data.customApiKey) {
+      throw new Error("No Custom API key set. Click the extension icon to configure.");
+    }
+    if (!data.customModel) {
+      throw new Error("No Custom model selected. Click the extension icon to configure.");
+    }
+    let base = data.customUrl.replace(/\/+$/, "");
+    // Append /v1 if not already present
+    if (!base.endsWith("/v1")) {
+      base = `${base}/v1`;
+    }
+    return {
+      provider: "custom",
+      url: `${base}/chat/completions`,
+      model: data.customModel,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${data.customApiKey}`,
       },
     };
   }
@@ -239,38 +372,57 @@ async function callLLM(systemPrompt, userContent, maxTokens) {
 }
 
 async function handleTranslateBatch(texts, sourceLang, targetLang, style) {
-  const styleInstruction = STYLE_PROMPTS[style] || STYLE_PROMPTS.casual;
+  const styleInstruction = STYLE_PROMPTS[style] || STYLE_PROMPTS.auto;
   const source = LANG_NAMES[sourceLang] || sourceLang;
   const target = LANG_NAMES[targetLang] || targetLang;
 
-  // Numbered format — more reliable than separator for LLMs
   const numbered = texts.map((t, i) => `[${i}] ${t}`).join("\n");
 
   const systemPrompt = `You are a translator. Translate each numbered line from ${source} to ${target}.\n${styleInstruction}.\nKeep the [N] prefix on each line. Return ONLY the translated lines, one per line, same order.`;
 
   const raw = await callLLM(systemPrompt, numbered, 4096);
 
-  // Parse numbered response
-  const result = new Array(texts.length);
-  for (const line of raw.split("\n")) {
-    const match = line.match(/^\[(\d+)\]\s*(.+)/);
+  // Strip markdown code fences
+  let cleaned = raw;
+  if (cleaned.startsWith("```")) {
+    cleaned = cleaned.replace(/^```[^\n]*\n?/, "").replace(/\n?```\s*$/, "");
+  }
+
+  const lines = cleaned.split("\n").map((l) => l.trim()).filter((l) => l.length > 0);
+
+  // Try numbered parsing first: "[N] text" or "[N]: text"
+  const result = new Array(texts.length).fill(null);
+  let parsedCount = 0;
+  for (const line of lines) {
+    const match = line.match(/^\[(\d+)\][\s:]+(.+)/);
     if (match) {
       const idx = parseInt(match[1], 10);
-      if (idx >= 0 && idx < texts.length) {
+      if (idx >= 0 && idx < texts.length && match[2].trim()) {
         result[idx] = match[2].trim();
+        parsedCount++;
       }
     }
   }
 
-  // Fill missing with original
-  for (let i = 0; i < texts.length; i++) {
-    if (!result[i]) result[i] = texts[i];
+  // If numbered parsing didn't work (LLM ignored numbering), do line-by-line fallback
+  // Each line of output corresponds to each text in order
+  if (parsedCount < texts.length * 0.5) {
+    // Clear result and use line-by-line mapping
+    for (let i = 0; i < texts.length; i++) {
+      result[i] = lines[i] || texts[i];
+    }
+  } else {
+    // Fill missing with original
+    for (let i = 0; i < texts.length; i++) {
+      if (!result[i]) result[i] = texts[i];
+    }
   }
+
   return result;
 }
 
 async function handleTranslate(text, sourceLang, targetLang, style) {
-  const styleInstruction = STYLE_PROMPTS[style] || STYLE_PROMPTS.casual;
+  const styleInstruction = STYLE_PROMPTS[style] || STYLE_PROMPTS.auto;
   const source = LANG_NAMES[sourceLang] || sourceLang;
   const target = LANG_NAMES[targetLang] || targetLang;
 

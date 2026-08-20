@@ -1,0 +1,118 @@
+{
+  "extName": {
+    "message": "AI翻译助手",
+    "description": "Extension name"
+  },
+  "appTitle": {
+    "message": "AI翻译助手",
+    "description": "App title in header"
+  },
+  "appSubtitle": {
+    "message": "使用AI翻译任意文本",
+    "description": "App subtitle in header"
+  },
+  "provider": {
+    "message": "服务提供商",
+    "description": "Provider section label"
+  },
+  "apiKey": {
+    "message": "API密钥",
+    "description": "API Key label"
+  },
+  "model": {
+    "message": "模型",
+    "description": "Model label"
+  },
+  "ollamaUrl": {
+    "message": "Ollama服务器地址",
+    "description": "Ollama URL label"
+  },
+  "translationStyle": {
+    "message": "翻译风格",
+    "description": "Translation style section label"
+  },
+  "styleCasual": {
+    "message": "口语化",
+    "description": "Casual style option"
+  },
+  "stylePolite": {
+    "message": "礼貌",
+    "description": "Polite style option"
+  },
+  "styleBusiness": {
+    "message": "商务",
+    "description": "Business style option"
+  },
+  "targetLanguage": {
+    "message": "目标语言",
+    "description": "Target language section label"
+  },
+  "saveSettings": {
+    "message": "保存设置",
+    "description": "Save button text"
+  },
+  "translateThisPage": {
+    "message": "翻译此页面",
+    "description": "Translate page button text"
+  },
+  "translating": {
+    "message": "翻译中...",
+    "description": "Translating state"
+  },
+  "revertTranslation": {
+    "message": "恢复原文",
+    "description": "Revert translation button text"
+  },
+  "selectTextHint": {
+    "message": "选中任意页面上的文本即可翻译",
+    "description": "Hint text"
+  },
+  "settingsSaved": {
+    "message": "设置已保存！",
+    "description": "Settings saved message"
+  },
+  "enterApiKey": {
+    "message": "请输入OpenAI API密钥",
+    "description": "Error: API key required"
+  },
+  "enterGeminiApiKey": {
+    "message": "请输入Gemini API密钥",
+    "description": "Error: Gemini API key required"
+  },
+  "selectOllamaModel": {
+    "message": "请选择Ollama模型",
+    "description": "Error: Ollama model required"
+  },
+  "loadingModels": {
+    "message": "加载中...",
+    "description": "Loading models state"
+  },
+  "failedToLoad": {
+    "message": "加载失败",
+    "description": "Failed to load models"
+  },
+  "noModelsFound": {
+    "message": "未找到模型",
+    "description": "No models found"
+  },
+  "selectModel": {
+    "message": "-- 选择模型 --",
+    "description": "Select model placeholder"
+  },
+  "cannotConnectOllama": {
+    "message": "无法连接到Ollama",
+    "description": "Cannot connect to Ollama error"
+  },
+  "uiLanguage": {
+    "message": "界面语言",
+    "description": "UI language selector label"
+  },
+  "languageEn": {
+    "message": "English",
+    "description": "English language name"
+  },
+  "languageZh": {
+    "message": "中文",
+    "description": "Chinese language name"
+  }
+}

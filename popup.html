@@ -13,23 +13,32 @@
           <path d="m22 22-5-10-5 10" /><path d="M14 18h6" />
         </svg>
       </span>
-      <div>
-        <div class="app-title">AI Translator</div>
-        <div class="app-subtitle">Translate any text with AI</div>
+      <div class="header-content">
+        <div class="header-left">
+          <div class="app-title" data-i18n="appTitle">AI Translator</div>
+          <div class="app-subtitle" data-i18n="appSubtitle">Translate any text with AI</div>
+        </div>
+        <div class="lang-selector">
+          <select id="uiLanguage" class="lang-select">
+            <option value="en" data-i18n-option="languageEn">English</option>
+            <option value="zh" data-i18n-option="languageZh">中文</option>
+          </select>
+        </div>
       </div>
     </header>
 
     <div class="section">
-      <label class="field-label">Provider</label>
+      <label class="field-label" data-i18n="provider">Provider</label>
       <div class="provider-tabs">
         <button class="provider-tab active" data-provider="openai">OpenAI</button>
         <button class="provider-tab" data-provider="gemini">Gemini</button>
         <button class="provider-tab" data-provider="ollama">Ollama</button>
+        <button class="provider-tab" data-provider="custom">Custom</button>
       </div>
     </div>
 
     <div id="openaiSettings" class="section">
-      <label for="apiKey">API Key</label>
+      <label for="apiKey" data-i18n="apiKey">API Key</label>
       <div class="key-row">
         <input
           type="password"
@@ -43,20 +52,30 @@
           </svg>
         </button>
       </div>
-      <label for="openaiModel">Model</label>
-      <select id="openaiModel" class="select-field">
-        <option value="gpt-4o-mini">gpt-4o-mini</option>
-        <option value="gpt-4o">gpt-4o</option>
-        <option value="gpt-4-turbo">gpt-4-turbo</option>
-        <option value="gpt-4.1-nano">gpt-4.1-nano</option>
-        <option value="gpt-4.1-mini">gpt-4.1-mini</option>
-        <option value="gpt-4.1">gpt-4.1</option>
-        <option value="gpt-3.5-turbo">gpt-3.5-turbo</option>
-      </select>
+      <label for="openaiModel" data-i18n="model">Model</label>
+      <div class="select-row">
+        <select id="openaiModel" class="select-field">
+          <option value="gpt-4o-mini">gpt-4o-mini</option>
+          <option value="gpt-4o">gpt-4o</option>
+          <option value="gpt-4-turbo">gpt-4-turbo</option>
+          <option value="gpt-4.1-nano">gpt-4.1-nano</option>
+          <option value="gpt-4.1-mini">gpt-4.1-mini</option>
+          <option value="gpt-4.1">gpt-4.1</option>
+          <option value="gpt-3.5-turbo">gpt-3.5-turbo</option>
+        </select>
+        <button id="refreshOpenAIModels" class="btn-icon" type="button" title="Refresh models" aria-label="Refresh OpenAI models">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+            <path d="M3 3v5h5" />
+            <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
+            <path d="M16 16h5v5" />
+          </svg>
+        </button>
+      </div>
     </div>
 
     <div id="geminiSettings" class="section hidden">
-      <label for="geminiApiKey">API Key</label>
+      <label for="geminiApiKey" data-i18n="apiKey">API Key</label>
       <div class="key-row">
         <input
           type="password"
@@ -70,7 +89,7 @@
           </svg>
         </button>
       </div>
-      <label for="geminiModel">Model</label>
+      <label for="geminiModel" data-i18n="model">Model</label>
       <select id="geminiModel" class="select-field">
         <option value="gemini-3.6-flash">gemini-3.6-flash</option>
         <option value="gemini-3.5-flash">gemini-3.5-flash</option>
@@ -83,17 +102,17 @@
     </div>
 
     <div id="ollamaSettings" class="section hidden">
-      <label for="ollamaUrl">Ollama URL</label>
+      <label for="ollamaUrl" data-i18n="ollamaUrl">Ollama URL</label>
       <input
         type="text"
         id="ollamaUrl"
         class="input-field"
         placeholder="http://localhost:11434"
       />
-      <label for="ollamaModel" style="margin-top: 12px">Model</label>
+      <label for="ollamaModel" class="model-label" data-i18n="model">Model</label>
       <div class="model-row">
         <select id="ollamaModel" class="select-field">
-          <option value="">-- Load models --</option>
+          <option value="" data-i18n-option="loadingModels">-- Load models --</option>
         </select>
         <button id="refreshOllama" class="btn-icon" type="button" title="Refresh models" aria-label="Refresh Ollama models">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -103,26 +122,72 @@
       </div>
     </div>
 
+    <div id="customSettings" class="section hidden">
+      <label for="customUrl" data-i18n="customUrl">API URL</label>
+      <input
+        type="text"
+        id="customUrl"
+        class="input-field"
+        placeholder="https://api.example.com"
+      />
+      <label for="customApiKey" data-i18n="apiKey">API Key</label>
+      <div class="key-row">
+        <input
+          type="password"
+          id="customApiKey"
+          placeholder="sk-..."
+          autocomplete="off"
+        />
+        <button id="toggleCustomKey" class="btn-icon" type="button" title="Show/Hide key" aria-label="Show or hide custom API key">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" /><circle cx="12" cy="12" r="3" />
+          </svg>
+        </button>
+      </div>
+      <label for="customModel" class="model-label" data-i18n="model">Model</label>
+      <div class="model-row">
+        <select id="customModel" class="select-field">
+          <option value="">-- Enter URL and click load --</option>
+        </select>
+        <button id="refreshCustom" class="btn-icon" type="button" title="Load models" aria-label="Load custom models">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 12a9 9 0 1 1-2.64-6.36" /><polyline points="21 3 21 9 15 9" />
+          </svg>
+        </button>
+      </div>
+      <input
+        type="text"
+        id="customModelInput"
+        class="input-field hidden"
+        style="margin-top: 6px;"
+        placeholder="Or enter model name manually"
+      />
+    </div>
+
     <div class="section">
-      <label class="field-label">Translation Style</label>
+      <label class="field-label" data-i18n="translationStyle">Translation Style</label>
       <div class="radio-group">
         <label class="radio-label">
-          <input type="radio" name="style" value="casual" checked />
-          <span>Casual</span>
+          <input type="radio" name="style" value="auto" checked />
+          <span data-i18n="styleAuto">Auto</span>
+        </label>
+        <label class="radio-label">
+          <input type="radio" name="style" value="casual" />
+          <span data-i18n="styleCasual">Casual</span>
         </label>
         <label class="radio-label">
           <input type="radio" name="style" value="polite" />
-          <span>Polite</span>
+          <span data-i18n="stylePolite">Polite</span>
         </label>
         <label class="radio-label">
           <input type="radio" name="style" value="business" />
-          <span>Business</span>
+          <span data-i18n="styleBusiness">Business</span>
         </label>
       </div>
     </div>
 
     <div class="section">
-      <label for="targetLang" class="field-label">Target Language</label>
+      <label for="targetLang" class="field-label" data-i18n="targetLanguage">Target Language</label>
       <select id="targetLang" class="select-field">
         <option value="vietnamese">Vietnamese (Tiếng Việt)</option>
         <option value="english">English</option>
@@ -144,13 +209,83 @@
     </div>
 
     <div class="section">
-      <button id="saveSettings" class="btn-primary btn-save">
+      <label for="sourceLang" class="field-label" data-i18n="sourceLanguage">Source Language</label>
+      <select id="sourceLang" class="select-field">
+        <option value="auto" data-i18n-option="autoDetect">Auto-detect</option>
+        <option value="english">English</option>
+        <option value="japanese">Japanese (日本語)</option>
+        <option value="vietnamese">Vietnamese (Tiếng Việt)</option>
+        <option value="chinese">Chinese (中文)</option>
+        <option value="korean">Korean (한국어)</option>
+        <option value="french">French (Français)</option>
+        <option value="german">German (Deutsch)</option>
+        <option value="spanish">Spanish (Español)</option>
+        <option value="portuguese">Portuguese (Português)</option>
+        <option value="russian">Russian (Русский)</option>
+        <option value="thai">Thai (ไทย)</option>
+        <option value="indonesian">Indonesian (Bahasa)</option>
+        <option value="italian">Italian (Italiano)</option>
+        <option value="dutch">Dutch (Nederlands)</option>
+        <option value="arabic">Arabic (العربية)</option>
+        <option value="hindi">Hindi (हिन्दी)</option>
+      </select>
+    </div>
+
+    <div class="section">
+      <label class="checkbox-label">
+        <input type="checkbox" id="enableAutoSwap" />
+        <span data-i18n="enableAutoSwap">Auto-swap when source = target</span>
+      </label>
+    </div>
+
+    <div class="section">
+      <button id="saveSettings" class="btn-primary btn-save" type="button">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
           <polyline points="17 21 17 13 7 13 7 21" /><polyline points="7 3 7 8 15 8" />
         </svg>
-        <span>Save Settings</span>
+        <span data-i18n="saveSettings">Save Settings</span>
       </button>
+    </div>
+
+    <hr class="divider" />
+
+    <div class="section shortcuts-section">
+      <div class="section-title">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M18 3a3 3 0 0 0-3 3v12a3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3H6a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3V6a3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3h12a3 3 0 0 0 3-3 3 3 0 0 0-3-3z" />
+        </svg>
+        <span data-i18n="keyboardShortcuts">Keyboard Shortcuts</span>
+      </div>
+
+      <div class="shortcut-row">
+        <label for="shortcutTranslateSelection" data-i18n="translateSelection">Translate Selection</label>
+        <div class="shortcut-input-wrapper">
+          <input
+            type="text"
+            id="shortcutTranslateSelection"
+            class="shortcut-input"
+            placeholder="Click and press keys"
+            readonly
+          />
+          <button id="clearShortcutSelection" class="btn-clear-shortcut" type="button" title="Clear" aria-label="Clear shortcut">✕</button>
+        </div>
+      </div>
+
+      <div class="shortcut-row">
+        <label for="shortcutTranslatePage" data-i18n="translatePageShortcut">Translate Page</label>
+        <div class="shortcut-input-wrapper">
+          <input
+            type="text"
+            id="shortcutTranslatePage"
+            class="shortcut-input"
+            placeholder="Click and press keys"
+            readonly
+          />
+          <button id="clearShortcutPage" class="btn-clear-shortcut" type="button" title="Clear" aria-label="Clear shortcut">✕</button>
+        </div>
+      </div>
+
     </div>
 
     <hr class="divider" />
@@ -161,18 +296,11 @@
           <path d="m5 8 6 6" /><path d="m4 14 6-6 2-3" /><path d="M2 5h12" /><path d="M7 2h1" />
           <path d="m22 22-5-10-5 10" /><path d="M14 18h6" />
         </svg>
-        <span id="translatePageLabel">Translate This Page</span>
+        <span id="translatePageLabel" data-i18n="translateThisPage">Translate This Page</span>
       </button>
     </div>
 
     <div id="status" class="status hidden"></div>
-
-    <p class="hint">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z" />
-      </svg>
-      Select text on any page to translate
-    </p>
 
     <script src="popup.js"></script>
   </body>
