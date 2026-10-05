@@ -58,6 +58,12 @@
   color: #c4b5fd;
 }
 
+/* Green accent for Grammar */
+.ai-translator-trigger-grammar:hover {
+  background: rgba(34, 197, 94, 0.35);
+  color: #86efac;
+}
+
 /* Divider between buttons */
 .ai-translator-trigger + .ai-translator-trigger::before {
   content: "";

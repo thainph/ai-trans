@@ -5,6 +5,23 @@
   let currentSelection = "";
   let lastDetectedSourceLang = null;
 
+  // --- Selection context ---
+  // Captured at mouseup because opening the popup / clicking a button collapses
+  // the live selection. Form controls (input/textarea) expose their selection
+  // through selectionStart/End, NOT window.getSelection(), so they need a
+  // separate path from normal/contenteditable selections.
+  let selFormControl = null;  // INPUT/TEXTAREA element, or null
+  let selStart = 0, selEnd = 0;
+  let selRange = null;        // cloned Range (normal / contenteditable)
+  let selRect = null;         // rect used to anchor trigger + popup
+  let selAnchorEl = null;     // nearest element (editability check)
+
+  // --- Grammar replace target (snapshot taken when G is clicked) ---
+  let grammarFormControl = null;  // INPUT/TEXTAREA to write back into
+  let grammarEditable = null;     // contenteditable node to write back into
+  let grammarRange = null;        // cloned Range (contenteditable)
+  let grammarStart = 0, grammarEnd = 0;
+
   // --- Full Page Translation State ---
   let pageTranslationState = "idle"; // "idle" | "translating" | "translated"
   const originalTexts = new Map();
@@ -75,12 +92,25 @@
     return false;
   }
 
+  // Text-like form controls whose selection we can read/write (skip password, etc.)
+  function isTextInput(el) {
+    if (!el) return false;
+    if (el.tagName === "TEXTAREA") return true;
+    if (el.tagName === "INPUT") {
+      const t = (el.type || "text").toLowerCase();
+      return ["text", "search", "url", "email", "tel"].includes(t);
+    }
+    return false;
+  }
+
   // --- Trigger Button ---
   function showTrigger(rect, anchorEl) {
     removeTrigger();
 
     const container = document.createElement("div");
     container.className = "ai-translator-trigger-container";
+
+    const isEditable = isEditableElement(anchorEl);
 
     // Always create the translate button
     const tBtn = document.createElement("button");
@@ -91,8 +121,19 @@
     tBtn.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); onTriggerClick(); });
     container.appendChild(tBtn);
 
+    // Grammar check — only in editable fields (correct the text you are writing)
+    if (isEditable) {
+      const gBtn = document.createElement("button");
+      gBtn.className = "ai-translator-trigger ai-translator-trigger-grammar";
+      gBtn.textContent = "G";
+      gBtn.title = "Check English Grammar";
+      gBtn.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); });
+      gBtn.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); onGrammarClick(); });
+      container.appendChild(gBtn);
+    }
+
     // Show reverse button if editable + has previous source lang
-    const showReverse = isEditableElement(anchorEl) && lastDetectedSourceLang !== null;
+    const showReverse = isEditable && lastDetectedSourceLang !== null;
     if (showReverse) {
       const rBtn = document.createElement("button");
       rBtn.className = "ai-translator-trigger ai-translator-trigger-reverse";
@@ -101,14 +142,15 @@
       rBtn.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); });
       rBtn.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); onReverseTriggerClick(); });
       container.appendChild(rBtn);
-    } else {
-      container.classList.add("single");
     }
+
+    const btnCount = container.childElementCount;
+    if (btnCount === 1) container.classList.add("single");
 
     const scrollX = window.scrollX;
     const scrollY = window.scrollY;
     const btnSize = 34;
-    const totalWidth = showReverse ? btnSize * 2 : btnSize;
+    const totalWidth = btnSize * btnCount;
     const containerHeight = btnSize;
     const gap = 6;
     const spaceBelow = window.innerHeight - rect.bottom;
@@ -142,13 +184,35 @@
   }
 
   // --- Popup (Shadow DOM) ---
-  function createPopup(rect, sourceLang, targetLang) {
+  function createPopup(rect, sourceLang, targetLang, mode = "translate") {
     if (!isExtensionValid()) { cleanup(); return; }
     removePopup();
 
     popupHost = document.createElement("div");
     popupHost.id = "ai-translator-popup-host";
     popupHost.style.cssText = "position:absolute;z-index:2147483647;";
+
+    const isGrammar = mode === "grammar";
+    const headerInner = isGrammar
+      ? `<div class="lang-pair">
+            <span class="lang-badge source">EN</span>
+            <span class="grammar-label">Grammar</span>
+          </div>`
+      : `<div class="lang-pair">
+            <span class="lang-badge source">${LANGUAGES[sourceLang]?.label || "?"}</span>
+            <span class="arrow">\u2192</span>
+            <select class="lang-select" id="targetSelect">${buildLangOptions(targetLang)}</select>
+          </div>`;
+    const footerInner = isGrammar
+      ? `<button class="copy-btn" id="copyBtn" disabled>Copy</button>
+         <button class="replace-btn" id="replaceBtn" disabled>Replace</button>`
+      : `<button class="copy-btn" id="copyBtn" disabled>Copy</button>
+         <select class="style-select" id="styleSelect">
+            <option value="casual">Casual</option>
+            <option value="polite">Polite</option>
+            <option value="business">Business</option>
+          </select>`;
+    const loadingLabel = isGrammar ? "Checking..." : "Translating...";
 
     shadowRoot = popupHost.attachShadow({ mode: "open" });
     shadowRoot.innerHTML = `
@@ -159,23 +223,14 @@
         <div class="resize-handle resize-top"></div>
         <div class="resize-handle resize-bottom"></div>
         <div class="header">
-          <div class="lang-pair">
-            <span class="lang-badge source">${LANGUAGES[sourceLang]?.label || "?"}</span>
-            <span class="arrow">\u2192</span>
-            <select class="lang-select" id="targetSelect">${buildLangOptions(targetLang)}</select>
-          </div>
+          ${headerInner}
           <button class="close-btn" id="closeBtn">\u2715</button>
         </div>
         <div class="result" id="result">
-          <div class="loading"><span class="spinner"></span> Translating...</div>
+          <div class="loading"><span class="spinner"></span> ${loadingLabel}</div>
         </div>
         <div class="footer">
-          <button class="copy-btn" id="copyBtn" disabled>Copy</button>
-          <select class="style-select" id="styleSelect">
-            <option value="casual">Casual</option>
-            <option value="polite">Polite</option>
-            <option value="business">Business</option>
-          </select>
+          ${footerInner}
         </div>
       </div>
     `;
@@ -241,12 +296,6 @@
       }
     });
 
-    // Load saved style
-    chrome.storage.sync.get({ style: "casual" }, (data) => {
-      const select = shadowRoot.getElementById("styleSelect");
-      if (select) select.value = data.style;
-    });
-
     // Event listeners
     shadowRoot.getElementById("closeBtn").addEventListener("click", removePopup);
 
@@ -260,18 +309,32 @@
       });
     });
 
-    // Target language change → re-translate
-    shadowRoot.getElementById("targetSelect").addEventListener("change", (e) => {
-      chrome.storage.sync.set({ targetLang: e.target.value });
-      translate(currentSelection, sourceLang, e.target.value);
-    });
+    if (isGrammar) {
+      // Replace → write the corrected text back into the editable field
+      shadowRoot.getElementById("replaceBtn").addEventListener("click", () => {
+        const resultEl = shadowRoot.getElementById("result");
+        applyGrammarReplace(resultEl.textContent);
+      });
+    } else {
+      // Load saved style
+      chrome.storage.sync.get({ style: "casual" }, (data) => {
+        const select = shadowRoot.getElementById("styleSelect");
+        if (select) select.value = data.style;
+      });
 
-    // Style change → re-translate
-    shadowRoot.getElementById("styleSelect").addEventListener("change", (e) => {
-      chrome.storage.sync.set({ style: e.target.value });
-      const targetSel = shadowRoot.getElementById("targetSelect");
-      translate(currentSelection, sourceLang, targetSel.value);
-    });
+      // Target language change → re-translate
+      shadowRoot.getElementById("targetSelect").addEventListener("change", (e) => {
+        chrome.storage.sync.set({ targetLang: e.target.value });
+        translate(currentSelection, sourceLang, e.target.value);
+      });
+
+      // Style change → re-translate
+      shadowRoot.getElementById("styleSelect").addEventListener("change", (e) => {
+        chrome.storage.sync.set({ style: e.target.value });
+        const targetSel = shadowRoot.getElementById("targetSelect");
+        translate(currentSelection, sourceLang, targetSel.value);
+      });
+    }
 
     // Resize handles
     setupResizeHandle(shadowRoot.querySelector(".resize-right"), "right");
@@ -388,6 +451,8 @@
     resultEl.textContent = text;
     const copyBtn = shadowRoot.getElementById("copyBtn");
     copyBtn.disabled = false;
+    const replaceBtn = shadowRoot.getElementById("replaceBtn");
+    if (replaceBtn) replaceBtn.disabled = false;
   }
 
   function showError(msg) {
@@ -430,14 +495,111 @@
     });
   }
 
+  // --- Grammar Check ---
+  function checkGrammar(text) {
+    if (!shadowRoot) return;
+    if (!isExtensionValid()) { cleanup(); return; }
+    const resultEl = shadowRoot.getElementById("result");
+    resultEl.innerHTML = `<div class="loading"><span class="spinner"></span> Checking...</div>`;
+    const copyBtn = shadowRoot.getElementById("copyBtn");
+    if (copyBtn) copyBtn.disabled = true;
+    const replaceBtn = shadowRoot.getElementById("replaceBtn");
+    if (replaceBtn) replaceBtn.disabled = true;
+
+    chrome.runtime.sendMessage({ action: "grammarCheck", text }, (response) => {
+      if (chrome.runtime.lastError) {
+        showError(chrome.runtime.lastError.message);
+        return;
+      }
+      if (response && response.success) {
+        showResult(response.corrected);
+      } else {
+        showError(response?.error || "Grammar check failed");
+      }
+    });
+  }
+
+  function onGrammarClick() {
+    if (!isExtensionValid()) { cleanup(); return; }
+    const text = currentSelection;
+    if (!text || !selRect) return;
+
+    // Snapshot the replace target — opening the popup collapses the selection.
+    if (selFormControl) {
+      grammarFormControl = selFormControl;
+      grammarEditable = null;
+      grammarRange = null;
+      grammarStart = selStart;
+      grammarEnd = selEnd;
+    } else {
+      grammarFormControl = null;
+      grammarEditable = selAnchorEl;
+      grammarRange = selRange ? selRange.cloneRange() : null;
+    }
+
+    removeTrigger();
+
+    createPopup(selRect, "english", "english", "grammar");
+    checkGrammar(text);
+  }
+
+  // Set a form control's value via the native setter so React (and similar
+  // controlled components) register the change instead of overwriting it.
+  function setNativeValue(el, value) {
+    const proto = el.tagName === "TEXTAREA"
+      ? HTMLTextAreaElement.prototype
+      : HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+    if (setter) setter.call(el, value);
+    else el.value = value;
+  }
+
+  function applyGrammarReplace(corrected) {
+    try {
+      if (grammarFormControl) {
+        const fc = grammarFormControl;
+        fc.focus();
+        const value = fc.value;
+        setNativeValue(fc, value.slice(0, grammarStart) + corrected + value.slice(grammarEnd));
+        const caret = grammarStart + corrected.length;
+        fc.setSelectionRange(caret, caret);
+        fc.dispatchEvent(new Event("input", { bubbles: true }));
+      } else if (grammarEditable) {
+        // Focus the contenteditable host, not a child node (spans aren't focusable)
+        const host = grammarEditable.closest?.("[contenteditable]") || grammarEditable;
+        host.focus?.();
+        if (grammarRange) {
+          const sel = window.getSelection();
+          sel.removeAllRanges();
+          sel.addRange(grammarRange);
+        }
+        // execCommand triggers proper input events for framework-managed editors
+        const ok = document.execCommand("insertText", false, corrected);
+        if (!ok && grammarRange) {
+          grammarRange.deleteContents();
+          grammarRange.insertNode(document.createTextNode(corrected));
+          host.dispatchEvent?.(new Event("input", { bubbles: true }));
+        }
+      } else {
+        removePopup();
+        return;
+      }
+    } catch (err) {
+      console.warn("AI Translator: grammar replace failed", err.message);
+    }
+
+    grammarFormControl = null;
+    grammarEditable = null;
+    grammarRange = null;
+    removePopup();
+  }
+
   function onTriggerClick() {
     if (!isExtensionValid()) { cleanup(); return; }
     const text = currentSelection;
-    if (!text) return;
+    if (!text || !selRect) return;
 
-    const sel = window.getSelection();
-    if (!sel.rangeCount) return;
-    const rect = sel.getRangeAt(0).getBoundingClientRect();
+    const rect = selRect;
 
     removeTrigger();
 
@@ -459,11 +621,9 @@
   function onReverseTriggerClick() {
     if (!isExtensionValid()) { cleanup(); return; }
     const text = currentSelection;
-    if (!text) return;
+    if (!text || !selRect) return;
 
-    const sel = window.getSelection();
-    if (!sel.rangeCount) return;
-    const rect = sel.getRangeAt(0).getBoundingClientRect();
+    const rect = selRect;
 
     removeTrigger();
 
@@ -498,7 +658,25 @@
 
     setTimeout(() => {
       const sel = window.getSelection();
-      const text = sel?.toString().trim();
+      let text = sel?.toString().trim();
+
+      // Form controls expose their selection separately from window.getSelection()
+      const ae = document.activeElement;
+      if ((!text || text.length < 2) && isTextInput(ae) &&
+          ae.selectionStart != null && ae.selectionEnd > ae.selectionStart) {
+        const sub = ae.value.slice(ae.selectionStart, ae.selectionEnd).trim();
+        if (sub.length >= 2) {
+          currentSelection = sub;
+          selFormControl = ae;
+          selStart = ae.selectionStart;
+          selEnd = ae.selectionEnd;
+          selRange = null;
+          selAnchorEl = ae;
+          selRect = ae.getBoundingClientRect();
+          showTrigger(selRect, ae);
+          return;
+        }
+      }
 
       if (!text || text.length < 2) {
         removeTrigger();
@@ -510,10 +688,13 @@
         const range = sel.getRangeAt(0);
         const rect = range.getBoundingClientRect();
         if (rect.width === 0 && rect.height === 0) return;
-        const anchorEl = sel.anchorNode?.nodeType === Node.ELEMENT_NODE
+        selFormControl = null;
+        selRange = range.cloneRange();
+        selRect = rect;
+        selAnchorEl = sel.anchorNode?.nodeType === Node.ELEMENT_NODE
           ? sel.anchorNode
           : sel.anchorNode?.parentElement;
-        showTrigger(rect, anchorEl);
+        showTrigger(rect, selAnchorEl);
       } catch (err) {
         // selection lost
       }
@@ -978,6 +1159,12 @@
         font-size: 14px;
       }
 
+      .grammar-label {
+        font-size: 12px;
+        font-weight: 600;
+        color: #15803d;
+      }
+
       .lang-select {
         padding: 3px 6px;
         border: 1px solid #d1d5db;
@@ -1071,6 +1258,26 @@
       }
 
       .copy-btn:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+
+      .replace-btn {
+        padding: 5px 14px;
+        background: #16a34a;
+        color: white;
+        border: none;
+        border-radius: 5px;
+        font-size: 12px;
+        font-weight: 500;
+        cursor: pointer;
+      }
+
+      .replace-btn:hover:not(:disabled) {
+        background: #15803d;
+      }
+
+      .replace-btn:disabled {
         opacity: 0.5;
         cursor: default;
       }

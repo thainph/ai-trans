@@ -104,6 +104,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       .catch((err) => sendResponse({ success: false, error: err.message }));
     return true;
   }
+  if (request.action === "grammarCheck") {
+    handleGrammarCheck(request.text)
+      .then((corrected) => sendResponse({ success: true, corrected }))
+      .catch((err) => sendResponse({ success: false, error: err.message }));
+    return true;
+  }
 });
 
 async function fetchOllamaModels(url) {
@@ -267,6 +273,16 @@ async function handleTranslateBatch(texts, sourceLang, targetLang, style) {
     if (!result[i]) result[i] = texts[i];
   }
   return result;
+}
+
+async function handleGrammarCheck(text) {
+  const systemPrompt =
+    "You are an English grammar and spelling corrector. Fix grammar, spelling, " +
+    "and punctuation while preserving the original meaning and tone. Return ONLY " +
+    "the corrected English text — no explanations, quotes, or extra formatting. " +
+    "If it is already correct, return it unchanged.";
+
+  return callLLM(systemPrompt, text, 1024);
 }
 
 async function handleTranslate(text, sourceLang, targetLang, style) {
