@@ -4,40 +4,48 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Chrome Manifest V3 extension that translates web page text via OpenAI, Google Gemini, or a local Ollama server. Plain JavaScript — no bundler, no build step, no tests.
+**Context Kit** — a Chrome Manifest V3 extension that bundles three tools behind one toolbar popup:
+
+| Tab | Code | What it does |
+|---|---|---|
+| Translate | `public/translator/`, `src/translator/background.js` | Translate selected text / whole pages via OpenAI, Gemini or local Ollama |
+| Web → MD | `public/web-to-md/` | Convert the current page to Markdown (download / copy) |
+| Slack | `src/slack/popup/`, `src/core/`, `src/background/slack-export.ts` | Export a Slack thread to Markdown, optionally as a .zip with attachments |
+
+This repo was previously the standalone AI Translator extension; its history is preserved.
 
 ## Development
 
-Load the extension unpacked at `chrome://extensions/` → Developer mode → "Load unpacked" → select this directory. Reload the extension after editing `background.js` or `manifest.json`; content script edits take effect on next page load.
+```bash
+pnpm install
+pnpm build       # tsc --noEmit + vite build → dist/
+pnpm test        # vitest (Slack export + attachments)
+pnpm dev         # vite build --watch
+```
+
+Load `dist/` unpacked at `chrome://extensions/` (Developer mode). Reload the extension after rebuilding.
 
 ## Architecture
 
-Three-layer message-passing design across the standard MV3 surfaces:
+- **Build:** Vite bundles TypeScript entries (`src/popup/index.html`, `src/slack/popup/popup.html`, `src/offscreen/offscreen.html`, `src/background/index.ts`). Everything in `public/` (manifest, icons, translator + web-to-md plain-JS files, `shared/theme.css`) is copied verbatim — those classic scripts are **not** bundled.
+- **Popup shell** (`src/popup/shell.ts`): tab bar that loads each tool's own popup page in a same-origin iframe (chrome.* APIs still work, CSS/IDs stay isolated). Iframes are created lazily and auto-sized. Code inside an iframe must call `window.top.close()` to close the popup.
+- **Service worker** (`src/background/index.ts`): imports `../translator/background.js` (`chrome.runtime.onMessage` with `request.action`) and `./slack-export` (`chrome.runtime.onConnect`, port `slack-thread-export`). Independent channels — add new features as separate modules imported here.
+- **Offscreen document** (`src/offscreen/`): fetches Slack attachments with the browser's cookies and builds the zip (fflate) → blob: URL for `chrome.downloads`. Needed because MV3 service workers can't create blob URLs and data: URLs cap at ~2 MB. Messages use `target: 'context-kit-offscreen'` (`src/types/offscreen.ts`).
+- **Styling:** translator keeps `public/translator/popup.css`; Web → MD and Slack use `public/shared/theme.css`, which mirrors the translator design tokens — keep them in sync.
 
-- **[content.js](content.js)** runs in every frame. Handles two independent flows:
-  1. *Selection translation* — listens on `mouseup`, shows a floating trigger button (`T` = translate selection to target language; `R` = reverse-translate, shown only in editable fields, translates back to the detected source language), opens a draggable/resizable **Shadow DOM** popup (Shadow DOM is required to isolate styles from arbitrary host pages).
-  2. *Full-page translation* — walks the DOM with `TreeWalker`, filters via `SKIP_TAGS` + [needsTranslation()](content.js#L555), batches text nodes by `maxChars` (3000), and replaces `node.textContent` in place. The pre-translation text for every touched node is stored in the `originalTexts` Map keyed by the live node — this is what `revertPageTranslation()` uses to restore the page and what dedupe checks rely on. A `MutationObserver` (started only after a successful page translation) auto-translates dynamically inserted nodes with a 500 ms debounce.
-- **[background.js](background.js)** is the MV3 service worker and the **only** place that talks to the LLM APIs. Routes `translate` / `translateBatch` / `fetchOllamaModels` messages. Batch prompts use a numbered `[N] text` format — more reliable than separator-based parsing; `handleTranslateBatch` parses the response with `/^\[(\d+)\]\s*(.+)/` and falls back to the original text for any missing index. Caches the resolved provider config for 5s to avoid hammering `chrome.storage.sync`.
-- **[popup.js](popup.js)** is the toolbar settings UI. Fetches Ollama models **via the background script** (not directly) to bypass CORS. Sends `translatePage`/`revertPage`/`getPageTranslationState` messages to the active tab's content script.
+## Translator notes
 
-### Provider abstraction
+- `public/translator/content.js` runs in every frame. Selection translation uses a **Shadow DOM** popup (query via `shadowRoot.getElementById`, not `document`). Full-page translation walks text nodes and stores originals in the `originalTexts` Map for revert; a `MutationObserver` translates dynamic content. New filter logic must go in both `collectTranslatableTextNodes()` and `isTranslatableTextNode()`.
+- `src/translator/background.js` is the only place that calls LLM APIs. `getProviderConfig()` returns `{ provider, url, model, headers }`; `callLLM()` branches on provider (OpenAI chat completions, Gemini `generateContent`, Ollama `/api/chat`). Batch prompts use numbered `[N] text` lines.
+- Ollama CORS: `declarativeNetRequest` dynamic rules (set in `onInstalled`) strip `Origin` for localhost/127.0.0.1.
+- `isExtensionValid()` guards every `chrome.*` call in the content script — keep this pattern.
 
-`getProviderConfig()` in [background.js](background.js#L123) returns a uniform `{ provider, url, model, headers }` shape; `callLLM()` then branches request/response shape on `config.provider`. OpenAI uses `/v1/chat/completions` with `Authorization: Bearer` (response at `choices[0].message.content`); Gemini uses `…/v1beta/models/{model}:generateContent` with the `x-goog-api-key` header, a distinct body (`systemInstruction` + `contents[].parts[].text`, `generationConfig.maxOutputTokens`) and response at `candidates[0].content.parts[0].text`; Ollama uses `/api/chat` with `{ stream: false }` (response at `message.content`). Concurrency limit (set in [content.js](content.js#L615)) is **2 for Ollama, 5 for everything else** (OpenAI/Gemini cloud APIs).
+## Slack export notes
 
-### Ollama CORS workaround
+- `pageSlackApi` in `src/core/slack-client.ts` is serialized and run in the app.slack.com page (MAIN world): it must stay **self-contained** (no imports/closures). The session token never leaves the page.
+- Attachments: `src/core/attachments.ts` plans downloads (only `https://*.slack.com`, 25 MB per file, 200 MB total, external files skipped); `md-builder` renders saved files as local links and skipped ones with a `_(not included: …)_` note.
 
-Ollama rejects requests with a browser `Origin` header. The extension uses `declarativeNetRequest` dynamic rules (set up in `onInstalled`) to strip `Origin` on requests to `localhost` / `127.0.0.1`. The `declarativeNetRequest` permission in [manifest.json](manifest.json) exists solely for this.
+## Storage keys
 
-### Source language detection
-
-[detectLanguage()](content.js#L53) is heuristic-only — Unicode block ranges plus a few diacritic-set checks for Latin-script languages. It is duplicated implicitly: the content script detects, the background script just maps the key to a display name via `LANG_NAMES`. Same-language guard: if detected source equals saved target, the target auto-flips (English ↔ Vietnamese fallback).
-
-### Settings keys (chrome.storage.sync)
-
-`provider`, `apiKey` (OpenAI), `openaiModel`, `geminiApiKey`, `geminiModel`, `ollamaUrl`, `ollamaModel`, `style`, `targetLang`, `popupWidth`. Each cloud provider keeps its own key so switching providers doesn't clobber the other's credentials. Defaults live in `DEFAULT_SETTINGS` in [background.js](background.js#L2) and are seeded on `onInstalled`. The popup independently re-declares defaults when reading — keep these two lists aligned when adding a setting. Note the API keys themselves are **not** in `DEFAULT_SETTINGS` (never seeded).
-
-## Things to keep in mind when editing
-
-- The popup is rendered inside a **Shadow DOM** in the content script — all selectors inside the popup must go through `shadowRoot.getElementById(...)`, not `document`.
-- Page translation mutates `Text.textContent` directly. Any new filter logic must go in both `collectTranslatableTextNodes()` (initial pass) and `isTranslatableTextNode()` (MutationObserver path) or dynamic content will diverge from initial behavior.
-- The extension can be invalidated mid-session (reload during development). `isExtensionValid()` guards every `chrome.*` call from the content script — preserve this pattern when adding new entry points.
+- `chrome.storage.sync` — translator: `provider, apiKey, openaiModel, geminiApiKey, geminiModel, ollamaUrl, ollamaModel, style, targetLang, popupWidth` (defaults in `DEFAULT_SETTINGS` in `src/translator/background.js`, re-declared in `public/translator/popup.js` — keep aligned). Slack: `includeReactions, includeFiles, zipFiles`.
+- `chrome.storage.local` — `contextKitLastTab`.
