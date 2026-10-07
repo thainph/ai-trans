@@ -189,7 +189,8 @@ translatePageBtn.addEventListener("click", () => {
     chrome.tabs.sendMessage(tabs[0].id, { action }, () => {
       if (action === "translatePage") {
         updateTranslatePageBtn("translating");
-        window.close();
+        // Embedded in the Context Kit popup's iframe → close the top-level popup.
+        (window.top || window).close();
       } else {
         updateTranslatePageBtn("idle");
       }

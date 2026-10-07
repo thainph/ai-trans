@@ -1,0 +1,143 @@
+{
+  "ok": true,
+  "messages": [
+    {
+      "type": "message",
+      "user": "U01ALICE",
+      "ts": "1700000000.123456",
+      "thread_ts": "1700000000.123456",
+      "reply_count": 4,
+      "text": "Deploy plan for *v2.3* fallback text",
+      "edited": { "user": "U01ALICE", "ts": "1700000100.000000" },
+      "user_profile": { "display_name": "alice.d", "real_name": "Alice Doe", "name": "alice" },
+      "blocks": [
+        {
+          "type": "rich_text",
+          "block_id": "a1",
+          "elements": [
+            {
+              "type": "rich_text_section",
+              "elements": [
+                { "type": "text", "text": "Deploy plan for " },
+                { "type": "text", "text": "v2.3", "style": { "bold": true } },
+                { "type": "text", "text": " " },
+                { "type": "emoji", "name": "rocket", "unicode": "1f680" },
+                { "type": "text", "text": "\ncc " },
+                { "type": "user", "user_id": "U02BOB" },
+                { "type": "text", "text": " see " },
+                { "type": "link", "url": "https://docs.example.com/deploy?a=1&b=2", "text": "runbook" },
+                { "type": "text", "text": "\nSteps:\n" }
+              ]
+            },
+            {
+              "type": "rich_text_list",
+              "style": "ordered",
+              "indent": 0,
+              "elements": [
+                { "type": "rich_text_section", "elements": [{ "type": "text", "text": "Freeze " }, { "type": "text", "text": "main", "style": { "code": true } }] },
+                { "type": "rich_text_section", "elements": [{ "type": "text", "text": "Run migrations" }] }
+              ]
+            },
+            {
+              "type": "rich_text_list",
+              "style": "bullet",
+              "indent": 1,
+              "elements": [
+                { "type": "rich_text_section", "elements": [{ "type": "text", "text": "users table", "style": { "italic": true } }] }
+              ]
+            },
+            {
+              "type": "rich_text_list",
+              "style": "ordered",
+              "indent": 0,
+              "offset": 2,
+              "elements": [
+                { "type": "rich_text_section", "elements": [{ "type": "text", "text": "Old step", "style": { "strike": true } }] }
+              ]
+            },
+            {
+              "type": "rich_text_preformatted",
+              "elements": [{ "type": "text", "text": "npm run migrate -- --env=prod\necho \"done\"" }]
+            },
+            {
+              "type": "rich_text_quote",
+              "elements": [{ "type": "text", "text": "Remember: no deploys on Friday" }]
+            }
+          ]
+        }
+      ],
+      "reactions": [
+        { "name": "+1", "users": ["U02BOB", "U03CAROL", "U04DAVE"], "count": 3 },
+        { "name": "tada", "users": ["U02BOB"], "count": 1 },
+        { "name": "party-parrot", "users": ["U03CAROL"], "count": 1 }
+      ]
+    },
+    {
+      "type": "message",
+      "user": "U02BOB",
+      "ts": "1700000300.000200",
+      "thread_ts": "1700000000.123456",
+      "parent_user_id": "U01ALICE",
+      "text": "Attached the checklist <!here> — also posted in <#C0GENERAL|general>",
+      "blocks": [
+        {
+          "type": "rich_text",
+          "block_id": "b1",
+          "elements": [
+            {
+              "type": "rich_text_section",
+              "elements": [
+                { "type": "text", "text": "Attached the checklist " },
+                { "type": "broadcast", "range": "here" },
+                { "type": "text", "text": " — also posted in " },
+                { "type": "channel", "channel_id": "C0GENERAL" }
+              ]
+            }
+          ]
+        }
+      ],
+      "files": [
+        {
+          "id": "F01",
+          "name": "deploy-checklist.pdf",
+          "title": "Deploy checklist",
+          "permalink": "https://papay.slack.com/files/U02BOB/F01/deploy-checklist.pdf"
+        }
+      ]
+    },
+    {
+      "type": "message",
+      "subtype": "bot_message",
+      "bot_id": "B01CI",
+      "username": "Deploy Bot",
+      "bot_profile": { "id": "B01CI", "name": "CI" },
+      "ts": "1700000600.000300",
+      "thread_ts": "1700000000.123456",
+      "text": "*Build* <https://ci.example.com/build/42|#42> passed :white_check_mark: for <@U01ALICE>",
+      "attachments": [
+        { "fallback": "Coverage 91%", "title": "Coverage report", "title_link": "https://ci.example.com/cov/42", "text": "Coverage *91%*" }
+      ]
+    },
+    {
+      "type": "message",
+      "user": "U03CAROL",
+      "ts": "1700000900.000400",
+      "thread_ts": "1700000000.123456",
+      "text": "Thanks <@U01ALICE>! ~old~ _new_ &lt;tag&gt; `code_x` :custom_emoji:\n&gt; quoted line"
+    },
+    {
+      "type": "message",
+      "user": "U05BOTUSER",
+      "bot_id": "B02APP",
+      "ts": "1700001200.000500",
+      "thread_ts": "1700000000.123456",
+      "text": "Release notes",
+      "blocks": [
+        { "type": "header", "text": { "type": "plain_text", "text": "Release v2.3" } },
+        { "type": "section", "text": { "type": "mrkdwn", "text": "Shipped by <@U02BOB> :sparkles:" } }
+      ]
+    }
+  ],
+  "has_more": false,
+  "response_metadata": { "next_cursor": "" }
+}

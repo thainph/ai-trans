@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Context Kit</title>
+    <link rel="stylesheet" href="./shell.css" />
+  </head>
+  <body>
+    <nav class="tabs" role="tablist">
+      <button class="tab" role="tab" data-tool="translator">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="m5 8 6 6" /><path d="m4 14 6-6 2-3" /><path d="M2 5h12" /><path d="M7 2h1" /><path d="m22 22-5-10-5 10" /><path d="M14 18h6" />
+        </svg>
+        <span>Translate</span>
+      </button>
+      <button class="tab" role="tab" data-tool="web-to-md">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><path d="M8 13h8" /><path d="M8 17h5" />
+        </svg>
+        <span>Web → MD</span>
+      </button>
+      <button class="tab" role="tab" data-tool="slack">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /><path d="M8 9h8" /><path d="M8 13h5" />
+        </svg>
+        <span>Slack</span>
+      </button>
+    </nav>
+    <main id="panels"></main>
+    <script type="module" src="./shell.ts"></script>
+  </body>
+</html>
