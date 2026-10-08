@@ -1,3 +1,15 @@
+import {
+  CHUNK_CHARS,
+  buildRequestBody,
+  buildTranslatePrompt,
+  mapLimit,
+  parseLLMResponse,
+  splitForTranslation,
+  splitOuterWhitespace,
+  stripTextTags,
+  wrapText,
+} from "./llm-utils.js";
+
 // --- Default Settings ---
 const DEFAULT_SETTINGS = {
   targetLang: "vietnamese",
@@ -188,27 +200,10 @@ async function getCachedProviderConfig() {
   return _cachedConfig;
 }
 
-async function callLLM(systemPrompt, userContent, maxTokens) {
+/** Returns { text, truncated } — truncated when the model hit its output limit. */
+async function callLLM(systemPrompt, userContent) {
   const config = await getCachedProviderConfig();
-
-  const messages = [
-    { role: "system", content: systemPrompt },
-    { role: "user", content: userContent },
-  ];
-
-  let body;
-  if (config.provider === "ollama") {
-    body = { model: config.model, messages, stream: false, options: { temperature: 0.3 } };
-  } else if (config.provider === "gemini") {
-    // Gemini native shape: system prompt goes in systemInstruction, user text in contents
-    body = {
-      systemInstruction: { parts: [{ text: systemPrompt }] },
-      contents: [{ role: "user", parts: [{ text: userContent }] }],
-      generationConfig: { temperature: 0.3, maxOutputTokens: maxTokens },
-    };
-  } else {
-    body = { model: config.model, messages, temperature: 0.3, max_tokens: maxTokens };
-  }
+  const body = buildRequestBody(config.provider, config.model, systemPrompt, userContent);
 
   let response;
   try {
@@ -226,22 +221,7 @@ async function callLLM(systemPrompt, userContent, maxTokens) {
     throw new Error(`API error ${response.status} from ${config.url}: ${errBody}`);
   }
 
-  const result = await response.json();
-
-  // Ollama native: { message: { content: "..." } }
-  // OpenAI: { choices: [{ message: { content: "..." } }] }
-  // Gemini: { candidates: [{ content: { parts: [{ text: "..." }] } }] }
-  if (config.provider === "ollama") {
-    return result.message.content.trim();
-  }
-  if (config.provider === "gemini") {
-    const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (text === undefined) {
-      throw new Error(`Gemini returned no text (finishReason: ${result.candidates?.[0]?.finishReason || "unknown"})`);
-    }
-    return text.trim();
-  }
-  return result.choices[0].message.content.trim();
+  return parseLLMResponse(config.provider, await response.json());
 }
 
 async function handleTranslateBatch(texts, sourceLang, targetLang, style) {
@@ -254,7 +234,7 @@ async function handleTranslateBatch(texts, sourceLang, targetLang, style) {
 
   const systemPrompt = `You are a translator. Translate each numbered line from ${source} to ${target}.\n${styleInstruction}.\nKeep the [N] prefix on each line. Return ONLY the translated lines, one per line, same order.`;
 
-  const raw = await callLLM(systemPrompt, numbered, 4096);
+  const { text: raw } = await callLLM(systemPrompt, numbered);
 
   // Parse numbered response
   const result = new Array(texts.length);
@@ -282,15 +262,32 @@ async function handleGrammarCheck(text) {
     "the corrected English text — no explanations, quotes, or extra formatting. " +
     "If it is already correct, return it unchanged.";
 
-  return callLLM(systemPrompt, text, 1024);
+  const { text: corrected } = await callLLM(systemPrompt, text);
+  return corrected;
 }
+
+const TRUNCATED_NOTICE = "\n\n⚠️ The translation may be incomplete: the AI model stopped at its output limit.";
 
 async function handleTranslate(text, sourceLang, targetLang, style) {
   const styleInstruction = STYLE_PROMPTS[style] || STYLE_PROMPTS.casual;
   const source = LANG_NAMES[sourceLang] || sourceLang;
   const target = LANG_NAMES[targetLang] || targetLang;
+  const systemPrompt = buildTranslatePrompt(source, target, styleInstruction);
 
-  const systemPrompt = `You are a translator. Translate the following text from ${source} to ${target}.\n${styleInstruction}.\nReturn ONLY the translated text, no explanations or extra formatting.`;
+  // Long selections are translated in chunks so no request exceeds the
+  // model's context/output limits; whitespace between chunks is kept as-is.
+  const segments = splitForTranslation(text, CHUNK_CHARS);
+  const { provider } = await getCachedProviderConfig();
+  const concurrency = provider === "ollama" ? 1 : 3;
+  let truncated = false;
 
-  return callLLM(systemPrompt, text, 1024);
+  const parts = await mapLimit(segments, concurrency, async (segment) => {
+    const { lead, core, trail } = splitOuterWhitespace(segment);
+    if (!core) return segment;
+    const result = await callLLM(systemPrompt, wrapText(core));
+    if (result.truncated) truncated = true;
+    return lead + stripTextTags(result.text) + trail;
+  });
+
+  return parts.join("").trim() + (truncated ? TRUNCATED_NOTICE : "");
 }
