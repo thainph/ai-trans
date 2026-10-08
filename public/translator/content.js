@@ -67,14 +67,33 @@
   };
 
   // --- Language Detection ---
+  // Picks the script with the most characters instead of the first one that
+  // appears at all: a single "・" bullet or "ー" in a Vietnamese/English text
+  // used to make the whole selection "Japanese", and the model then skipped
+  // the parts that were not Japanese.
   function detectLanguage(text) {
-    if (/[\u3040-\u309F\u30A0-\u30FF]/.test(text)) return "japanese";
-    if (/[\u4E00-\u9FFF]/.test(text) && !/[\u3040-\u309F\u30A0-\u30FF]/.test(text)) return "chinese";
-    if (/[\uAC00-\uD7AF]/.test(text)) return "korean";
-    if (/[\u0E00-\u0E7F]/.test(text)) return "thai";
-    if (/[\u0900-\u097F]/.test(text)) return "hindi";
-    if (/[\u0600-\u06FF]/.test(text)) return "arabic";
-    if (/[\u0400-\u04FF]/.test(text)) return "russian";
+    const count = (re) => (text.match(re) || []).length;
+    // U+30FB "・" and U+30FC "ー" are also used as plain symbols → not counted as kana.
+    const kana = count(/[\u3040-\u309F\u30A0-\u30FA\u30FD-\u30FF]/g);
+    const han = count(/[\u4E00-\u9FFF]/g);
+    // One CJK/Hangul character carries roughly as much text as ~3 Latin letters.
+    const CJK_WEIGHT = 3;
+    const scores = {
+      japanese: kana > 0 ? (kana + han) * CJK_WEIGHT : 0,
+      chinese: kana > 0 ? 0 : han * CJK_WEIGHT,
+      korean: count(/[\uAC00-\uD7AF]/g) * CJK_WEIGHT,
+      thai: count(/[\u0E00-\u0E7F]/g),
+      hindi: count(/[\u0900-\u097F]/g),
+      arabic: count(/[\u0600-\u06FF]/g),
+      russian: count(/[\u0400-\u04FF]/g),
+      latin: count(/[A-Za-z\u00C0-\u024F\u1E00-\u1EFF]/g),
+    };
+    let best = "latin";
+    for (const [lang, score] of Object.entries(scores)) {
+      if (score > scores[best]) best = lang;
+    }
+    if (best !== "latin") return best;
+
     if (/[ạảầấậẩẫăằắặẳẵẹẻềếệểễịỉĩọỏồốộổỗơờớợởỡụủưừứựửữỵỷỹđ]/i.test(text)) return "vietnamese";
     if (/[æœïÿ]/i.test(text)) return "french";
     if (/[äöüß]/i.test(text)) return "german";
