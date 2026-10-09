@@ -5,6 +5,11 @@ import type { Provider } from '../shared/settings';
 /** Max characters sent to the model in one request when translating a selection. */
 export const CHUNK_CHARS = 4000;
 
+/** Timeouts of the LLM API calls (local models can be slow on long inputs). */
+export const LLM_TIMEOUT_MS = 120_000;
+export const OLLAMA_TIMEOUT_MS = 300_000;
+export const MODELS_TIMEOUT_MS = 10_000;
+
 /**
  * Split text into segments of at most `max` characters whose concatenation is
  * exactly `text`. Prefers line boundaries, then sentence boundaries, and only
@@ -97,24 +102,31 @@ export interface LLMRequestBody {
   stream?: boolean;
   temperature?: number;
   options?: { temperature: number; num_ctx: number; num_predict: number };
+  /** Ollama JSON mode. */
+  format?: 'json';
+  /** OpenAI JSON mode. */
+  response_format?: { type: 'json_object' };
   systemInstruction?: { parts: { text: string }[] };
   contents?: { role: 'user'; parts: { text: string }[] }[];
-  generationConfig?: { temperature: number };
+  generationConfig?: { temperature: number; responseMimeType?: 'application/json' };
 }
 
 /**
  * Request body per provider. No output-token cap is sent for OpenAI/Gemini so
  * the model's own maximum applies (a small cap truncated long translations,
- * and Gemini's thinking tokens count against it).
+ * and Gemini's thinking tokens count against it). `json` asks for a JSON
+ * reply (the prompt must say so too: OpenAI requires the word "JSON").
  */
 export function buildRequestBody(
   provider: Provider,
   model: string,
   systemPrompt: string,
   userContent: string,
+  json = false,
 ): LLMRequestBody {
   if (provider === 'ollama') {
     return {
+      ...(json && { format: 'json' as const }),
       model,
       messages: [
         { role: 'system', content: systemPrompt },
@@ -132,7 +144,7 @@ export function buildRequestBody(
     return {
       systemInstruction: { parts: [{ text: systemPrompt }] },
       contents: [{ role: 'user', parts: [{ text: userContent }] }],
-      generationConfig: { temperature: 0.3 },
+      generationConfig: { temperature: 0.3, ...(json && { responseMimeType: 'application/json' as const }) },
     };
   }
   return {
@@ -142,6 +154,7 @@ export function buildRequestBody(
       { role: 'user', content: userContent },
     ],
     temperature: 0.3,
+    ...(json && { response_format: { type: 'json_object' as const } }),
   };
 }
 
@@ -173,22 +186,4 @@ export function parseLLMResponse(provider: Provider, result: any): LLMReply {
   const text = choice?.message?.content;
   if (typeof text !== 'string') throw new Error('OpenAI returned no text');
   return { text: text.trim(), truncated: choice.finish_reason === 'length' };
-}
-
-/** Run `fn` over items with at most `limit` in flight; results keep input order. */
-export async function mapLimit<T, R>(
-  items: T[],
-  limit: number,
-  fn: (item: T, index: number) => Promise<R>,
-): Promise<R[]> {
-  const out = new Array<R>(items.length);
-  let next = 0;
-  const worker = async () => {
-    while (next < items.length) {
-      const i = next++;
-      out[i] = await fn(items[i]!, i);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker));
-  return out;
 }

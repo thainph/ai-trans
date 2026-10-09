@@ -2,7 +2,7 @@ import { defineConfig } from 'vite';
 
 // Content scripts are classic scripts (no `import`), so each one is built as a
 // single IIFE into dist/ after the main build. IIFE allows one entry per build:
-//   vite build -c vite.content.config.ts --mode all-frames → dist/content.js + dist/content.css
+//   vite build -c vite.content.config.ts --mode all-frames → dist/content.js (widgets style themselves in Shadow DOM)
 //   vite build -c vite.content.config.ts --mode slack      → dist/slack-content.js
 const ENTRIES = {
   'all-frames': { entry: 'src/content/all-frames.ts', file: 'content', name: 'ContextKitContent' },
