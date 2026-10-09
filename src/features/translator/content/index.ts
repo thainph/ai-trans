@@ -6,7 +6,6 @@
 import { errorMessage } from '../../../shared/errors';
 import { onTargetMessage, type Result } from '../../../shared/messaging';
 import { isExtensionAlive } from '../../../shared/runtime';
-import { sendSelection } from '../../web-to-md/content/send-selection';
 import { isLanguageId, LANGUAGES, otherTarget } from '../shared/languages';
 import {
   callTranslator,
@@ -20,6 +19,15 @@ import { getPageTranslationState, revertPageTranslation, translatePage } from '.
 import { POPUP_CSS, TRIGGER_CSS } from './styles';
 
 type TextControl = HTMLInputElement | HTMLTextAreaElement;
+
+/** Action of the ➤ toolbar button ("Send selection to Devdy"), wired by the content entry. */
+type SelectionSender = (range: Range, text: string) => Promise<void>;
+let selectionSender: SelectionSender | null = null;
+
+/** Show the ➤ button on non-editable selections and run `send` when clicked. */
+export function setSelectionSender(send: SelectionSender): void {
+  selectionSender = send;
+}
 
 /** Shadow host of the selection toolbar (page CSS can't restyle it, ours doesn't leak). */
 let triggerBtn: HTMLDivElement | null = null;
@@ -125,7 +133,7 @@ function showTrigger(rect: DOMRect, anchorEl: Element | null): void {
   }
 
   // Send the selection to Devdy — page text only (not what you are typing).
-  if (!isEditable) {
+  if (!isEditable && selectionSender) {
     const dBtn = triggerButton('ai-translator-trigger-devdy', 'Send selection to Devdy', onDevdyClick);
     dBtn.setAttribute('aria-label', 'Send selection to Devdy');
     dBtn.innerHTML =
@@ -706,9 +714,9 @@ function onDevdyClick(): void {
   }
   const text = currentSelection;
   const range = selRange;
-  if (!text || !range) return;
+  if (!text || !range || !selectionSender) return;
   removeTrigger();
-  void sendSelection(range, text);
+  void selectionSender(range, text);
 }
 
 function onReverseTriggerClick(): void {

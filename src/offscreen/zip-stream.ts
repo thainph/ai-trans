@@ -5,7 +5,7 @@
 // The Markdown (written last, once the download outcomes are known) ends the zip.
 
 import { Zip, ZipDeflate, ZipPassThrough } from 'fflate';
-import { isPrecompressedPath } from '../features/slack/core/attachments';
+import { isPrecompressedPath } from '../shared/filename';
 
 /** Move collected zip output into a Blob part past this many bytes. */
 const FLUSH_BYTES = 8 * 1024 * 1024;

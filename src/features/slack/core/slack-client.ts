@@ -19,6 +19,7 @@
 // The token never leaves the page function: it is not returned, logged or stored,
 // and it is only ever sent to https://app.slack.com or https://<sub>.slack.com origins.
 
+import { mapLimit } from '../../../shared/async';
 import type { ThreadData } from './md-builder';
 import { buildPermalink, type ParsedThreadLink } from './permalink';
 import type { SlackConversation, SlackMessage, SlackRepliesResponse, SlackUser } from './types';
@@ -358,23 +359,6 @@ export function formatWait(ms: number): string {
   return sec >= 120 ? `${Math.floor(sec / 60)}m ${sec % 60}s` : `${sec}s`;
 }
 
-export async function mapPool<T, R>(
-  items: T[],
-  concurrency: number,
-  fn: (item: T, i: number) => Promise<R>,
-): Promise<R[]> {
-  const out: R[] = new Array(items.length);
-  let next = 0;
-  const worker = async () => {
-    while (next < items.length) {
-      const i = next++;
-      out[i] = await fn(items[i] as T, i);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.max(1, Math.min(concurrency, items.length)) }, worker));
-  return out;
-}
-
 export async function fetchThread(
   run: PageRunner,
   link: ParsedThreadLink,
@@ -498,7 +482,7 @@ export async function fetchThread(
   ];
   let done = 0;
   onProgress(`Resolving names… 0/${lookups.length}`);
-  const results = await mapPool(lookups, options.concurrency ?? 4, async (l) => {
+  const results = await mapLimit(lookups, options.concurrency ?? 4, async (l) => {
     const { result } = await callApi(l.method, l.params);
     done++;
     if (done % 10 === 0 || done === lookups.length) onProgress(`Resolving names… ${done}/${lookups.length}`);

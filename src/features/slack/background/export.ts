@@ -3,12 +3,11 @@
 // and (for "download") saves the file via chrome.downloads or (for "devdy")
 // sends it to the local Devdy inbox API.
 
-import { keepAliveSleep } from '../../../background/keepalive';
-import { startZipJob } from '../../../background/zip-export';
 import { errorMessage } from '../../../shared/errors';
+import { keepAliveSleep } from '../../../shared/keepalive';
+import { startZipJob } from '../../../shared/offscreen/zip-job';
 import { fromExtensionPage } from '../../../shared/sender';
-import { outbox } from '../../devdy/background';
-import { DEVDY_MAX_ATTACHMENTS } from '../../devdy/core/client';
+import { DEVDY_MAX_ATTACHMENTS, outbox } from '../../devdy/api';
 import { MAX_FILE_BYTES, MAX_TOTAL_BYTES, planAttachments } from '../core/attachments';
 import type { ThreadData } from '../core/md-builder';
 import { buildThreadMarkdown } from '../core/md-builder';

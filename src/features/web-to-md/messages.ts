@@ -6,7 +6,7 @@
 
 import type { Result } from '../../shared/messaging';
 import type { ToastPayload } from '../../shared/toast';
-import type { DevdyDelivery } from '../slack/messages';
+import type { DevdyDelivery } from '../devdy/api';
 import type { PageMeta } from './core/web-capture';
 
 export const WEB_TARGET = 'context-kit-web';

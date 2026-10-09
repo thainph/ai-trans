@@ -9,8 +9,6 @@ import { isAllowedFileUrl } from '../features/slack/core/attachments';
 import { imageExtension, isFetchableImageUrl } from '../features/web-to-md/core/web-capture';
 import { errorMessage } from '../shared/errors';
 import { onTargetMessage, type Result } from '../shared/messaging';
-import { fromExtensionPage } from '../shared/sender';
-import { fetchImage as fetchImageResponse } from './image-fetch';
 import {
   type BuildZipResponse,
   type FetchFileResponse,
@@ -18,7 +16,9 @@ import {
   OFFSCREEN_TARGET,
   type OffscreenRequest,
   type StoreZipResponse,
-} from './messages';
+} from '../shared/offscreen/protocol';
+import { fromExtensionPage } from '../shared/sender';
+import { fetchImage as fetchImageResponse } from './image-fetch';
 import { ZipWriter } from './zip-stream';
 
 const FETCH_TIMEOUT_MS = 120_000;

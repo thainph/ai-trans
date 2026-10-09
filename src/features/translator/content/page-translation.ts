@@ -4,9 +4,9 @@
 // `originalTexts` for revert. After a translation a MutationObserver feeds new
 // content to the same lazy path. Identical texts are translated once (cache).
 
+import { mapLimit } from '../../../shared/async';
 import { errorMessage } from '../../../shared/errors';
 import { isExtensionAlive } from '../../../shared/runtime';
-import { mapLimit } from '../core/map-limit';
 import {
   createTextBatches,
   fitsInRequest,

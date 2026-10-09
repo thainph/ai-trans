@@ -1,7 +1,9 @@
 // Messages exchanged between the popup and the background service worker
 // over a long-lived chrome.runtime port.
 
-import type { SendOutcome } from '../devdy/core/client';
+import type { DevdyDelivery } from '../devdy/api';
+
+export type { DevdyDelivery };
 
 export const EXPORT_PORT_NAME = 'slack-thread-export';
 
@@ -48,13 +50,6 @@ interface DoneBase {
   files?: FileStats;
   /** Result of a Devdy export. */
   devdy?: DevdyDelivery;
-}
-
-export interface DevdyDelivery {
-  kind: SendOutcome['kind'];
-  message: string;
-  /** Exports still queued for Devdy (incl. this one if it could not be sent). */
-  pending: number;
 }
 
 export type ExportResponse =

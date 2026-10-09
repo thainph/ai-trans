@@ -10,8 +10,8 @@ import {
   wrapText,
 } from '../src/features/translator/background/llm';
 import { detectLanguage } from '../src/features/translator/content/detect-language';
-import { mapLimit } from '../src/features/translator/core/map-limit';
 import { DEFAULT_SETTINGS } from '../src/features/translator/shared/settings';
+import { mapLimit } from '../src/shared/async';
 
 describe('splitForTranslation', () => {
   it('returns short text unchanged', () => {

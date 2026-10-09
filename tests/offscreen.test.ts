@@ -1,9 +1,10 @@
 import { unzipSync } from 'fflate';
 import { describe, expect, it } from 'vitest';
-import { ByteBudget, isPrecompressedPath } from '../src/features/slack/core/attachments';
 import { fetchImage } from '../src/offscreen/image-fetch';
 import { isPrivateHost, isPublicHttpUrl, isSameOrigin } from '../src/offscreen/url-safety';
 import { ZipWriter } from '../src/offscreen/zip-stream';
+import { ByteBudget } from '../src/shared/bytes';
+import { isPrecompressedPath } from '../src/shared/filename';
 
 describe('image URL safety', () => {
   it.each([

@@ -1,9 +1,9 @@
 // Translator (service worker side): the only place that calls LLM APIs.
 
+import { mapLimit } from '../../../shared/async';
 import { errorMessage } from '../../../shared/errors';
 import { fail, ok, onTargetMessage, type Result } from '../../../shared/messaging';
 import { buildBatchInput, buildBatchPrompt, parseBatchResponse } from '../core/batch-protocol';
-import { mapLimit } from '../core/map-limit';
 import { languageName } from '../shared/languages';
 import { TRANSLATOR_TARGET, type TranslatorRequest, type TranslatorResponses } from '../shared/messages';
 import {

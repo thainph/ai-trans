@@ -2,14 +2,12 @@
 // Markdown → download referenced images into images/ → zip (or plain .md) →
 // outbox (queued + retried when Devdy is down).
 
-import { startZipJob } from '../../../background/zip-export';
 import { errorMessage } from '../../../shared/errors';
 import { ok, onTargetMessage, type Result } from '../../../shared/messaging';
+import { startZipJob } from '../../../shared/offscreen/zip-job';
 import { fromExtensionPage } from '../../../shared/sender';
 import type { ToastState } from '../../../shared/toast';
-import { outbox } from '../../devdy/background';
-import { openSettings } from '../../devdy/background/open-settings';
-import type { SendOutcome } from '../../devdy/core/client';
+import { openSettings, outbox, type SendOutcome } from '../../devdy/api';
 import {
   collectImageUrls,
   firstLineTitle,

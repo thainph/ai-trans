@@ -2,16 +2,11 @@
 // The heavy lifting (fetching files with cookies, zipping, blob: URL) happens
 // in the offscreen document; this module orchestrates it.
 
-import {
-  type AttachmentOutcome,
-  type AttachmentPlan,
-  ByteBudget,
-  formatBytes,
-  MAX_FILE_BYTES,
-  MAX_TOTAL_BYTES,
-} from '../features/slack/core/attachments';
-import { mapPool } from '../features/slack/core/slack-client';
-import type { PlannedImage } from '../features/web-to-md/core/web-capture';
+import { mapLimit } from '../async';
+import { ByteBudget, formatBytes } from '../bytes';
+import { errorMessage } from '../errors';
+import { chromePing, KEEPALIVE_CHUNK_MS } from '../keepalive';
+import { fail } from '../messaging';
 import {
   type BuildZipResponse,
   type FetchFileResponse,
@@ -19,10 +14,7 @@ import {
   OFFSCREEN_TARGET,
   type OffscreenRequest,
   type StoreZipResponse,
-} from '../offscreen/messages';
-import { errorMessage } from '../shared/errors';
-import { fail } from '../shared/messaging';
-import { chromePing, KEEPALIVE_CHUNK_MS } from './keepalive';
+} from './protocol';
 
 const OFFSCREEN_URL = 'src/offscreen/offscreen.html';
 const FILE_CONCURRENCY = 3;
@@ -136,9 +128,35 @@ function waitForDownload(downloadId: number, timeoutMs: number): Promise<void> {
   });
 }
 
+/** What happened to one planned file: saved in the zip, or skipped (with the reason shown to the user). */
+export type FileOutcome = { kind: 'saved'; path: string; isImage: boolean } | { kind: 'skipped'; reason: string };
+
+/** A file to download into the zip. */
+export interface FileDownload {
+  id: string;
+  url: string;
+  /** Path inside the zip. */
+  path: string;
+  isImage: boolean;
+  /** Size known up front (bytes), if any. */
+  size?: number;
+}
+
+export interface FilePlan {
+  downloads: FileDownload[];
+  /** Files decided up front not to download. */
+  skipped: Map<string, FileOutcome>;
+}
+
+/** An image to download; the extension is added from its Content-Type. */
+export interface ZipImage {
+  url: string;
+  pathBase: string;
+}
+
 export interface ZipFetchResult {
   /** Outcome for every planned/skipped file id. */
-  outcomes: Map<string, AttachmentOutcome>;
+  outcomes: Map<string, FileOutcome>;
   saved: number;
   failed: number;
 }
@@ -150,9 +168,9 @@ export interface ZipJob {
    * included); files that don't fit are skipped with a reason.
    */
   fetchFiles(
-    plan: AttachmentPlan,
+    plan: FilePlan,
     onProgress: (text: string) => void,
-    opts?: { maxFileBytes?: number; maxTotalBytes?: number },
+    opts: { maxFileBytes: number; maxTotalBytes: number },
   ): Promise<ZipFetchResult>;
   /**
    * Download web images into the job. Returns url → zip path for the saved ones;
@@ -160,7 +178,7 @@ export interface ZipJob {
    * images of the same site as `pageUrl`.
    */
   fetchImages(
-    images: PlannedImage[],
+    images: ZipImage[],
     opts: { maxBytes: number; maxTotalBytes: number; pageUrl?: string },
     onProgress: (text: string) => void,
   ): Promise<{ saved: Map<string, string>; failed: number }>;
@@ -196,17 +214,17 @@ export async function startZipJob(): Promise<ZipJob> {
   };
 
   return {
-    async fetchFiles(plan, onProgress, opts = {}) {
-      const maxFile = opts.maxFileBytes ?? MAX_FILE_BYTES;
-      const budget = new ByteBudget(opts.maxTotalBytes ?? MAX_TOTAL_BYTES);
+    async fetchFiles(plan, onProgress, opts) {
+      const maxFile = opts.maxFileBytes;
+      const budget = new ByteBudget(opts.maxTotalBytes);
       const overBudget = `export size limit (${formatBytes(budget.total)}) reached`;
-      const outcomes = new Map<string, AttachmentOutcome>(plan.skipped);
+      const outcomes = new Map<string, FileOutcome>(plan.skipped);
       let done = 0;
       let saved = 0;
       let failed = 0;
       const total = plan.downloads.length;
       onProgress(`Downloading files… 0/${total}`);
-      await mapPool(plan.downloads, FILE_CONCURRENCY, async (d) => {
+      await mapLimit(plan.downloads, FILE_CONCURRENCY, async (d) => {
         // Reserve before fetching: parallel downloads can't overshoot the total.
         const known = d.size !== undefined;
         const grant = await budget.reserve(known ? Math.min(d.size!, maxFile) : maxFile, known);
@@ -250,7 +268,7 @@ export async function startZipJob(): Promise<ZipJob> {
       let failed = 0;
       let done = 0;
       onProgress(`Downloading images… 0/${images.length}`);
-      await mapPool(images, FILE_CONCURRENCY, async (img) => {
+      await mapLimit(images, FILE_CONCURRENCY, async (img) => {
         const grant = await budget.reserve(opts.maxBytes, false);
         if (grant === null) {
           failed++;

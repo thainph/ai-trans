@@ -1,6 +1,14 @@
 // Messages between the Devdy tab (popup) and the background worker for settings/status.
 
-import type { DevdyProject } from './core/client';
+import type { DevdyProject, SendOutcome } from './core/client';
+
+/** Result of one send through the outbox, as reported to the UI. */
+export interface DevdyDelivery {
+  kind: SendOutcome['kind'];
+  message: string;
+  /** Exports still queued for Devdy (incl. this one if it could not be sent). */
+  pending: number;
+}
 
 export const DEVDY_TARGET = 'context-kit-devdy';
 

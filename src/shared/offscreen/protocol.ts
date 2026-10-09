@@ -2,7 +2,7 @@
 // (src/offscreen). The offscreen page exists because MV3 service workers can't
 // create blob: URLs, and data: URLs are capped at ~2 MB for downloads.
 
-import type { Result } from '../shared/messaging';
+import type { Result } from '../messaging';
 
 export const OFFSCREEN_TARGET = 'context-kit-offscreen';
 

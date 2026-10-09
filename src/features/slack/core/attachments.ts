@@ -4,7 +4,9 @@
 // they go inside the zip; the offscreen document does the actual fetching;
 // md-builder then renders local links (or a "not included" note) per file id.
 
+import { formatBytes } from '../../../shared/bytes';
 import { safeFileName } from '../../../shared/filename';
+import type { FileOutcome } from '../../../shared/offscreen/zip-job';
 import type { SlackFile, SlackMessage } from './types';
 
 /** Per-file cap. Bigger files are skipped and linked instead. */
@@ -16,7 +18,7 @@ export const MAX_TOTAL_BYTES = 200 * 1024 * 1024;
 export const FILES_DIR = 'attachments';
 
 /** What happened to one file (keyed by Slack file id). */
-export type AttachmentOutcome = { kind: 'saved'; path: string; isImage: boolean } | { kind: 'skipped'; reason: string };
+export type AttachmentOutcome = FileOutcome;
 
 export interface PlannedDownload {
   id: string;
@@ -61,12 +63,6 @@ export function isAllowedFileUrl(u: unknown): u is string {
   } catch {
     return false;
   }
-}
-
-export function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 export function isImageFile(f: SlackFile): boolean {
@@ -139,56 +135,4 @@ export function planAttachments(messages: SlackMessage[], options: PlanOptions =
     });
   }
   return { downloads, skipped };
-}
-
-/** Already-compressed formats: stored as-is in the zip (deflating them only costs CPU). */
-export function isPrecompressedPath(path: string): boolean {
-  return /\.(png|jpe?g|gif|webp|avif|heic|heif|zip|gz|tgz|bz2|xz|7z|rar|pdf|mp4|m4v|mov|webm|mkv|avi|mp3|m4a|aac|ogg|opus|flac|docx|xlsx|pptx|odt|ods|odp|key|pages|numbers|jar|apk|ipa|dmg|woff2?)$/i.test(
-    path,
-  );
-}
-
-/**
- * Shared byte budget for parallel downloads. Each download reserves its
- * maximum size *before* fetching, so concurrent fetches can never overshoot
- * the total; `settle()` returns the unused part once the real size is known.
- * When the budget is short, `reserve()` waits for in-flight downloads to
- * settle before giving up or granting a smaller amount.
- */
-export class ByteBudget {
-  private used = 0;
-  private reserved = 0;
-  private inFlight = 0;
-  private waiters: (() => void)[] = [];
-
-  constructor(readonly total: number) {}
-
-  get remaining(): number {
-    return Math.max(0, this.total - this.used - this.reserved);
-  }
-
-  /**
-   * Reserve up to `want` bytes. `exact`: the file needs all of it (known size)
-   * → null when it can't fit; otherwise grant what is left (> 0) or null.
-   */
-  async reserve(want: number, exact: boolean): Promise<number | null> {
-    while (this.remaining < want && this.inFlight > 0) {
-      await new Promise<void>((r) => this.waiters.push(r));
-    }
-    const grant = Math.min(want, this.remaining);
-    if (grant <= 0 || (exact && grant < want)) return null;
-    this.reserved += grant;
-    this.inFlight++;
-    return grant;
-  }
-
-  /** Release a reservation, keeping `actual` bytes (0 when the download failed). */
-  settle(reserved: number, actual: number): void {
-    this.reserved -= reserved;
-    this.used += Math.min(actual, reserved);
-    this.inFlight--;
-    const waiters = this.waiters;
-    this.waiters = [];
-    for (const w of waiters) w();
-  }
 }

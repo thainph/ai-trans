@@ -27,3 +27,10 @@ export function safeFileName(name: string, maxLen = 80): string {
 export function filenamePart(s: string, fallback: string, maxLen = 60): string {
   return cleanFilenamePart(s).slice(0, maxLen) || fallback;
 }
+
+/** Already-compressed formats: stored as-is in the zip (deflating them only costs CPU). */
+export function isPrecompressedPath(path: string): boolean {
+  return /\.(png|jpe?g|gif|webp|avif|heic|heif|zip|gz|tgz|bz2|xz|7z|rar|pdf|mp4|m4v|mov|webm|mkv|avi|mp3|m4a|aac|ogg|opus|flac|docx|xlsx|pptx|odt|ods|odp|key|pages|numbers|jar|apk|ipa|dmg|woff2?)$/i.test(
+    path,
+  );
+}

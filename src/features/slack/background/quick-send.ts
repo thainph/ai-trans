@@ -4,7 +4,7 @@
 
 import { onTargetMessage, type Result } from '../../../shared/messaging';
 import { fromContentScriptOf } from '../../../shared/sender';
-import { openSettings } from '../../devdy/background/open-settings';
+import { openSettings } from '../../devdy/api';
 import { toastFor } from '../core/quick-send';
 import {
   QUICK_SEND_OPTIONS,
