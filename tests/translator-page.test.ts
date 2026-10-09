@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
   createTextBatches,
+  fitsInRequest,
+  MAX_ITEM_CHARS,
   needsTranslation,
   RateLimiter,
+  RetryBudget,
   TranslationCache,
+  WeakOriginals,
   withOuterWhitespace,
 } from '../src/features/translator/core/page-text';
+import { MAX_BATCH_ITEMS, MAX_TEXT_CHARS } from '../src/features/translator/shared/messages';
 
 describe('page text helpers', () => {
   it('needsTranslation skips numbers, URLs and letter-less text', () => {
@@ -57,5 +62,51 @@ describe('page text helpers', () => {
     expect(limiter.waitMs()).toBe(0);
     expect(limiter.tryAcquire()).toBe(true);
     expect(limiter.tryAcquire()).toBe(false);
+  });
+
+  it('never builds a batch the service worker would refuse', () => {
+    expect(fitsInRequest('x'.repeat(MAX_ITEM_CHARS))).toBe(true);
+    expect(fitsInRequest('x'.repeat(MAX_ITEM_CHARS + 1))).toBe(false);
+    expect(fitsInRequest('x'.repeat(MAX_TEXT_CHARS + 1))).toBe(false);
+    const texts = [
+      ...Array.from({ length: 500 }, (_, i) => `short text ${i}`),
+      ...Array.from({ length: 30 }, () => 'y'.repeat(MAX_ITEM_CHARS)),
+    ].filter(fitsInRequest);
+    for (const batch of createTextBatches(texts)) {
+      expect(batch.length).toBeLessThanOrEqual(MAX_BATCH_ITEMS);
+      expect(batch.reduce((n, t) => n + t.length, 0)).toBeLessThanOrEqual(MAX_TEXT_CHARS);
+    }
+  });
+
+  it('RetryBudget allows a bounded number of retries per text', () => {
+    const budget = new RetryBudget(2);
+    expect(budget.exhausted('a')).toBe(false);
+    expect(budget.fail('a')).toBe(true);
+    expect(budget.fail('a')).toBe(true);
+    expect(budget.exhausted('a')).toBe(false);
+    expect(budget.fail('a')).toBe(false);
+    expect(budget.exhausted('a')).toBe(true);
+    expect(budget.exhausted('b')).toBe(false);
+    budget.clear();
+    expect(budget.exhausted('a')).toBe(false);
+  });
+
+  it('WeakOriginals keeps the first original and restores every live node', () => {
+    const originals = new WeakOriginals<{ data: string }>();
+    const a = { data: 'Xin chào' };
+    const b = { data: 'Thế giới' };
+    originals.set(a, 'Hello');
+    originals.set(a, 'ignored');
+    originals.set(b, 'World');
+    expect(originals.size).toBe(2);
+    expect(originals.has(a)).toBe(true);
+    originals.prune(); // nodes still referenced → kept
+    expect(originals.size).toBe(2);
+    originals.restoreAll((node, original) => {
+      node.data = original;
+    });
+    expect([a.data, b.data]).toEqual(['Hello', 'World']);
+    expect(originals.size).toBe(0);
+    expect(originals.has(a)).toBe(false);
   });
 });

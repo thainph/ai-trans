@@ -187,3 +187,19 @@ export function parseLLMResponse(provider: Provider, result: any): LLMReply {
   if (typeof text !== 'string') throw new Error('OpenAI returned no text');
   return { text: text.trim(), truncated: choice.finish_reason === 'length' };
 }
+
+/** A signal aborted when `signal` aborts or after `timeoutMs` (whichever comes first). */
+export function signalWithTimeout(signal: AbortSignal | undefined, timeoutMs: number): AbortSignal {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  if (!signal) return timeout;
+  if (typeof AbortSignal.any === 'function') return AbortSignal.any([signal, timeout]);
+  // Chrome < 116: forward both by hand.
+  const ctrl = new AbortController();
+  for (const s of [signal, timeout]) {
+    if (s.aborted) ctrl.abort(s.reason);
+    else s.addEventListener('abort', () => ctrl.abort(s.reason), { once: true });
+  }
+  return ctrl.signal;
+}
+
+export const CANCELLED = 'Cancelled';

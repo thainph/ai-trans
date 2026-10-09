@@ -9,9 +9,12 @@ import { isExtensionAlive } from '../../../shared/runtime';
 import { mapLimit } from '../core/map-limit';
 import {
   createTextBatches,
+  fitsInRequest,
   needsTranslation,
   RateLimiter,
+  RetryBudget,
   TranslationCache,
+  WeakOriginals,
   withOuterWhitespace,
 } from '../core/page-text';
 import { isElementVisible, isInViewport } from '../core/visibility';
@@ -30,16 +33,23 @@ interface Langs {
 /** Lazy/dynamic translations: debounce, and LLM requests per minute. */
 const FLUSH_DELAY_MS = 400;
 const MAX_REQUESTS_PER_MINUTE = 20;
+/** Texts the model returned nothing usable for are re-queued after this delay. */
+const RETRY_DELAY_MS = 2000;
+/** Forget garbage-collected originals / detached lazy elements at most this often. */
+const PRUNE_INTERVAL_MS = 5000;
 /** Pre-translate content this far below/above the viewport. */
 const LAZY_MARGIN = '50% 0px';
 
 let pageTranslationState: PageTranslationState = 'idle';
-const originalTexts = new Map<Text, string>();
+/** Originals for revert (weak: see WeakOriginals). */
+const originalTexts = new WeakOriginals<Text>();
 /** Bumped on every translate/revert: async work of an older run is dropped. */
 let generation = 0;
 let langs: Langs | null = null;
 let concurrency = 1;
 const cache = new TranslationCache();
+const retries = new RetryBudget();
+let lastPrune = 0;
 const limiter = new RateLimiter(MAX_REQUESTS_PER_MINUTE, 60_000);
 let loadingHost: HTMLDivElement | null = null;
 let loadingShadow: ShadowRoot | null = null;
@@ -48,6 +58,8 @@ let loadingShadow: ShadowRoot | null = null;
 let domObserver: MutationObserver | null = null;
 let lazyObserver: IntersectionObserver | null = null;
 let lazyTexts = new WeakMap<Element, Set<Text>>();
+/** Elements observed by lazyObserver (to unobserve the ones the page removed). */
+const lazyElements = new Set<Element>();
 const pendingNodes = new Set<Text>();
 /** Nodes whose translation is being requested: never sent twice. */
 let inFlight = new WeakSet<Text>();
@@ -83,7 +95,8 @@ function isCandidate(node: Text): boolean {
   if (!parent) return false;
   if (originalTexts.has(node) || inFlight.has(node)) return false;
   const text = node.data.trim();
-  if (text.length < 2 || !needsTranslation(text)) return false;
+  if (text.length < 2 || !fitsInRequest(text) || !needsTranslation(text)) return false;
+  if (retries.exhausted(text)) return false;
   if (parent.isContentEditable) return false;
   return !parent.closest(SKIP_SELECTOR);
 }
@@ -99,7 +112,7 @@ function collectTextNodes(root: Node): Text[] {
 
 const isVisibleText = (node: Text) => !!node.parentElement && isElementVisible(node.parentElement);
 
-async function requestBatch(texts: string[], l: Langs): Promise<string[]> {
+async function requestBatch(texts: string[], l: Langs): Promise<(string | null)[]> {
   const response = await callTranslator({ type: 'translate-batch', texts, ...l });
   if (response?.ok && response.translations.length === texts.length) return response.translations;
   throw new Error((response && !response.ok && response.error) || 'Translation failed');
@@ -112,17 +125,25 @@ function applyTranslation(node: Text, source: string, translation: string): void
   if (translation !== source) node.data = withOuterWhitespace(node.data, translation);
 }
 
+interface Leftovers {
+  /** Not sent: over the rate cap. */
+  deferred: Text[];
+  /** Sent, but the model returned nothing usable (still within the retry budget). */
+  retry: Text[];
+}
+
 /**
  * Translate `nodes`: cached texts at once, the other distinct texts in batches
  * through a bounded pool. With `limiter`, batches over the rate cap are not
- * sent; their nodes are returned so the caller can retry later.
+ * sent. Items without a usable translation are neither cached nor marked as
+ * translated. Returns the nodes the caller should queue again.
  */
 async function translateNodes(
   nodes: Text[],
   l: Langs,
   gen: number,
   opts: { limiter?: RateLimiter; onProgress?: (done: number, total: number) => void } = {},
-): Promise<Text[]> {
+): Promise<Leftovers> {
   const bySource = new Map<string, Text[]>();
   for (const node of nodes) {
     const source = node.data.trim();
@@ -139,6 +160,7 @@ async function translateNodes(
 
   const batches = createTextBatches([...bySource.keys()]);
   const deferred: Text[] = [];
+  const retry: Text[] = [];
   let done = 0;
   let stopped = false;
   try {
@@ -148,7 +170,7 @@ async function translateNodes(
         for (const source of batch) deferred.push(...bySource.get(source)!);
         return;
       }
-      let translations: string[];
+      let translations: (string | null)[];
       try {
         translations = await requestBatch(batch, l);
       } catch (err) {
@@ -157,15 +179,27 @@ async function translateNodes(
       }
       if (gen !== generation) return;
       batch.forEach((source, i) => {
-        cache.set(source, translations[i]!);
-        for (const node of bySource.get(source)!) applyTranslation(node, source, translations[i]!);
+        const translation = translations[i];
+        if (translation == null) {
+          if (retries.fail(source)) retry.push(...bySource.get(source)!);
+          return;
+        }
+        cache.set(source, translation);
+        for (const node of bySource.get(source)!) applyTranslation(node, source, translation);
       });
       opts.onProgress?.(++done, batches.length);
     });
   } finally {
     for (const node of nodes) inFlight.delete(node);
   }
-  return deferred;
+  return { deferred, retry };
+}
+
+/** Queue leftovers for a later flush (rate cap → when a slot frees up; retries → after a pause). */
+function requeue({ deferred, retry }: Leftovers): void {
+  for (const node of [...deferred, ...retry]) pendingNodes.add(node);
+  if (deferred.length > 0) scheduleFlush(Math.max(limiter.waitMs(), FLUSH_DELAY_MS));
+  else if (retry.length > 0) scheduleFlush(RETRY_DELAY_MS);
 }
 
 export async function translatePage(): Promise<void> {
@@ -209,6 +243,7 @@ export async function translatePage(): Promise<void> {
   langs = l;
   concurrency = settings.provider === 'ollama' ? 2 : 5;
   cache.use(`${sourceLang}|${targetLang}|${settings.style}`);
+  retries.clear();
 
   // Viewport first; the rest when it gets close (and content added later).
   const inView = new Set(textNodes.filter((n) => isInViewport(n.parentElement!)));
@@ -216,9 +251,10 @@ export async function translatePage(): Promise<void> {
   observeLazily(textNodes.filter((n) => !inView.has(n)));
 
   try {
-    await translateNodes([...inView], l, gen, {
+    const leftovers = await translateNodes([...inView], l, gen, {
       onProgress: (done, total) => showLoading(`Translating... ${done}/${total}`),
     });
+    if (gen === generation) requeue(leftovers);
   } catch (err) {
     if (gen !== generation) return;
     console.warn('AI Translator: batch failed', errorMessage(err));
@@ -236,14 +272,9 @@ export function revertPageTranslation(): void {
   generation++;
   stopObservers();
   hideLoading();
-  for (const [node, original] of originalTexts) {
-    try {
-      node.data = original;
-    } catch {
-      // Node may have been removed from DOM
-    }
-  }
-  originalTexts.clear();
+  originalTexts.restoreAll((node, original) => {
+    node.data = original;
+  });
   langs = null;
   pageTranslationState = 'idle';
 }
@@ -274,6 +305,7 @@ function stopObservers(): void {
   lazyObserver?.disconnect();
   lazyObserver = null;
   lazyTexts = new WeakMap();
+  lazyElements.clear();
   inFlight = new WeakSet();
   pendingNodes.clear();
   if (flushTimer) clearTimeout(flushTimer);
@@ -290,18 +322,37 @@ function observeLazily(nodes: Text[]): void {
       set.add(node);
     } else {
       lazyTexts.set(el, new Set([node]));
+      lazyElements.add(el);
       lazyObserver.observe(el);
     }
   }
 }
 
+function unobserveLazy(el: Element): void {
+  lazyObserver?.unobserve(el);
+  lazyElements.delete(el);
+  lazyTexts.delete(el);
+}
+
+/**
+ * SPAs replace content all the time: stop observing removed elements (the
+ * observer holds them strongly) and forget collected originals. Throttled.
+ */
+function pruneDetached(): void {
+  const now = Date.now();
+  if (now - lastPrune < PRUNE_INTERVAL_MS) return;
+  lastPrune = now;
+  for (const el of lazyElements) if (!el.isConnected) unobserveLazy(el);
+  originalTexts.prune();
+}
+
 function onIntersect(entries: IntersectionObserverEntry[]): void {
   for (const entry of entries) {
     if (!entry.isIntersecting) continue;
-    lazyObserver?.unobserve(entry.target);
     for (const node of lazyTexts.get(entry.target) ?? []) pendingNodes.add(node);
-    lazyTexts.delete(entry.target);
+    unobserveLazy(entry.target);
   }
+  pruneDetached();
   if (pendingNodes.size > 0) scheduleFlush(FLUSH_DELAY_MS);
 }
 
@@ -321,23 +372,20 @@ async function flushPendingNodes(): Promise<void> {
     return;
   }
   const gen = generation;
+  pruneDetached();
   const nodes = [...pendingNodes].filter((n) => n.isConnected && isCandidate(n) && isVisibleText(n));
   pendingNodes.clear();
   if (nodes.length === 0) return;
 
   flushing = true;
-  let retryIn = FLUSH_DELAY_MS;
   try {
-    const deferred = await translateNodes(nodes, langs, gen, { limiter });
-    if (gen === generation && deferred.length > 0) {
-      for (const node of deferred) pendingNodes.add(node);
-      retryIn = Math.max(limiter.waitMs(), FLUSH_DELAY_MS);
-    }
+    const leftovers = await translateNodes(nodes, langs, gen, { limiter });
+    if (gen === generation) requeue(leftovers);
   } catch (err) {
     console.warn('AI Translator: dynamic translate failed', errorMessage(err));
   } finally {
     flushing = false;
-    if (gen === generation && pendingNodes.size > 0) scheduleFlush(retryIn);
+    if (gen === generation && pendingNodes.size > 0) scheduleFlush(FLUSH_DELAY_MS);
   }
 }
 
@@ -346,7 +394,7 @@ function showLoading(progress?: string): void {
   if (!loadingHost) {
     loadingHost = document.createElement('div');
     loadingHost.id = 'ai-translator-loading-host';
-    loadingShadow = loadingHost.attachShadow({ mode: 'open' });
+    loadingShadow = loadingHost.attachShadow({ mode: 'closed' });
     loadingShadow.innerHTML = `
       <style>${LOADING_CSS}</style>
       <div class="loading-bar">

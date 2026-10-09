@@ -25,18 +25,21 @@ export function buildBatchInput(texts: string[]): string {
 }
 
 /**
- * Parse the model's reply into one translation per source text. Anything that
- * cannot be trusted falls back to the source text:
+ * Parse the model's reply into one translation per source text; `null` marks
+ * an item without a trustworthy translation (the caller keeps the original and
+ * may retry it — it must not be cached):
  * - valid JSON with an array of a different length → every item (alignment unknown);
- * - JSON cut short (output limit) → the complete leading items, the rest as sources;
- * - non-JSON `[N] text` lines (legacy / non-compliant models) → first occurrence of each N wins.
+ * - JSON cut short (output limit) → the complete leading items, null for the rest;
+ * - non-JSON `[N] text` lines (legacy / non-compliant models) → first occurrence of each N wins;
+ * - missing, empty or non-string items → null.
  */
-export function parseBatchResponse(raw: string, sources: string[]): string[] {
+export function parseBatchResponse(raw: string, sources: string[]): (string | null)[] {
   const text = stripCodeFence(raw).trim();
-  const pick = (items: unknown[]): string[] =>
-    sources.map((src, i) => {
+  const none = () => sources.map(() => null);
+  const pick = (items: unknown[]): (string | null)[] =>
+    sources.map((_, i) => {
       const item = items[i];
-      return typeof item === 'string' && item.trim() ? item.trim() : src;
+      return typeof item === 'string' && item.trim() ? item.trim() : null;
     });
 
   // `[0] text` would otherwise parse as the JSON array [0].
@@ -45,13 +48,13 @@ export function parseBatchResponse(raw: string, sources: string[]): string[] {
   const parsed = parseJsonLoose(text);
   if (parsed !== undefined) {
     const items = findArray(parsed);
-    return items && items.length === sources.length ? pick(items) : [...sources];
+    return items && items.length === sources.length ? pick(items) : none();
   }
 
   if (/^\s*(\{\s*"|\[\s*")/.test(text)) {
     // Truncated JSON: the string literals that are complete keep their order.
     const items = leadingStringItems(text);
-    return items.length <= sources.length ? pick(items) : [...sources];
+    return items.length <= sources.length ? pick(items) : none();
   }
 
   return pick(parseNumberedLines(text, sources.length));

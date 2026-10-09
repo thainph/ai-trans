@@ -16,19 +16,21 @@ import {
 import {
   buildRequestBody,
   buildTranslatePrompt,
+  CANCELLED,
   CHUNK_CHARS,
   LLM_TIMEOUT_MS,
   type LLMReply,
   MODELS_TIMEOUT_MS,
   OLLAMA_TIMEOUT_MS,
   parseLLMResponse,
+  signalWithTimeout,
   splitForTranslation,
   splitOuterWhitespace,
   stripTextTags,
   wrapText,
 } from './llm';
 import { syncOllamaCors } from './ollama-cors';
-import { rejectReason } from './sender';
+import { rejectReason, requestKey } from './sender';
 
 // Initialize defaults on first install, fill in missing ones on update.
 chrome.runtime.onInstalled.addListener((details) => {
@@ -65,16 +67,38 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'sync' && changes.ollamaUrl) void syncOllamaCors();
 });
 
+/** Cancellable requests in flight, by requestKey() (sender frame + requestId). */
+const inFlight = new Map<string, AbortController>();
+
+/** Run `work` with an AbortSignal the sender can trigger with a `cancel` message. */
+function cancellable<T>(
+  sender: chrome.runtime.MessageSender,
+  requestId: string | undefined,
+  work: (signal?: AbortSignal) => Promise<T>,
+): Promise<T> {
+  if (!requestId) return work();
+  const key = requestKey(sender, requestId);
+  inFlight.get(key)?.abort();
+  const ctrl = new AbortController();
+  inFlight.set(key, ctrl);
+  return work(ctrl.signal).finally(() => {
+    if (inFlight.get(key) === ctrl) inFlight.delete(key);
+  });
+}
+
 onTargetMessage<TranslatorRequest>(TRANSLATOR_TARGET, (request, sender) => {
   const refused = rejectReason(request, sender, chrome.runtime.id);
   if (refused) return fail(refused);
   switch (request.type) {
     case 'translate':
       return reply<'translate'>(
-        handleTranslate(request.text, request.sourceLang, request.targetLang, request.style).then((translation) => ({
-          translation,
-        })),
+        cancellable(sender, request.requestId, (signal) =>
+          handleTranslate(request.text, request.sourceLang, request.targetLang, request.style, signal),
+        ).then((translation) => ({ translation })),
       );
+    case 'cancel':
+      inFlight.get(requestKey(sender, request.requestId))?.abort();
+      return ok({});
     case 'fetch-ollama-models':
       return reply<'fetch-ollama-models'>(fetchOllamaModels(request.url).then((models) => ({ models })));
     case 'translate-batch':
@@ -84,7 +108,11 @@ onTargetMessage<TranslatorRequest>(TRANSLATOR_TARGET, (request, sender) => {
         ),
       );
     case 'grammar-check':
-      return reply<'grammar-check'>(handleGrammarCheck(request.text).then((corrected) => ({ corrected })));
+      return reply<'grammar-check'>(
+        cancellable(sender, request.requestId, (signal) => handleGrammarCheck(request.text, signal)).then(
+          (corrected) => ({ corrected }),
+        ),
+      );
   }
 });
 
@@ -97,10 +125,16 @@ function reply<K extends keyof TranslatorResponses>(work: Promise<Payload<K>>): 
 }
 
 /** fetch() that gives up after `timeoutMs`, with readable connection/timeout errors. */
-async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<Response> {
   try {
-    return await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+    return await fetch(url, { ...init, signal: signalWithTimeout(signal, timeoutMs) });
   } catch (err) {
+    if (signal?.aborted) throw new Error(CANCELLED);
     if (err instanceof DOMException && err.name === 'TimeoutError') {
       throw new Error(`No response from ${url} after ${Math.round(timeoutMs / 1000)}s`);
     }
@@ -111,12 +145,17 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
 async function fetchOllamaModels(url: string): Promise<string[]> {
   const base = (url || DEFAULT_SETTINGS.ollamaUrl).replace(/\/+$/, '');
   await syncOllamaCors(base);
-  const response = await fetchWithTimeout(`${base}/api/tags`, {}, MODELS_TIMEOUT_MS);
-  if (!response.ok) {
-    throw new Error(`Ollama error ${response.status}`);
+  try {
+    const response = await fetchWithTimeout(`${base}/api/tags`, {}, MODELS_TIMEOUT_MS);
+    if (!response.ok) {
+      throw new Error(`Ollama error ${response.status}`);
+    }
+    const data = (await response.json()) as { models?: { name: string }[] };
+    return (data.models || []).map((m) => m.name);
+  } finally {
+    // The probed URL is allowed for this fetch only; the saved URL keeps its rule.
+    void syncOllamaCors('');
   }
-  const data = (await response.json()) as { models?: { name: string }[] };
-  return (data.models || []).map((m) => m.name);
 }
 
 interface ProviderConfig {
@@ -195,7 +234,12 @@ async function getCachedProviderConfig(): Promise<ProviderConfig> {
 }
 
 /** truncated = the model hit its output limit. `json` = ask for a JSON reply. */
-async function callLLM(systemPrompt: string, userContent: string, json = false): Promise<LLMReply> {
+async function callLLM(
+  systemPrompt: string,
+  userContent: string,
+  json = false,
+  signal?: AbortSignal,
+): Promise<LLMReply> {
   const config = await getCachedProviderConfig();
   const body = buildRequestBody(config.provider, config.model, systemPrompt, userContent, json);
 
@@ -203,6 +247,7 @@ async function callLLM(systemPrompt: string, userContent: string, json = false):
     config.url,
     { method: 'POST', headers: config.headers, body: JSON.stringify(body) },
     config.provider === 'ollama' ? OLLAMA_TIMEOUT_MS : LLM_TIMEOUT_MS,
+    signal,
   );
 
   if (!response.ok) {
@@ -218,7 +263,7 @@ async function handleTranslateBatch(
   sourceLang: string,
   targetLang: string,
   style: string,
-): Promise<string[]> {
+): Promise<(string | null)[]> {
   if (texts.length === 0) return [];
   const systemPrompt = buildBatchPrompt(
     languageName(sourceLang),
@@ -230,20 +275,26 @@ async function handleTranslateBatch(
   return parseBatchResponse(raw, texts);
 }
 
-async function handleGrammarCheck(text: string): Promise<string> {
+async function handleGrammarCheck(text: string, signal?: AbortSignal): Promise<string> {
   const systemPrompt =
     'You are an English grammar and spelling corrector. Fix grammar, spelling, ' +
     'and punctuation while preserving the original meaning and tone. Return ONLY ' +
     'the corrected English text — no explanations, quotes, or extra formatting. ' +
     'If it is already correct, return it unchanged.';
 
-  const { text: corrected } = await callLLM(systemPrompt, text);
+  const { text: corrected } = await callLLM(systemPrompt, text, false, signal);
   return corrected;
 }
 
 const TRUNCATED_NOTICE = '\n\n⚠️ The translation may be incomplete: the AI model stopped at its output limit.';
 
-async function handleTranslate(text: string, sourceLang: string, targetLang: string, style: string): Promise<string> {
+async function handleTranslate(
+  text: string,
+  sourceLang: string,
+  targetLang: string,
+  style: string,
+  signal?: AbortSignal,
+): Promise<string> {
   const systemPrompt = buildTranslatePrompt(
     languageName(sourceLang),
     languageName(targetLang),
@@ -260,7 +311,8 @@ async function handleTranslate(text: string, sourceLang: string, targetLang: str
   const parts = await mapLimit(segments, concurrency, async (segment) => {
     const { lead, core, trail } = splitOuterWhitespace(segment);
     if (!core) return segment;
-    const result = await callLLM(systemPrompt, wrapText(core));
+    if (signal?.aborted) throw new Error(CANCELLED);
+    const result = await callLLM(systemPrompt, wrapText(core), false, signal);
     if (result.truncated) truncated = true;
     return lead + stripTextTags(result.text) + trail;
   });

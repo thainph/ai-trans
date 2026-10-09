@@ -15,18 +15,27 @@ interface LangPair {
   style: TranslationStyle;
 }
 
+/** Upper bounds of one request (checked by the service worker). */
+export const MAX_TEXT_CHARS = 100_000;
+export const MAX_BATCH_ITEMS = 200;
+
 export type TranslatorRequest =
-  | ({ target: typeof TRANSLATOR_TARGET; type: 'translate'; text: string } & LangPair)
-  /** Full-page translation: many short texts in one numbered prompt. */
+  /** `requestId` (optional): lets the sender abort it with `cancel`. */
+  | ({ target: typeof TRANSLATOR_TARGET; type: 'translate'; text: string; requestId?: string } & LangPair)
+  /** Full-page translation: many short texts in one JSON-array prompt. */
   | ({ target: typeof TRANSLATOR_TARGET; type: 'translate-batch'; texts: string[] } & LangPair)
-  | { target: typeof TRANSLATOR_TARGET; type: 'grammar-check'; text: string }
+  | { target: typeof TRANSLATOR_TARGET; type: 'grammar-check'; text: string; requestId?: string }
+  /** Abort the sender frame's request `requestId` (no-op when already done). */
+  | { target: typeof TRANSLATOR_TARGET; type: 'cancel'; requestId: string }
   | { target: typeof TRANSLATOR_TARGET; type: 'fetch-ollama-models'; url: string };
 
 /** Response type per request type. */
 export interface TranslatorResponses {
   translate: Result<{ translation: string }>;
-  'translate-batch': Result<{ translations: string[] }>;
+  /** One entry per text; null = no usable translation (retry later, don't cache). */
+  'translate-batch': Result<{ translations: (string | null)[] }>;
   'grammar-check': Result<{ corrected: string }>;
+  cancel: Result;
   'fetch-ollama-models': Result<{ models: string[] }>;
 }
 
