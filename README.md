@@ -2,7 +2,7 @@
 
 > Gom ngữ cảnh cho AI: dịch mọi đoạn văn bản, biến trang web và Slack thread thành Markdown sạch.
 
-Chrome extension (MV3) gộp 3 extension cũ:
+Chrome extension (MV3) gộp 3 extension cũ (toàn bộ mã nguồn là TypeScript):
 
 | Tab | Nguồn gốc | Chức năng |
 |---|---|---|
@@ -15,39 +15,48 @@ Chrome extension (MV3) gộp 3 extension cũ:
 
 ```bash
 pnpm install
-pnpm build         # typecheck + vite build → dist/
-pnpm test          # vitest (test của phần Slack)
-pnpm dev           # build --watch
+pnpm build         # typecheck + vite build (trang, service worker, content script IIFE) + check:dist → dist/
+pnpm dev           # = dev:all: chạy mọi watcher (main, content all-frames, content Slack), không minify
+pnpm test          # vitest
+pnpm typecheck     # tsc --noEmit
+pnpm lint          # Biome (lint + kiểm tra format)
+pnpm format        # Biome tự format
+pnpm check:dist    # mọi file mà dist/manifest.json, HTML và code tham chiếu đều tồn tại
 ```
 
 Mở `chrome://extensions` → bật Developer mode → **Load unpacked** → chọn `dist/`.
+CI (`.github/workflows/ci.yml`) chạy typecheck, lint, test, build.
 
 ## Cấu trúc
 
 ```
-public/                      # copy nguyên trạng vào dist/ (không bundle)
-  manifest.json              # manifest gộp
-  translator/                # JS thuần: content script + popup cài đặt
-  web-to-md/                 # JS thuần: popup + converter
-  shared/theme.css           # design system chung (Web → MD + Slack), bám theo translator/popup.css
+public/                      # chỉ manifest.json + icons (copy nguyên trạng vào dist/)
 src/
-  background/index.ts        # service worker chung: import translator + slack
-  background/slack-export.ts # onConnect port "slack-thread-export"
-  translator/background.js   # onMessage {action: ...} + onInstalled (DNR Ollama)
+  background/index.ts        # service worker: chỉ import các module background của từng feature
+  background/zip-export.ts   # điều phối offscreen (tải file/ảnh, nén zip)
+  offscreen/                 # offscreen document + kiểu message
   popup/                     # popup "vỏ": thanh tab + iframe cho từng tool
-  slack/popup/               # popup Slack (TS)
-  slack/content/             # content script app.slack.com (mục Send to Devdy trong menu Slack)
-  devdy/popup/               # tab Devdy (token, chọn app, hàng đợi)
-  web/content/               # content script mọi trang: nút ➤ gửi đoạn chọn sang Devdy
-  content/toast.ts           # toast dùng chung cho các content script
-  core/, types/              # logic Slack → Markdown
+  content/all-frames.ts      # entry content script mọi trang/mọi frame → dist/content.js (+ content.css)
+  shared/                    # errors, runtime, filename, messaging (Result/onTargetMessage), toast, yaml, styles/
+  features/
+    translator/              # background (gọi LLM), content (thanh nút + popup dịch), popup, shared (settings, messages)
+    web-to-md/               # core (extract, converter, front matter), content (gửi đoạn chọn), background, popup
+    slack/                   # core (Slack → Markdown), content (menu Send to Devdy), background (export), popup
+    devdy/                   # core (client, outbox, blob-store), background, popup
 tests/                       # vitest
 ```
+
+Mỗi feature chia `core/` (logic thuần, có test), `background/`, `content/`, `popup/` và `messages.ts`.
+Content script build thành IIFE riêng (`vite.content.config.ts`): `content.js` (mọi trang) và `slack-content.js` (app.slack.com).
+Bản build được minify; các hàm chạy trong trang (`pageSlackApi`, `extractInPage`) phải tự chứa (không import/closure) —
+`tests/minified-injection.test.ts` kiểm tra bản minify vẫn chạy được.
+
+Design token CSS nằm ở `src/shared/styles/tokens.css`, dùng chung cho `theme.css` (Web → MD, Slack, Devdy), popup Translator và popup vỏ.
 
 ### Popup vỏ
 
 `src/popup/shell.ts` nạp popup gốc của từng tool trong một iframe (cùng origin
-extension nên `chrome.*` vẫn hoạt động). Nhờ vậy CSS/ID của 3 popup không
+extension nên `chrome.*` vẫn hoạt động). Nhờ vậy CSS/ID của các popup không
 đụng nhau. Iframe được tạo lười (chỉ khi mở tab), tự co giãn theo nội dung.
 
 - Tab mặc định: **Slack** nếu tab đang mở là `app.slack.com`, ngược lại là tab dùng lần trước (`chrome.storage.local.contextKitLastTab`).
@@ -57,7 +66,8 @@ extension nên `chrome.*` vẫn hoạt động). Nhờ vậy CSS/ID của 3 popu
 
 **Export** (trước đây "Download .md") khi chip **Images** bật và nội dung có ảnh → lưu `<tên>.zip` gồm `<tên>.md` + `images/01-…png`
 (link ảnh trong md trỏ sang file trong zip). Ảnh tải lỗi giữ URL gốc; không có ảnh / không tải được ảnh nào →
-lưu `.md` như cũ. Dùng chung đường tải ảnh với Send to Devdy (offscreen `fetch-image`, `background/web-capture.ts`).
+lưu `.md` như cũ. Dùng chung đường tải ảnh với Send to Devdy (offscreen `fetch-image`, `features/web-to-md/background/web-capture.ts`).
+Front matter (chip **Frontmatter**) dùng chung định dạng với Devdy: `title, url, site_name, author, published_at, captured_at, description, selection`.
 
 ### Slack: export kèm file đính kèm (.zip)
 
@@ -72,7 +82,7 @@ slack-thread-dev-20231115-0513.zip
     └── 02-server-log.txt
 ```
 
-- Luồng: `background/slack-export.ts` → `core/attachments.ts` (lập kế hoạch, thuần, có test)
+- Luồng: `features/slack/background/export.ts` → `features/slack/core/attachments.ts` (lập kế hoạch, thuần, có test)
   → `background/zip-export.ts` → **offscreen document** (`src/offscreen/`) tải file từ
   `files.slack.com` bằng cookie đăng nhập của trình duyệt, nén bằng `fflate`, trả blob URL cho
   `chrome.downloads`. (Service worker không tạo được blob URL; data URL bị giới hạn ~2 MB.)
@@ -114,27 +124,31 @@ Gửi Slack thread và trang web vào app Devdy qua Inbox API cục bộ (hợp 
   phần còn lại giữ link Slack kèm ghi chú.
 - **Gửi nhanh ngay trong Slack:** chuột phải vào một tin nhắn (hoặc bấm ⋮ *More actions*) → menu của Slack có thêm
   **Send to Devdy** (ngay sau *Copy link*). Gửi cả thread chứa tin nhắn đó, luôn kèm reactions + file đính kèm;
-  tiến trình/kết quả hiện bằng toast góc dưới phải. Content script `src/slack/content/` (build riêng thành
+  tiến trình/kết quả hiện bằng toast góc dưới phải. Content script `src/features/slack/content/` (build riêng thành
   `dist/slack-content.js` dạng IIFE bằng `vite.content.config.ts`).
 - Nếu Slack đổi giao diện khiến không chèn được vào menu thì vẫn gửi được từ tab Slack (dán link thread).
 - Gỡ lỗi việc nhận diện tin nhắn/menu: trên app.slack.com chạy `localStorage.setItem('context-kit-debug', '1')`
   rồi reload, xem log `[context-kit]` trong Console.
-- Code: `core/devdy-client.ts` (gọi API, chọn app), `core/devdy-outbox.ts` (hàng đợi, có test),
-  `core/blob-store.ts` (IndexedDB), `background/devdy.ts` (alarm + message cho tab Devdy),
-  `core/web-capture.ts` + `background/web-capture.ts` (trang web / đoạn chọn), `web/content/` (content script
-  `page-content.js` cho nút ➤), `devdy/popup/` (tab Devdy).
+- Code (trong `src/features/`): `devdy/core/client.ts` (gọi API, chọn app), `devdy/core/outbox.ts` (hàng đợi, có test),
+  `devdy/core/blob-store.ts` (IndexedDB), `devdy/background/` (alarm + message cho tab Devdy),
+  `web-to-md/core/web-capture.ts` + `web-to-md/background/web-capture.ts` (trang web / đoạn chọn),
+  `web-to-md/content/send-selection.ts` (nút ➤, nằm trong `content.js`), `devdy/popup/` (tab Devdy).
 
-### Background
+### Background / message
 
-Hai kênh message độc lập: translator dùng `chrome.runtime.onMessage` với
-`request.action`, Slack dùng `chrome.runtime.onConnect` (port). Thêm tính năng
-mới thì tạo module riêng và import trong `src/background/index.ts`.
+Mỗi kênh message có một `target` riêng và đăng ký bằng `onTargetMessage()` (`src/shared/messaging.ts`),
+phản hồi theo dạng `Result<T>` (`{ ok: true, ... }` hoặc `{ ok: false, error }`): `context-kit-translator`
+(gọi LLM), `context-kit-translator-page` (popup → tab: dịch/hoàn tác cả trang), `context-kit-devdy`,
+`context-kit-quick-send`, `context-kit-web`, `context-kit-offscreen`. Export Slack dùng port
+`slack-thread-export` (`chrome.runtime.onConnect`). Thêm tính năng mới: tạo `src/features/<tên>/` và import
+module background của nó trong `src/background/index.ts`.
 
-### Storage (`chrome.storage.sync`)
+### Storage
 
-- Translator: `provider, apiKey, openaiModel, geminiApiKey, geminiModel, ollamaUrl, ollamaModel, style, targetLang, popupWidth`
-- Slack: `includeReactions, includeFiles, zipFiles`
+- `chrome.storage.sync` — Translator: `provider, apiKey, openaiModel, geminiApiKey, geminiModel, ollamaUrl, ollamaModel, style, targetLang, popupWidth, popupHeight`
+  (kiểu + mặc định duy nhất: `src/features/translator/shared/settings.ts`); Slack: `includeReactions, includeFiles, zipFiles`
 - `chrome.storage.local` — Devdy: `devdyToken, devdyPort, devdyPortPinned, devdyOutbox`; popup: `contextKitLastTab`, `contextKitOpenTab` (mở tab một lần)
+- IndexedDB `context-kit` (store `devdy-outbox`) — nội dung các lần gửi đang chờ
 
 ## Lưu ý khi chuyển từ extension cũ
 
