@@ -1,108 +1,171 @@
-// Full-page translation: walks the page's text nodes, translates them in
-// batches and keeps the originals (`originalTexts`) for revert. After a
-// translation a MutationObserver translates content added later.
+// Full-page translation (top frame only): walks the page's text nodes and
+// translates what is in the viewport first; the rest is translated lazily when
+// it scrolls near the viewport (IntersectionObserver). Originals are kept in
+// `originalTexts` for revert. After a translation a MutationObserver feeds new
+// content to the same lazy path. Identical texts are translated once (cache).
 
 import { errorMessage } from '../../../shared/errors';
 import { isExtensionAlive } from '../../../shared/runtime';
+import { mapLimit } from '../core/map-limit';
+import {
+  createTextBatches,
+  needsTranslation,
+  RateLimiter,
+  TranslationCache,
+  withOuterWhitespace,
+} from '../core/page-text';
+import { isElementVisible, isInViewport } from '../core/visibility';
 import { otherTarget } from '../shared/languages';
 import { callTranslator, type PageTranslationState } from '../shared/messages';
 import { loadSettings, type TranslationStyle } from '../shared/settings';
 import { detectLanguage } from './detect-language';
 import { LOADING_CSS } from './styles';
 
+interface Langs {
+  sourceLang: string;
+  targetLang: string;
+  style: TranslationStyle;
+}
+
+/** Lazy/dynamic translations: debounce, and LLM requests per minute. */
+const FLUSH_DELAY_MS = 400;
+const MAX_REQUESTS_PER_MINUTE = 20;
+/** Pre-translate content this far below/above the viewport. */
+const LAZY_MARGIN = '50% 0px';
+
 let pageTranslationState: PageTranslationState = 'idle';
 const originalTexts = new Map<Text, string>();
-let translationCancelled = false;
+/** Bumped on every translate/revert: async work of an older run is dropped. */
+let generation = 0;
+let langs: Langs | null = null;
+let concurrency = 1;
+const cache = new TranslationCache();
+const limiter = new RateLimiter(MAX_REQUESTS_PER_MINUTE, 60_000);
 let loadingHost: HTMLDivElement | null = null;
 let loadingShadow: ShadowRoot | null = null;
+
+// Lazy + dynamic pipeline: nodes → IntersectionObserver → pending → flush.
 let domObserver: MutationObserver | null = null;
-let pendingNewNodes: Text[] = [];
-let pendingTimer: ReturnType<typeof setTimeout> | null = null;
-let lastTranslationLangs: { sourceLang: string; targetLang: string; style: TranslationStyle } | null = null;
+let lazyObserver: IntersectionObserver | null = null;
+let lazyTexts = new WeakMap<Element, Set<Text>>();
+const pendingNodes = new Set<Text>();
+/** Nodes whose translation is being requested: never sent twice. */
+let inFlight = new WeakSet<Text>();
+let flushTimer: ReturnType<typeof setTimeout> | null = null;
+let flushing = false;
 
 export function getPageTranslationState(): PageTranslationState {
   return pageTranslationState;
 }
 
-const SKIP_TAGS = new Set([
-  'SCRIPT',
-  'STYLE',
-  'NOSCRIPT',
-  'SVG',
-  'CANVAS',
-  'TEXTAREA',
-  'INPUT',
-  'SELECT',
-  'CODE',
-  'PRE',
-  'KBD',
-  'SAMP',
-]);
+/** Elements whose text is never translated (and our own widgets). */
+const SKIP_SELECTOR = [
+  'script',
+  'style',
+  'noscript',
+  'svg',
+  'canvas',
+  'textarea',
+  'input',
+  'select',
+  'code',
+  'pre',
+  'kbd',
+  'samp',
+  '#ai-translator-popup-host',
+  '#ai-translator-loading-host',
+  '#ai-translator-trigger-host',
+].join(',');
 
-/** Our own widgets are never translated. */
-const OWN_UI = '#ai-translator-popup-host, #ai-translator-loading-host, .ai-translator-trigger-container';
+/** The single text-node filter (initial walk, lazy and dynamic paths); visibility is checked separately. */
+function isCandidate(node: Text): boolean {
+  const parent = node.parentElement;
+  if (!parent) return false;
+  if (originalTexts.has(node) || inFlight.has(node)) return false;
+  const text = node.data.trim();
+  if (text.length < 2 || !needsTranslation(text)) return false;
+  if (parent.isContentEditable) return false;
+  return !parent.closest(SKIP_SELECTOR);
+}
 
-// New filter logic must go in both collectTranslatableTextNodes() and isTranslatableTextNode().
-function collectTranslatableTextNodes(): Text[] {
+function collectTextNodes(root: Node): Text[] {
   const nodes: Text[] = [];
-  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
-    acceptNode(node) {
-      const parent = node.parentElement;
-      if (!parent) return NodeFilter.FILTER_REJECT;
-      if (SKIP_TAGS.has(parent.tagName)) return NodeFilter.FILTER_REJECT;
-      if (parent.isContentEditable) return NodeFilter.FILTER_REJECT;
-      if (parent.closest(OWN_UI)) {
-        return NodeFilter.FILTER_REJECT;
-      }
-      const text = (node.textContent ?? '').trim();
-      if (!text || text.length < 2) return NodeFilter.FILTER_REJECT;
-      if (!needsTranslation(text)) return NodeFilter.FILTER_REJECT;
-      const style = getComputedStyle(parent);
-      if (style.display === 'none' || style.visibility === 'hidden') return NodeFilter.FILTER_REJECT;
-      return NodeFilter.FILTER_ACCEPT;
-    },
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: (node) => (isCandidate(node as Text) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT),
   });
-  while (walker.nextNode()) {
-    nodes.push(walker.currentNode as Text);
-  }
+  while (walker.nextNode()) nodes.push(walker.currentNode as Text);
   return nodes;
 }
 
-// Skip text that doesn't need translation
-function needsTranslation(text: string): boolean {
-  if (/^\d[\d\s.,:%/\-+()]*$/.test(text)) return false; // numbers only
-  if (/^https?:\/\/\S+$/.test(text)) return false; // URLs
-  if (/^[^a-zA-ZÀ-ɏЀ-ӿ؀-ۿऀ-ॿ฀-๿぀-ヿ一-鿿가-힯]+$/.test(text)) return false; // no letters at all
-  return true;
-}
+const isVisibleText = (node: Text) => !!node.parentElement && isElementVisible(node.parentElement);
 
-function createBatches(textNodes: Text[], maxChars = 3000): Text[][] {
-  const batches: Text[][] = [];
-  let current: Text[] = [];
-  let currentLen = 0;
-  for (const node of textNodes) {
-    const text = (node.textContent ?? '').trim();
-    if (currentLen + text.length > maxChars && current.length > 0) {
-      batches.push(current);
-      current = [];
-      currentLen = 0;
-    }
-    current.push(node);
-    currentLen += text.length;
-  }
-  if (current.length > 0) batches.push(current);
-  return batches;
-}
-
-async function requestBatch(
-  texts: string[],
-  sourceLang: string,
-  targetLang: string,
-  style: TranslationStyle,
-): Promise<string[]> {
-  const response = await callTranslator({ type: 'translate-batch', texts, sourceLang, targetLang, style });
-  if (response?.ok) return response.translations;
+async function requestBatch(texts: string[], l: Langs): Promise<string[]> {
+  const response = await callTranslator({ type: 'translate-batch', texts, ...l });
+  if (response?.ok && response.translations.length === texts.length) return response.translations;
   throw new Error((response && !response.ok && response.error) || 'Translation failed');
+}
+
+function applyTranslation(node: Text, source: string, translation: string): void {
+  // The page changed the text meanwhile → leave it alone.
+  if (node.data.trim() !== source || originalTexts.has(node)) return;
+  originalTexts.set(node, node.data);
+  if (translation !== source) node.data = withOuterWhitespace(node.data, translation);
+}
+
+/**
+ * Translate `nodes`: cached texts at once, the other distinct texts in batches
+ * through a bounded pool. With `limiter`, batches over the rate cap are not
+ * sent; their nodes are returned so the caller can retry later.
+ */
+async function translateNodes(
+  nodes: Text[],
+  l: Langs,
+  gen: number,
+  opts: { limiter?: RateLimiter; onProgress?: (done: number, total: number) => void } = {},
+): Promise<Text[]> {
+  const bySource = new Map<string, Text[]>();
+  for (const node of nodes) {
+    const source = node.data.trim();
+    const cached = cache.get(source);
+    if (cached !== undefined) {
+      applyTranslation(node, source, cached);
+      continue;
+    }
+    inFlight.add(node);
+    const group = bySource.get(source);
+    if (group) group.push(node);
+    else bySource.set(source, [node]);
+  }
+
+  const batches = createTextBatches([...bySource.keys()]);
+  const deferred: Text[] = [];
+  let done = 0;
+  let stopped = false;
+  try {
+    await mapLimit(batches, concurrency, async (batch) => {
+      if (stopped || gen !== generation) return;
+      if (opts.limiter && !opts.limiter.tryAcquire()) {
+        for (const source of batch) deferred.push(...bySource.get(source)!);
+        return;
+      }
+      let translations: string[];
+      try {
+        translations = await requestBatch(batch, l);
+      } catch (err) {
+        stopped = true;
+        throw err;
+      }
+      if (gen !== generation) return;
+      batch.forEach((source, i) => {
+        cache.set(source, translations[i]!);
+        for (const node of bySource.get(source)!) applyTranslation(node, source, translations[i]!);
+      });
+      opts.onProgress?.(++done, batches.length);
+    });
+  } finally {
+    for (const node of nodes) inFlight.delete(node);
+  }
+  return deferred;
 }
 
 export async function translatePage(): Promise<void> {
@@ -119,189 +182,162 @@ export async function translatePage(): Promise<void> {
     return;
   }
 
+  stopObservers();
+  const gen = ++generation;
   pageTranslationState = 'translating';
-  translationCancelled = false;
-  originalTexts.clear();
   showLoading();
 
-  const textNodes = collectTranslatableTextNodes();
+  const textNodes = collectTextNodes(document.body).filter(isVisibleText);
   if (textNodes.length === 0) {
-    pageTranslationState = 'idle';
+    pageTranslationState = originalTexts.size > 0 ? 'translated' : 'idle';
     hideLoading();
     return;
   }
 
-  const batches = createBatches(textNodes);
-  const totalBatches = batches.length;
-
   // Detect source language from page sample
-  const sampleText = textNodes
-    .slice(0, 10)
-    .map((n) => n.textContent)
-    .join(' ');
-  const sourceLang = detectLanguage(sampleText);
+  const sourceLang = detectLanguage(
+    textNodes
+      .slice(0, 10)
+      .map((n) => n.data)
+      .join(' '),
+  );
   let targetLang = settings.targetLang;
   if (targetLang === sourceLang) {
     targetLang = otherTarget(sourceLang);
   }
+  const l: Langs = { sourceLang, targetLang, style: settings.style };
+  langs = l;
+  concurrency = settings.provider === 'ollama' ? 2 : 5;
+  cache.use(`${sourceLang}|${targetLang}|${settings.style}`);
 
-  const CONCURRENCY = settings.provider === 'ollama' ? 2 : 5;
-  let completed = 0;
-  let failed = false;
+  // Viewport first; the rest when it gets close (and content added later).
+  const inView = new Set(textNodes.filter((n) => isInViewport(n.parentElement!)));
+  startObservers();
+  observeLazily(textNodes.filter((n) => !inView.has(n)));
 
-  const translateBatch = (batch: Text[]) =>
-    requestBatch(
-      batch.map((n) => (n.textContent ?? '').trim()),
-      sourceLang,
-      targetLang,
-      settings.style,
-    );
-
-  function applyBatchResult(batch: Text[], result: string[]): void {
-    for (let j = 0; j < batch.length; j++) {
-      const node = batch[j]!;
-      if (!originalTexts.has(node)) {
-        originalTexts.set(node, node.textContent ?? '');
-      }
-      if (result[j]) {
-        node.textContent = result[j]!;
-      }
-    }
-  }
-
-  // Process batches with concurrency limit
-  for (let i = 0; i < batches.length; i += CONCURRENCY) {
-    if (translationCancelled || failed) break;
-
-    const chunk = batches.slice(i, i + CONCURRENCY);
-    const promises = chunk.map((batch) => translateBatch(batch));
-
-    try {
-      const results = await Promise.all(promises);
-      results.forEach((result, idx) => {
-        applyBatchResult(chunk[idx]!, result);
-      });
-      completed += chunk.length;
-      showLoading(`Translating... ${completed}/${totalBatches}`);
-    } catch (err) {
-      console.warn('AI Translator: batch failed', errorMessage(err));
-      showLoadingError(`Error: ${errorMessage(err)}`);
-      pageTranslationState = originalTexts.size > 0 ? 'translated' : 'idle';
-      failed = true;
-    }
-  }
-
-  if (failed) return;
-
-  hideLoading();
-
-  if (translationCancelled) {
+  try {
+    await translateNodes([...inView], l, gen, {
+      onProgress: (done, total) => showLoading(`Translating... ${done}/${total}`),
+    });
+  } catch (err) {
+    if (gen !== generation) return;
+    console.warn('AI Translator: batch failed', errorMessage(err));
+    showLoadingError(`Error: ${errorMessage(err)}`);
+    stopObservers();
     pageTranslationState = originalTexts.size > 0 ? 'translated' : 'idle';
-  } else {
-    pageTranslationState = 'translated';
+    return;
   }
-
-  if (pageTranslationState === 'translated') {
-    lastTranslationLangs = { sourceLang, targetLang, style: settings.style };
-    startDomObserver();
-  }
+  if (gen !== generation) return;
+  hideLoading();
+  pageTranslationState = 'translated';
 }
 
 export function revertPageTranslation(): void {
-  stopDomObserver();
+  generation++;
+  stopObservers();
+  hideLoading();
   for (const [node, original] of originalTexts) {
     try {
-      node.textContent = original;
+      node.data = original;
     } catch {
       // Node may have been removed from DOM
     }
   }
   originalTexts.clear();
-  lastTranslationLangs = null;
+  langs = null;
   pageTranslationState = 'idle';
 }
 
-// --- MutationObserver for dynamic content ---
-function isTranslatableTextNode(node: Text): boolean {
-  const parent = node.parentElement;
-  if (!parent) return false;
-  if (SKIP_TAGS.has(parent.tagName)) return false;
-  if (parent.isContentEditable) return false;
-  if (parent.closest(OWN_UI)) return false;
-  const text = (node.textContent ?? '').trim();
-  if (text.length < 2) return false;
-  if (!needsTranslation(text)) return false;
-  if (originalTexts.has(node)) return false;
-  return true;
-}
+// --- Lazy (IntersectionObserver) + dynamic (MutationObserver) content ---
 
-function collectNewTextNodes(root: Node): Text[] {
-  const nodes: Text[] = [];
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-    acceptNode(node) {
-      return isTranslatableTextNode(node as Text) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
-    },
-  });
-  while (walker.nextNode()) nodes.push(walker.currentNode as Text);
-  return nodes;
-}
-
-function startDomObserver(): void {
-  if (domObserver) return;
+function startObservers(): void {
+  lazyObserver = new IntersectionObserver(onIntersect, { rootMargin: LAZY_MARGIN });
   domObserver = new MutationObserver((mutations) => {
-    if (pageTranslationState !== 'translated') return;
-
+    const nodes: Text[] = [];
     for (const mutation of mutations) {
       for (const added of mutation.addedNodes) {
         if (added.nodeType === Node.TEXT_NODE) {
-          if (isTranslatableTextNode(added as Text)) pendingNewNodes.push(added as Text);
+          if (isCandidate(added as Text)) nodes.push(added as Text);
         } else if (added.nodeType === Node.ELEMENT_NODE) {
-          pendingNewNodes.push(...collectNewTextNodes(added));
+          nodes.push(...collectTextNodes(added));
         }
       }
     }
-
-    if (pendingNewNodes.length > 0 && !pendingTimer) {
-      pendingTimer = setTimeout(flushPendingNodes, 500);
-    }
+    observeLazily(nodes);
   });
-
   domObserver.observe(document.body, { childList: true, subtree: true });
 }
 
-function stopDomObserver(): void {
-  if (domObserver) {
-    domObserver.disconnect();
-    domObserver = null;
-  }
-  pendingNewNodes = [];
-  if (pendingTimer) clearTimeout(pendingTimer);
-  pendingTimer = null;
+function stopObservers(): void {
+  domObserver?.disconnect();
+  domObserver = null;
+  lazyObserver?.disconnect();
+  lazyObserver = null;
+  lazyTexts = new WeakMap();
+  inFlight = new WeakSet();
+  pendingNodes.clear();
+  if (flushTimer) clearTimeout(flushTimer);
+  flushTimer = null;
 }
 
-async function flushPendingNodes(): Promise<void> {
-  pendingTimer = null;
-  const nodes = pendingNewNodes.filter(
-    (n) => n.isConnected && !originalTexts.has(n) && (n.textContent ?? '').trim().length >= 2,
-  );
-  pendingNewNodes = [];
-  if (nodes.length === 0 || !lastTranslationLangs || !isExtensionAlive()) return;
-
-  const { sourceLang, targetLang, style } = lastTranslationLangs;
-  const batches = createBatches(nodes);
-
-  for (const batch of batches) {
-    const texts = batch.map((n) => (n.textContent ?? '').trim());
-    try {
-      const result = await requestBatch(texts, sourceLang, targetLang, style);
-      for (let j = 0; j < batch.length; j++) {
-        const node = batch[j]!;
-        if (!originalTexts.has(node)) originalTexts.set(node, node.textContent ?? '');
-        if (result[j]) node.textContent = result[j]!;
-      }
-    } catch (err) {
-      console.warn('AI Translator: dynamic translate failed', errorMessage(err));
+/** Translate these nodes once their element comes near the viewport. */
+function observeLazily(nodes: Text[]): void {
+  if (!lazyObserver) return;
+  for (const node of nodes) {
+    const el = node.parentElement!;
+    const set = lazyTexts.get(el);
+    if (set) {
+      set.add(node);
+    } else {
+      lazyTexts.set(el, new Set([node]));
+      lazyObserver.observe(el);
     }
+  }
+}
+
+function onIntersect(entries: IntersectionObserverEntry[]): void {
+  for (const entry of entries) {
+    if (!entry.isIntersecting) continue;
+    lazyObserver?.unobserve(entry.target);
+    for (const node of lazyTexts.get(entry.target) ?? []) pendingNodes.add(node);
+    lazyTexts.delete(entry.target);
+  }
+  if (pendingNodes.size > 0) scheduleFlush(FLUSH_DELAY_MS);
+}
+
+function scheduleFlush(delay: number): void {
+  if (flushTimer) return;
+  flushTimer = setTimeout(() => {
+    flushTimer = null;
+    void flushPendingNodes();
+  }, delay);
+}
+
+/** One flush at a time; nodes queued meanwhile are handled by the next one. */
+async function flushPendingNodes(): Promise<void> {
+  if (flushing || !langs) return;
+  if (!isExtensionAlive()) {
+    stopObservers();
+    return;
+  }
+  const gen = generation;
+  const nodes = [...pendingNodes].filter((n) => n.isConnected && isCandidate(n) && isVisibleText(n));
+  pendingNodes.clear();
+  if (nodes.length === 0) return;
+
+  flushing = true;
+  let retryIn = FLUSH_DELAY_MS;
+  try {
+    const deferred = await translateNodes(nodes, langs, gen, { limiter });
+    if (gen === generation && deferred.length > 0) {
+      for (const node of deferred) pendingNodes.add(node);
+      retryIn = Math.max(limiter.waitMs(), FLUSH_DELAY_MS);
+    }
+  } catch (err) {
+    console.warn('AI Translator: dynamic translate failed', errorMessage(err));
+  } finally {
+    flushing = false;
+    if (gen === generation && pendingNodes.size > 0) scheduleFlush(retryIn);
   }
 }
 

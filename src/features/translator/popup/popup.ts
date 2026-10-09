@@ -110,7 +110,7 @@ toggleGeminiKeyBtn.addEventListener('click', () => {
 async function loadOllamaModels(url: string, selectedModel: string): Promise<void> {
   const base = url || ollamaUrlInput.value.trim() || DEFAULT_SETTINGS.ollamaUrl;
   ollamaLoaded = true; // avoid duplicate concurrent loads while pending
-  ollamaModelSelect.innerHTML = `<option value="">Loading...</option>`;
+  setOllamaOptions('Loading...');
   ollamaModelSelect.disabled = true;
 
   const response = await callTranslator({ type: 'fetch-ollama-models', url: base }).catch(() => undefined);
@@ -118,25 +118,27 @@ async function loadOllamaModels(url: string, selectedModel: string): Promise<voi
 
   if (!response?.ok) {
     ollamaLoaded = false; // allow retry on next tab switch / refresh
-    ollamaModelSelect.innerHTML = `<option value="">Failed to load</option>`;
+    setOllamaOptions('Failed to load');
     showStatus((response && !response.ok && response.error) || 'Cannot connect to Ollama', 'error');
     return;
   }
 
   const models = response.models;
   if (models.length === 0) {
-    ollamaModelSelect.innerHTML = `<option value="">No models found</option>`;
+    setOllamaOptions('No models found');
     return;
   }
 
-  let options = `<option value="">-- Select model --</option>`;
-  options += models
-    .map((name) => `<option value="${name}"${name === selectedModel ? ' selected' : ''}>${name}</option>`)
-    .join('');
-  ollamaModelSelect.innerHTML = options;
+  // Model names come from a server: text-only <option>s, never HTML.
+  setOllamaOptions('-- Select model --', models);
 
   // Preselect the saved model if still available, otherwise the first one (UI only)
   ollamaModelSelect.value = selectedModel && models.includes(selectedModel) ? selectedModel : models[0]!;
+}
+
+/** Replace the model list: a placeholder (value "") followed by `models`. */
+function setOllamaOptions(placeholder: string, models: string[] = []): void {
+  ollamaModelSelect.replaceChildren(new Option(placeholder, ''), ...models.map((name) => new Option(name, name)));
 }
 
 refreshOllamaBtn.addEventListener('click', () => {
@@ -197,9 +199,10 @@ function updateTranslatePageBtn(state: PageTranslationState): void {
   }
 }
 
+/** Page commands go to the top frame only: one translation per tab, not one per iframe. */
 function sendToPage<R>(tabId: number, type: TranslatorPageRequest['type'], callback: (response?: R) => void): void {
   const request: TranslatorPageRequest = { target: TRANSLATOR_PAGE_TARGET, type };
-  chrome.tabs.sendMessage(tabId, request, (response?: R) => {
+  chrome.tabs.sendMessage(tabId, request, { frameId: 0 }, (response?: R) => {
     // No content script in the tab (system pages, not reloaded yet…).
     if (chrome.runtime.lastError) {
       if (type !== 'get-state') callback();

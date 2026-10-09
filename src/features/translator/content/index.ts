@@ -731,15 +731,18 @@ document.addEventListener('mouseup', (e) => {
 });
 
 // --- Commands from the toolbar popup (Translate This Page / Revert) ---
-onTargetMessage<TranslatorPageRequest>(TRANSLATOR_PAGE_TARGET, (request): Result | PageStateResponse => {
-  switch (request.type) {
-    case 'translate-page':
-      void translatePage();
-      return { ok: true };
-    case 'revert-page':
-      revertPageTranslation();
-      return { ok: true };
-    case 'get-state':
-      return { ok: true, state: getPageTranslationState() };
-  }
-});
+// Top frame only (the popup targets frameId 0): iframes never translate the page.
+if (window === window.top) {
+  onTargetMessage<TranslatorPageRequest>(TRANSLATOR_PAGE_TARGET, (request): Result | PageStateResponse => {
+    switch (request.type) {
+      case 'translate-page':
+        void translatePage();
+        return { ok: true };
+      case 'revert-page':
+        revertPageTranslation();
+        return { ok: true };
+      case 'get-state':
+        return { ok: true, state: getPageTranslationState() };
+    }
+  });
+}
