@@ -9,7 +9,21 @@ export type DevdyRequest =
   | { target: typeof DEVDY_TARGET; type: 'save-token'; token: string }
   /** Pin one of several running Devdy apps (port), or null for automatic. */
   | { target: typeof DEVDY_TARGET; type: 'select-instance'; port: number | null }
-  | { target: typeof DEVDY_TARGET; type: 'flush' };
+  | { target: typeof DEVDY_TARGET; type: 'flush' }
+  /** Delete a failed export (kept after Devdy refused it) and its payload. */
+  | { target: typeof DEVDY_TARGET; type: 'remove-failed'; id: string }
+  /** Hide the outbox notice (e.g. "dropped N exports"). */
+  | { target: typeof DEVDY_TARGET; type: 'clear-notice' };
+
+/** An export Devdy refused (too large, invalid…), kept so the user can download it. */
+export interface FailedExport {
+  id: string;
+  title: string;
+  contentType: string;
+  size?: number;
+  message: string;
+  at: string;
+}
 
 export interface DevdyStatus {
   /** The Devdy used for sends answered /health. */
@@ -28,6 +42,12 @@ export interface DevdyStatus {
   projects: DevdyProject[];
   /** Exports waiting in the outbox. */
   pending: number;
+  /** Exports Devdy refused; payload still stored (IndexedDB) for download. */
+  failed: FailedExport[];
+  /** Automatic retries stopped (token missing/rejected) until a token is saved. */
+  paused?: boolean;
+  /** Last outbox problem (e.g. exports dropped after 7 days / too many attempts). */
+  notice?: string;
   error?: string;
   /** Queued exports delivered right after saving a token / picking an instance. */
   flushed?: number;

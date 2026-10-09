@@ -51,6 +51,18 @@
       </div>
     </div>
 
+    <div class="section" id="failed-section" hidden>
+      <span class="field-label">Not accepted by Devdy</span>
+      <ul id="failed" class="failed-list"></ul>
+    </div>
+
+    <div class="section" id="notice-section" hidden>
+      <div class="row-between">
+        <span id="notice" class="muted-text"></span>
+        <button id="notice-clear" type="button" class="link-btn">Dismiss</button>
+      </div>
+    </div>
+
     <p id="status" class="status-line" role="status" aria-live="polite"></p>
     <p id="error" class="alert" role="alert" hidden></p>
 
@@ -70,6 +82,10 @@
       .status-card .muted-text { margin-top: 4px; }
       .how ul { margin: 6px 0 0; padding-left: 18px; font-size: 12px; color: var(--text-muted); line-height: 1.6; }
       .how strong { color: var(--text); font-weight: 600; }
+      .failed-list { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+      .failed-list li { font-size: 12px; }
+      .failed-list .failed-title { font-weight: 600; overflow-wrap: anywhere; }
+      .failed-list .btn-row { margin-top: 2px; gap: 10px; }
     </style>
     <script type="module" src="./popup.ts"></script>
   </body>

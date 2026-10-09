@@ -1,8 +1,16 @@
 // Devdy tab: connection status, app (port) choice, token and outbox queue.
 
 import { errorMessage } from '../../../shared/errors';
+import { safeFileName } from '../../../shared/filename';
 import type { Result } from '../../../shared/messaging';
-import { DEVDY_TARGET, type DevdyCommand, type DevdyFlushResult, type DevdyStatus } from '../messages';
+import { getBlob } from '../core/blob-store';
+import {
+  DEVDY_TARGET,
+  type DevdyCommand,
+  type DevdyFlushResult,
+  type DevdyStatus,
+  type FailedExport,
+} from '../messages';
 
 const $ = <T extends HTMLElement>(id: string): T => {
   const el = document.getElementById(id);
@@ -22,6 +30,11 @@ const tokenSave = $<HTMLButtonElement>('token-save');
 const queueSection = $<HTMLDivElement>('queue-section');
 const queueText = $<HTMLSpanElement>('queue');
 const retryBtn = $<HTMLButtonElement>('retry');
+const failedSection = $<HTMLDivElement>('failed-section');
+const failedList = $<HTMLUListElement>('failed');
+const noticeSection = $<HTMLDivElement>('notice-section');
+const noticeText = $<HTMLSpanElement>('notice');
+const noticeClear = $<HTMLButtonElement>('notice-clear');
 const statusEl = $<HTMLParagraphElement>('status');
 const errorEl = $<HTMLParagraphElement>('error');
 
@@ -96,16 +109,83 @@ function render(st: DevdyStatus): void {
 
   tokenInput.placeholder = st.hasToken ? 'Saved — paste a new one to replace' : 'Devdy → Settings → Inbox API';
   queueSection.hidden = st.pending === 0;
-  queueText.textContent = `${st.pending} export${st.pending === 1 ? '' : 's'} waiting to be sent`;
+  queueText.textContent =
+    `${st.pending} export${st.pending === 1 ? '' : 's'} waiting to be sent` +
+    (st.paused && st.pending ? ' — paused until a valid token is saved' : '');
+
+  failedSection.hidden = st.failed.length === 0;
+  failedList.replaceChildren(...st.failed.map(failedItem));
+  noticeSection.hidden = !st.notice;
+  noticeText.textContent = st.notice ?? '';
 }
 
-async function refresh(): Promise<void> {
+function formatSize(n?: number): string {
+  if (!n) return '';
+  return n < 1024 * 1024 ? ` · ${Math.ceil(n / 1024)} KB` : ` · ${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function downloadName(f: FailedExport): string {
+  const ext = f.contentType.startsWith('application/zip') ? 'zip' : 'md';
+  return `${safeFileName(f.title.replace(/\.(md|zip)$/i, ''), 80)}.${ext}`;
+}
+
+/** Save a failed export's payload (read straight from the outbox IndexedDB). */
+async function downloadFailed(f: FailedExport): Promise<void> {
+  const blob = await getBlob(f.id);
+  if (!blob) throw new Error('The export data is no longer stored.');
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = downloadName(f);
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+function failedItem(f: FailedExport): HTMLLIElement {
+  const li = document.createElement('li');
+  const title = document.createElement('div');
+  title.className = 'failed-title';
+  title.textContent = f.title;
+  const info = document.createElement('div');
+  info.className = 'muted-text';
+  info.textContent = `${f.message}${formatSize(f.size)}`;
+  const row = document.createElement('div');
+  row.className = 'btn-row';
+  const dl = document.createElement('button');
+  dl.type = 'button';
+  dl.className = 'link-btn';
+  dl.textContent = 'Download';
+  dl.addEventListener('click', () => {
+    downloadFailed(f).catch((e: unknown) => setError(errorMessage(e)));
+  });
+  const rm = document.createElement('button');
+  rm.type = 'button';
+  rm.className = 'link-btn';
+  rm.textContent = 'Remove';
+  rm.addEventListener('click', async () => {
+    rm.disabled = true;
+    try {
+      render(await call<DevdyStatus>({ type: 'remove-failed', id: f.id }));
+    } catch (e) {
+      setError(errorMessage(e));
+      rm.disabled = false;
+    }
+  });
+  row.append(dl, rm);
+  li.append(title, info, row);
+  return li;
+}
+
+async function refresh(): Promise<DevdyStatus | undefined> {
   refreshBtn.disabled = true;
   try {
-    render(await call<DevdyStatus>({ type: 'status' }));
+    const st = await call<DevdyStatus>({ type: 'status' });
+    render(st);
+    return st;
   } catch (e) {
     summary.textContent = 'Status unavailable';
     detail.textContent = errorMessage(e);
+    return undefined;
   } finally {
     refreshBtn.disabled = false;
   }
@@ -158,4 +238,15 @@ retryBtn.addEventListener('click', async () => {
 
 refreshBtn.addEventListener('click', () => void refresh());
 
-void refresh();
+noticeClear.addEventListener('click', async () => {
+  render(await call<DevdyStatus>({ type: 'clear-notice' }));
+});
+
+// Opening the tab is a good moment to deliver queued exports (Devdy may be up again).
+void refresh().then(async (st) => {
+  if (!st?.pending || !st.connected) return;
+  const r = await call<DevdyFlushResult>({ type: 'flush' }).catch(() => undefined);
+  if (!r) return;
+  render(r.status);
+  flushedNote(r.sent);
+});
