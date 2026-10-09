@@ -45,7 +45,7 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
           <span>Files</span>
         </label>
-        <label class="chip" title="Export downloads attachments and saves a .zip (Markdown + files/)">
+        <label class="chip" title="Export downloads attachments and saves a .zip (Markdown + attachments/)">
           <input id="opt-zip" type="checkbox" />
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
           <span>Zip files</span>
@@ -54,7 +54,7 @@
     </div>
 
     <div class="btn-row">
-      <button id="export" type="button" class="btn btn-primary" title="Saves .md, or .zip (Markdown + files/) when Zip files is on and the thread has attachments">
+      <button id="export" type="button" class="btn btn-primary" title="Saves .md, or .zip (Markdown + attachments/) when Zip files is on and the thread has attachments">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" />
         </svg>
@@ -68,8 +68,17 @@
       </button>
     </div>
 
+    <button id="devdy-send" type="button" class="btn btn-accent" style="margin-top: 8px" title="Send the thread (and attachments when Files is on) to the Devdy app">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" />
+      </svg>
+      <span>Send to Devdy</span>
+    </button>
+
     <p id="status" class="status-line" role="status" aria-live="polite"></p>
     <p id="error" class="alert" role="alert" hidden></p>
+    <button id="open-devdy" type="button" class="link-btn" hidden>Open Devdy settings →</button>
+
 
     <p class="hint">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">

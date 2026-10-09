@@ -68,9 +68,9 @@ describe('planAttachments', () => {
     const dup: SlackFile = { ...pdf, id: 'F3', name: 'spec.pdf' };
     const plan = planAttachments([msg('1.0', [png]), msg('2.0', [pdf, png, dup])]);
     expect(plan.downloads.map((d) => [d.id, d.path, d.isImage])).toEqual([
-      ['F1', 'files/01-Screen-Shot-1.png', true],
-      ['F2', 'files/02-spec.pdf', false],
-      ['F3', 'files/03-spec.pdf', false],
+      ['F1', 'attachments/01-Screen-Shot-1.png', true],
+      ['F2', 'attachments/02-spec.pdf', false],
+      ['F3', 'attachments/03-spec.pdf', false],
     ]);
     // url_private_download preferred, url_private as fallback
     expect(plan.downloads[0]!.url).toContain('/download/');
@@ -108,9 +108,9 @@ describe('planAttachments', () => {
 describe('isCompressiblePath', () => {
   it('deflates text-like files only', () => {
     expect(isCompressiblePath('thread.md')).toBe(true);
-    expect(isCompressiblePath('files/01-log.TXT')).toBe(true);
-    expect(isCompressiblePath('files/02-a.png')).toBe(false);
-    expect(isCompressiblePath('files/03-a.zip')).toBe(false);
+    expect(isCompressiblePath('attachments/01-log.TXT')).toBe(true);
+    expect(isCompressiblePath('attachments/02-a.png')).toBe(false);
+    expect(isCompressiblePath('attachments/03-a.zip')).toBe(false);
   });
 });
 
@@ -126,16 +126,16 @@ describe('buildThreadMarkdown with attachments', () => {
 
   it('links saved files locally, embeds images, and annotates skipped ones', () => {
     const attachments = new Map<string, AttachmentOutcome>([
-      ['F1', { kind: 'saved', path: 'files/01-Screen-Shot-1.png', isImage: true }],
+      ['F1', { kind: 'saved', path: 'attachments/01-Screen-Shot-1.png', isImage: true }],
       ['F2', { kind: 'skipped', reason: 'download failed: HTTP 403' }],
-      ['F9', { kind: 'saved', path: 'files/03-a-draft.pdf', isImage: false }],
+      ['F9', { kind: 'saved', path: 'attachments/03-a-draft.pdf', isImage: false }],
     ]);
     const { markdown } = buildThreadMarkdown(data, { includeReactions: false, includeFiles: true, attachments });
-    expect(markdown).toContain('![Screen Shot (1).png](files/01-Screen-Shot-1.png)');
+    expect(markdown).toContain('![Screen Shot (1).png](attachments/01-Screen-Shot-1.png)');
     expect(markdown).toContain(
       '📎 spec.pdf — https://acme.slack.com/files/U1/F2/spec.pdf _(not included: download failed: HTTP 403)_',
     );
-    expect(markdown).toContain('📎 [a \\[draft\\].pdf](files/03-a-draft.pdf)');
+    expect(markdown).toContain('📎 [a \\[draft\\].pdf](attachments/03-a-draft.pdf)');
   });
 
   it('keeps the original link format without attachment outcomes', () => {

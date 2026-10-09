@@ -27,8 +27,8 @@ body {
   top: 0;
   z-index: 1;
   display: flex;
-  gap: 4px;
-  padding: 0 12px;
+  gap: 2px;
+  padding: 0 6px;
   background: var(--bg-subtle);
   border-bottom: 1px solid var(--border);
 }
@@ -38,8 +38,9 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  padding: 11px 4px 9px;
+  gap: 5px;
+  padding: 11px 2px 9px;
+  white-space: nowrap;
   border: none;
   border-bottom: 2px solid transparent;
   background: none;

@@ -4,11 +4,15 @@
 
 import { type Zippable, zipSync } from 'fflate';
 import { isAllowedFileUrl, isCompressiblePath } from '../core/attachments';
+import { putBlob } from '../core/blob-store';
+import { imageExtension, isFetchableImageUrl } from '../core/web-capture';
 import {
   type BuildZipResponse,
   type FetchFileResponse,
+  type FetchImageResponse,
   OFFSCREEN_TARGET,
   type OffscreenRequest,
+  type StoreZipResponse,
 } from '../types/offscreen';
 
 const FETCH_TIMEOUT_MS = 120_000;
@@ -85,17 +89,64 @@ async function fetchFile(req: Extract<OffscreenRequest, { type: 'fetch-file' }>)
   }
 }
 
+async function fetchImage(req: Extract<OffscreenRequest, { type: 'fetch-image' }>): Promise<FetchImageResponse> {
+  if (!isFetchableImageUrl(req.url)) return { ok: false, error: 'URL not allowed' };
+  let res: Response;
+  try {
+    // Same request the page made to render it (cookies included for login-only images).
+    res = await fetch(req.url, {
+      credentials: 'include',
+      redirect: 'follow',
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+  } catch (e) {
+    const timedOut = e instanceof DOMException && e.name === 'TimeoutError';
+    return { ok: false, error: timedOut ? 'download timed out' : 'network error' };
+  }
+  if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+  const type = res.headers.get('Content-Type') ?? '';
+  const ext = imageExtension(type, req.url);
+  if (!type.toLowerCase().startsWith('image/') && ext === 'img') return { ok: false, error: `not an image (${type || 'unknown type'})` };
+  try {
+    const bytes = await readCapped(res, req.maxBytes);
+    const path = `${req.pathBase}.${ext}`;
+    job(req.jobId).files.set(path, bytes);
+    return { ok: true, path, size: bytes.byteLength };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** Zip every fetched file of the job plus the given text entries. */
+function makeZip(jobId: string, texts: { path: string; text: string }[]): Uint8Array {
+  const j = job(jobId);
+  const enc = new TextEncoder();
+  const entries: Zippable = {};
+  for (const t of texts) entries[t.path] = [enc.encode(t.text), { level: 6 }];
+  for (const [path, bytes] of j.files) entries[path] = [bytes, { level: isCompressiblePath(path) ? 6 : 0 }];
+  const zipped = zipSync(entries);
+  j.files.clear(); // the zip now owns the data
+  return zipped;
+}
+
+const zipBlob = (bytes: Uint8Array) => new Blob([bytes as Uint8Array<ArrayBuffer>], { type: 'application/zip' });
+
 function buildZip(req: Extract<OffscreenRequest, { type: 'build-zip' }>): BuildZipResponse {
   try {
+    const zipped = makeZip(req.jobId, req.texts);
     const j = job(req.jobId);
-    const enc = new TextEncoder();
-    const entries: Zippable = {};
-    for (const t of req.texts) entries[t.path] = [enc.encode(t.text), { level: 6 }];
-    for (const [path, bytes] of j.files) entries[path] = [bytes, { level: isCompressiblePath(path) ? 6 : 0 }];
-    const zipped = zipSync(entries);
-    j.files.clear(); // the zip now owns the data
-    j.blobUrl = URL.createObjectURL(new Blob([zipped], { type: 'application/zip' }));
+    j.blobUrl = URL.createObjectURL(zipBlob(zipped));
     return { ok: true, url: j.blobUrl, size: zipped.byteLength };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+async function storeZip(req: Extract<OffscreenRequest, { type: 'store-zip' }>): Promise<StoreZipResponse> {
+  try {
+    const zipped = makeZip(req.jobId, req.texts);
+    await putBlob(req.blobId, zipBlob(zipped));
+    return { ok: true, size: zipped.byteLength };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
@@ -113,9 +164,15 @@ chrome.runtime.onMessage.addListener((msg: OffscreenRequest, _sender, sendRespon
     case 'fetch-file':
       fetchFile(msg).then(sendResponse);
       return true; // async response
+    case 'fetch-image':
+      fetchImage(msg).then(sendResponse);
+      return true; // async response
     case 'build-zip':
       sendResponse(buildZip(msg));
       return;
+    case 'store-zip':
+      storeZip(msg).then(sendResponse);
+      return true; // async response
     case 'release':
       release(msg.jobId);
       sendResponse({ ok: true });

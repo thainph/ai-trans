@@ -16,5 +16,5 @@
     "checkJs": false,
     "noEmit": true
   },
-  "include": ["src", "tests", "vite.config.ts"]
+  "include": ["src", "tests", "vite.config.ts", "vite.content.config.ts"]
 }

@@ -151,6 +151,22 @@
       container.appendChild(gBtn);
     }
 
+    // Send the selection to Devdy — page text only (not what you are typing).
+    // window.__contextKitDevdy comes from page-content.js (same isolated world).
+    if (!isEditable && window.__contextKitDevdy) {
+      const dBtn = document.createElement("button");
+      dBtn.className = "ai-translator-trigger ai-translator-trigger-devdy";
+      dBtn.title = "Send selection to Devdy";
+      dBtn.setAttribute("aria-label", "Send selection to Devdy");
+      dBtn.innerHTML =
+        '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" ' +
+        'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+        '<line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>';
+      dBtn.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); });
+      dBtn.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); onDevdyClick(); });
+      container.appendChild(dBtn);
+    }
+
     // Show reverse button if editable + has previous source lang
     const showReverse = isEditable && lastDetectedSourceLang !== null;
     if (showReverse) {
@@ -635,6 +651,15 @@
       createPopup(rect, sourceLang, targetLang);
       translate(text, sourceLang, targetLang);
     });
+  }
+
+  function onDevdyClick() {
+    if (!isExtensionValid()) { cleanup(); return; }
+    const text = currentSelection;
+    const range = selRange;
+    if (!text || !range || !window.__contextKitDevdy) return;
+    removeTrigger();
+    window.__contextKitDevdy.sendSelection(range, text);
   }
 
   function onReverseTriggerClick() {

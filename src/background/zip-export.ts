@@ -4,11 +4,14 @@
 
 import { type AttachmentOutcome, type AttachmentPlan, MAX_FILE_BYTES } from '../core/attachments';
 import { mapPool } from '../core/slack-client';
+import type { PlannedImage } from '../core/web-capture';
 import {
   type BuildZipResponse,
   type FetchFileResponse,
+  type FetchImageResponse,
   OFFSCREEN_TARGET,
   type OffscreenRequest,
+  type StoreZipResponse,
 } from '../types/offscreen';
 import { chromePing, KEEPALIVE_CHUNK_MS } from './keepalive';
 
@@ -67,8 +70,19 @@ export interface ZipFetchResult {
 export interface ZipJob {
   /** Download all planned files into the job (offscreen memory). */
   fetchFiles(plan: AttachmentPlan, onProgress: (text: string) => void): Promise<ZipFetchResult>;
+  /**
+   * Download web images into the job. Returns url → zip path for the saved ones;
+   * stops adding once `maxTotalBytes` is reached.
+   */
+  fetchImages(
+    images: PlannedImage[],
+    opts: { maxBytes: number; maxTotalBytes: number },
+    onProgress: (text: string) => void,
+  ): Promise<{ saved: Map<string, string>; failed: number }>;
   /** Zip fetched files + markdown and save it via chrome.downloads. */
-  saveZip(markdownPath: string, markdown: string, zipFilename: string): Promise<void>;
+  saveZip(markdownPath: string, markdown: string, zipFilename: string, opts?: { saveAs?: boolean }): Promise<void>;
+  /** Zip fetched files + markdown into the IndexedDB outbox (Devdy export). Returns the zip size. */
+  storeZip(blobId: string, markdownPath: string, markdown: string): Promise<number>;
   /** Always call (finally): frees offscreen memory. */
   dispose(): void;
 }
@@ -121,7 +135,43 @@ export async function startZipJob(): Promise<ZipJob> {
       return { outcomes, saved, failed };
     },
 
-    async saveZip(markdownPath, markdown, zipFilename) {
+    async fetchImages(images, opts, onProgress) {
+      const saved = new Map<string, string>();
+      let failed = 0;
+      let total = 0;
+      let done = 0;
+      onProgress(`Downloading images… 0/${images.length}`);
+      await mapPool(images, FILE_CONCURRENCY, async (img) => {
+        if (total >= opts.maxTotalBytes) {
+          failed++;
+        } else {
+          let res: FetchImageResponse;
+          try {
+            res = await send<FetchImageResponse>({
+              target: OFFSCREEN_TARGET,
+              type: 'fetch-image',
+              jobId,
+              url: img.url,
+              pathBase: img.pathBase,
+              maxBytes: Math.min(opts.maxBytes, opts.maxTotalBytes - total),
+            });
+          } catch (e) {
+            res = { ok: false, error: e instanceof Error ? e.message : String(e) };
+          }
+          if (res?.ok) {
+            total += res.size;
+            saved.set(img.url, res.path);
+          } else {
+            failed++;
+          }
+        }
+        done++;
+        onProgress(`Downloading images… ${done}/${images.length}`);
+      });
+      return { saved, failed };
+    },
+
+    async saveZip(markdownPath, markdown, zipFilename, opts = {}) {
       const res = await send<BuildZipResponse>({
         target: OFFSCREEN_TARGET,
         type: 'build-zip',
@@ -132,11 +182,23 @@ export async function startZipJob(): Promise<ZipJob> {
       const downloadId = await chrome.downloads.download({
         url: res.url,
         filename: zipFilename,
-        saveAs: false,
+        saveAs: opts.saveAs ?? false,
         conflictAction: 'uniquify',
       });
       // The blob URL must stay alive until Chrome has finished writing the file.
       await waitForDownload(downloadId, DOWNLOAD_WAIT_MS);
+    },
+
+    async storeZip(blobId, markdownPath, markdown) {
+      const res = await send<StoreZipResponse>({
+        target: OFFSCREEN_TARGET,
+        type: 'store-zip',
+        jobId,
+        blobId,
+        texts: [{ path: markdownPath, text: markdown }],
+      });
+      if (!res?.ok) throw new Error(`Could not build the zip: ${res?.error ?? 'no response'}`);
+      return res.size;
     },
 
     dispose() {

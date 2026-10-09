@@ -287,6 +287,123 @@ body {
   box-shadow: var(--shadow-md);
 }
 
+/* ===== Small helpers ===== */
+.btn-sm {
+  flex: 0 0 auto;
+  padding: 0 14px;
+  font-size: 13px;
+}
+
+.input-row {
+  display: flex;
+  gap: 6px;
+}
+
+.input-row .input-field {
+  flex: 1;
+  min-width: 0;
+}
+
+.row-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.muted-text {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.link-btn {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--primary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.link-btn:hover {
+  text-decoration: underline;
+}
+
+.badge {
+  margin-left: auto;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: #fff7ed;
+  color: #c2410c;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  flex-shrink: 0;
+}
+
+.dot.ok {
+  background: var(--accent);
+}
+
+.dot.warn {
+  background: #f59e0b;
+}
+
+.dot.error {
+  background: #dc2626;
+}
+
+/* ===== Collapsible panel (details/summary) ===== */
+.collapsible {
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-subtle);
+}
+
+.collapsible summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.collapsible summary::-webkit-details-marker {
+  display: none;
+}
+
+.collapsible summary::after {
+  content: '';
+  width: 8px;
+  height: 8px;
+  margin-left: 4px;
+  border-right: 2px solid var(--text-muted);
+  border-bottom: 2px solid var(--text-muted);
+  transform: rotate(-45deg);
+  transition: transform var(--ease);
+}
+
+.collapsible[open] summary::after {
+  transform: rotate(45deg);
+}
+
+.collapsible-body {
+  padding: 2px 12px 12px;
+}
+
 /* ===== Divider ===== */
 .divider {
   height: 1px;

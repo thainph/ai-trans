@@ -22,8 +22,8 @@
   <div class="section">
     <label for="mode" class="field-label">Content</label>
     <select id="mode" class="select-field">
+      <option value="full" selected>Entire page</option>
       <option value="article">Main content (Readability)</option>
-      <option value="full">Entire &lt;body&gt;</option>
       <option value="selection">Selected text only</option>
     </select>
   </div>
@@ -50,11 +50,11 @@
   </div>
 
   <div class="btn-row">
-    <button class="btn btn-primary" id="download" type="button">
+    <button class="btn btn-primary" id="download" type="button" title="Saves .md, or .zip (Markdown + images/) when Images is on and the page has images">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" />
       </svg>
-      <span>Download .md</span>
+      <span>Export</span>
     </button>
     <button class="btn btn-secondary" id="copy" type="button">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -64,7 +64,15 @@
     </button>
   </div>
 
+  <button class="btn btn-accent" id="devdy" type="button" style="margin-top:8px" title="Send this page (or the selection, in “Selected text only” mode) to Devdy">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" />
+    </svg>
+    <span>Send to Devdy</span>
+  </button>
+
   <div id="status" class="status-line" role="status" aria-live="polite">Ready.</div>
+  <button class="link-btn" id="openDevdy" type="button" hidden>Open Devdy settings →</button>
 
   <button class="btn btn-accent" id="openContent" type="button" hidden style="margin-top:10px">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -83,6 +91,7 @@
   </div>
 
   <script src="converter.js"></script>
+  <script src="extract.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>
