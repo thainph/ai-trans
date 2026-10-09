@@ -14,14 +14,14 @@ import {
   TRANSLATOR_PAGE_TARGET,
   type TranslatorPageRequest,
 } from '../shared/messages';
-import { DEFAULT_SETTINGS, loadSettings, saveSettings, type TranslationStyle } from '../shared/settings';
+import { loadSettings, saveSettings, type TranslationStyle } from '../shared/settings';
 import { detectLanguage } from './detect-language';
 import { getPageTranslationState, revertPageTranslation, translatePage } from './page-translation';
-import { POPUP_CSS } from './styles';
-import './content.css';
+import { POPUP_CSS, TRIGGER_CSS } from './styles';
 
 type TextControl = HTMLInputElement | HTMLTextAreaElement;
 
+/** Shadow host of the selection toolbar (page CSS can't restyle it, ours doesn't leak). */
 let triggerBtn: HTMLDivElement | null = null;
 let popupHost: HTMLDivElement | null = null;
 let shadowRoot: ShadowRoot | null = null;
@@ -139,15 +139,22 @@ function showTrigger(rect: DOMRect, anchorEl: Element | null): void {
   const gap = 6;
   const spaceBelow = window.innerHeight - rect.bottom;
 
-  container.style.left = `${rect.left + scrollX + rect.width / 2 - totalWidth / 2}px`;
+  const host = document.createElement('div');
+  host.id = 'ai-translator-trigger-host';
+  host.style.cssText = 'position:absolute;z-index:2147483647;';
+  host.style.left = `${rect.left + scrollX + rect.width / 2 - totalWidth / 2}px`;
   if (spaceBelow < containerHeight + gap) {
-    container.style.top = `${rect.top + scrollY - containerHeight - gap}px`;
+    host.style.top = `${rect.top + scrollY - containerHeight - gap}px`;
   } else {
-    container.style.top = `${rect.bottom + scrollY + gap}px`;
+    host.style.top = `${rect.bottom + scrollY + gap}px`;
   }
+  const root = host.attachShadow({ mode: 'open' });
+  const style = document.createElement('style');
+  style.textContent = TRIGGER_CSS;
+  root.append(style, container);
 
-  triggerBtn = container;
-  document.body.appendChild(container);
+  triggerBtn = host;
+  document.body.appendChild(host);
 }
 
 function removeTrigger(): void {
@@ -168,16 +175,18 @@ function buildLangOptions(selectedLang: string): string {
 }
 
 // --- Popup (Shadow DOM) ---
-function createPopup(
+/** Open the result popup, sized from the saved popupWidth/popupHeight. Resolves false when not opened. */
+async function createPopup(
   rect: DOMRect,
   sourceLang: string,
   targetLang: string,
   mode: 'translate' | 'grammar' = 'translate',
-) {
+): Promise<boolean> {
   if (!isExtensionAlive()) {
     cleanup();
-    return;
+    return false;
   }
+  const saved = await loadSettings('popupWidth', 'popupHeight', 'style');
   removePopup();
 
   const host = document.createElement('div');
@@ -230,14 +239,13 @@ function createPopup(
     </div>
   `;
 
-  // Apply saved width (height applied after maxHeight is computed below)
   const popup = root.querySelector<HTMLElement>('.popup')!;
 
   // Position popup
   const scrollX = window.scrollX;
   const scrollY = window.scrollY;
-  const popupWidth = DEFAULT_SETTINGS.popupWidth;
   const gap = 10;
+  const popupWidth = Math.max(Math.min(saved.popupWidth, window.innerWidth - gap * 2), 0);
   const headerFooterHeight = 90; // approximate header + footer height
   const minResultHeight = 80;
 
@@ -257,18 +265,16 @@ function createPopup(
   popup.style.setProperty('--popup-max-height', `${maxHeight}px`);
 
   // Apply saved width + height (clamp height to available space)
-  void loadSettings('popupWidth', 'popupHeight').then((data) => {
-    popup.style.setProperty('--popup-width', `${data.popupWidth}px`);
-    if (data.popupHeight > 0) {
-      const clamped = Math.min(data.popupHeight, maxHeight);
-      popup.style.setProperty('--popup-height', `${clamped}px`);
-      popup.style.setProperty('--popup-max-height', `${clamped}px`);
-    }
-  });
+  popup.style.setProperty('--popup-width', `${popupWidth}px`);
+  const height = saved.popupHeight > 0 ? Math.min(saved.popupHeight, maxHeight) : maxHeight;
+  if (saved.popupHeight > 0) {
+    popup.style.setProperty('--popup-height', `${height}px`);
+    popup.style.setProperty('--popup-max-height', `${height}px`);
+  }
 
   let top: number;
   if (showAbove) {
-    top = rect.top + scrollY - maxHeight - gap;
+    top = rect.top + scrollY - height - gap;
     if (top < scrollY) top = scrollY + gap;
   } else {
     top = rect.bottom + scrollY + gap;
@@ -313,11 +319,7 @@ function createPopup(
       applyGrammarReplace(resultEl.textContent ?? '');
     });
   } else {
-    // Load saved style
-    void loadSettings('style').then((data) => {
-      const select = shadowRoot?.getElementById('styleSelect') as HTMLSelectElement | null | undefined;
-      if (select) select.value = data.style;
-    });
+    (root.getElementById('styleSelect') as HTMLSelectElement).value = saved.style;
 
     // Target language change → re-translate
     root.getElementById('targetSelect')!.addEventListener('change', (e) => {
@@ -342,6 +344,7 @@ function createPopup(
 
   // Drag handle (header)
   setupDragHandle(root.querySelector('.header')!);
+  return true;
 }
 
 function setupResizeHandle(handle: Element, side: 'left' | 'right' | 'top' | 'bottom'): void {
@@ -549,8 +552,7 @@ function onGrammarClick(): void {
 
   removeTrigger();
 
-  createPopup(selRect, 'english', 'english', 'grammar');
-  checkGrammar(text);
+  void createPopup(selRect, 'english', 'english', 'grammar').then((opened) => opened && checkGrammar(text));
 }
 
 // Set a form control's value via the native setter so React (and similar
@@ -610,8 +612,7 @@ function translateWithSavedTarget(text: string, rect: DOMRect, sourceLang: strin
     if (targetLang === sourceLang) {
       targetLang = otherTarget(sourceLang);
     }
-    createPopup(rect, sourceLang, targetLang);
-    translate(text, sourceLang, targetLang);
+    void createPopup(rect, sourceLang, targetLang).then((opened) => opened && translate(text, sourceLang, targetLang));
   });
 }
 
@@ -666,18 +667,16 @@ function onReverseTriggerClick(): void {
     return;
   }
 
-  createPopup(rect, sourceLang, targetLang);
-  translate(text, sourceLang, targetLang);
+  void createPopup(rect, sourceLang, targetLang).then((opened) => opened && translate(text, sourceLang, targetLang));
 }
 
 // --- Selection Listener ---
 document.addEventListener('mouseup', (e) => {
+  // Events from inside our Shadow DOM widgets are retargeted to their host.
   const target = e.target as Element;
   if (target === triggerBtn) return;
   if (popupHost && (popupHost === target || popupHost.contains(target))) return;
-  if (target.closest?.('#ai-translator-popup-host')) return;
-  if (target.closest?.('.ai-translator-trigger')) return;
-  if (target.closest?.('.ai-translator-trigger-container')) return;
+  if (target.closest?.('#ai-translator-popup-host, #ai-translator-trigger-host')) return;
 
   setTimeout(() => {
     const sel = window.getSelection();

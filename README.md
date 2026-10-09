@@ -36,7 +36,7 @@ src/
   background/zip-export.ts   # điều phối offscreen (tải file/ảnh, nén zip)
   offscreen/                 # offscreen document + kiểu message
   popup/                     # popup "vỏ": thanh tab + iframe cho từng tool
-  content/all-frames.ts      # entry content script mọi trang/mọi frame → dist/content.js (+ content.css)
+  content/all-frames.ts      # entry content script mọi trang/mọi frame → dist/content.js
   shared/                    # errors, runtime, filename, messaging (Result/onTargetMessage), toast, yaml, styles/
   features/
     translator/              # background (gọi LLM), content (thanh nút + popup dịch), popup, shared (settings, messages)

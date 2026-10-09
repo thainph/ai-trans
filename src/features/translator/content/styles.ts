@@ -274,3 +274,105 @@ export const LOADING_CSS = `
   @keyframes spin { to { transform: rotate(360deg); } }
   @keyframes fade-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 `;
+
+/** Selection toolbar (T / G / R / ➤), inside the trigger host's Shadow DOM. */
+export const TRIGGER_CSS = `
+  :host {
+    all: initial;
+  }
+  .ai-translator-trigger-container {
+    display: flex;
+    background: #1e293b;
+    border-radius: 10px;
+    box-shadow:
+      0 4px 16px rgba(0, 0, 0, 0.25),
+      0 0 0 1px rgba(255, 255, 255, 0.08);
+    overflow: hidden;
+    animation: ai-trigger-pop 0.15s ease-out;
+  }
+
+  @keyframes ai-trigger-pop {
+    from {
+      opacity: 0;
+      transform: scale(0.8) translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1) translateY(0);
+    }
+  }
+
+  .ai-translator-trigger-container.single {
+    border-radius: 50%;
+  }
+
+  .ai-translator-trigger {
+    width: 34px;
+    height: 34px;
+    border: none;
+    background: transparent;
+    color: #e2e8f0;
+    font-size: 13px;
+    font-weight: 700;
+    font-family: system-ui, -apple-system, sans-serif;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition:
+      background 0.15s,
+      color 0.15s;
+    line-height: 1;
+    padding: 0;
+    position: relative;
+  }
+
+  .ai-translator-trigger:hover {
+    background: rgba(255, 255, 255, 0.12);
+    color: #ffffff;
+  }
+
+  .ai-translator-trigger:active {
+    background: rgba(255, 255, 255, 0.2);
+  }
+
+  /* Blue accent for Translate */
+  .ai-translator-trigger-translate:hover {
+    background: rgba(59, 130, 246, 0.35);
+    color: #93c5fd;
+  }
+
+  /* Purple accent for Reverse */
+  .ai-translator-trigger-reverse:hover {
+    background: rgba(139, 92, 246, 0.35);
+    color: #c4b5fd;
+  }
+
+  /* Green accent for Grammar */
+  .ai-translator-trigger-grammar:hover {
+    background: rgba(34, 197, 94, 0.35);
+    color: #86efac;
+  }
+
+  /* Teal accent for Send to Devdy */
+  .ai-translator-trigger-devdy:hover {
+    background: rgba(20, 184, 166, 0.35);
+    color: #5eead4;
+  }
+
+  .ai-translator-trigger-devdy svg {
+    display: block;
+    pointer-events: none;
+  }
+
+  /* Divider between buttons */
+  .ai-translator-trigger + .ai-translator-trigger::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 6px;
+    bottom: 6px;
+    width: 1px;
+    background: rgba(255, 255, 255, 0.15);
+  }
+`;
