@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — renamed to AI Trans, TypeScript restructure
+## 2.0.0 — 2026-10-09 — renamed to AI Trans, TypeScript restructure
 
 The whole extension was rewritten in TypeScript and reorganised by feature. Most changes are internal; below is what
 users and developers need to know.
