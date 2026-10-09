@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { resolveContextMenuLink, toastFor } from '../src/core/quick-send';
+import { toastFor } from '../src/core/quick-send';
 import {
   FALLBACK_HIGHLIGHT_ATTR,
   INJECTED_ATTR,
@@ -219,14 +219,6 @@ describe('hover highlight on the injected row', () => {
 });
 
 describe('quick-send helpers', () => {
-  it('resolves the context-menu link: link > right-clicked message > open thread', () => {
-    const permalink = 'https://acme.slack.com/archives/C0DEV1234/p1700000000000100';
-    expect(resolveContextMenuLink({ linkUrl: permalink, lastContextLink: THREAD_URL })).toBe(permalink);
-    expect(resolveContextMenuLink({ linkUrl: 'https://example.com', lastContextLink: THREAD_URL })).toBe(THREAD_URL);
-    expect(resolveContextMenuLink({ tabUrl: THREAD_URL })).toBe(THREAD_URL);
-    expect(resolveContextMenuLink({ tabUrl: CHANNEL_URL })).toBeNull();
-  });
-
   it('maps export results to toasts', () => {
     const base = { type: 'done' as const, action: 'devdy' as const, filename: 'a.md', messageCount: 3 };
     expect(toastFor({ type: 'progress', text: 'Fetching…' }, 'k')).toMatchObject({ state: 'progress', text: 'Fetching…' });

@@ -74,7 +74,6 @@ describe('manifest (finding #7)', () => {
       'activeTab',
       'alarms',
       'clipboardWrite',
-      'contextMenus',
       'declarativeNetRequest',
       'downloads',
       'offscreen',

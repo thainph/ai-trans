@@ -1,7 +1,8 @@
-// Toasts shown inside Slack for quick sends. Rendered in a Shadow DOM so
-// Slack's CSS can't affect them (and ours can't leak into Slack).
+// Devdy toasts shown inside web pages (Slack quick send, selection send).
+// Rendered in a Shadow DOM so the page's CSS can't affect them (and ours
+// can't leak into the page).
 
-import type { ToastMessage } from '../../types/quick-send';
+import type { ToastMessage } from '../types/quick-send';
 
 const AUTO_HIDE_MS: Record<ToastMessage['state'], number | null> = {
   progress: null,
@@ -73,12 +74,16 @@ export class Toaster {
   private stack: HTMLElement | null = null;
   private readonly toasts = new Map<string, { el: HTMLElement; timer?: number }>();
 
-  constructor(private readonly onAction: (action: NonNullable<ToastMessage['action']>) => void) {}
+  constructor(
+    private readonly onAction: (action: NonNullable<ToastMessage['action']>) => void,
+    /** Distinct per content script (Slack + page scripts both run on app.slack.com). */
+    private readonly hostId = 'context-kit-toast-host',
+  ) {}
 
   private ensureStack(): HTMLElement {
     if (this.stack?.isConnected) return this.stack;
     const host = document.createElement('div');
-    host.id = 'context-kit-toast-host';
+    host.id = this.hostId;
     const root = host.attachShadow({ mode: 'open' });
     root.innerHTML = `<style>${CSS}</style><div class="stack" role="status" aria-live="polite"></div>`;
     document.documentElement.appendChild(host);

@@ -4,9 +4,11 @@
 
 import { type AttachmentOutcome, type AttachmentPlan, MAX_FILE_BYTES } from '../core/attachments';
 import { mapPool } from '../core/slack-client';
+import type { PlannedImage } from '../core/web-capture';
 import {
   type BuildZipResponse,
   type FetchFileResponse,
+  type FetchImageResponse,
   OFFSCREEN_TARGET,
   type OffscreenRequest,
   type StoreZipResponse,
@@ -68,6 +70,15 @@ export interface ZipFetchResult {
 export interface ZipJob {
   /** Download all planned files into the job (offscreen memory). */
   fetchFiles(plan: AttachmentPlan, onProgress: (text: string) => void): Promise<ZipFetchResult>;
+  /**
+   * Download web images into the job. Returns url → zip path for the saved ones;
+   * stops adding once `maxTotalBytes` is reached.
+   */
+  fetchImages(
+    images: PlannedImage[],
+    opts: { maxBytes: number; maxTotalBytes: number },
+    onProgress: (text: string) => void,
+  ): Promise<{ saved: Map<string, string>; failed: number }>;
   /** Zip fetched files + markdown and save it via chrome.downloads. */
   saveZip(markdownPath: string, markdown: string, zipFilename: string): Promise<void>;
   /** Zip fetched files + markdown into the IndexedDB outbox (Devdy export). Returns the zip size. */
@@ -122,6 +133,42 @@ export async function startZipJob(): Promise<ZipJob> {
         onProgress(`Downloading files… ${done}/${total}`);
       });
       return { outcomes, saved, failed };
+    },
+
+    async fetchImages(images, opts, onProgress) {
+      const saved = new Map<string, string>();
+      let failed = 0;
+      let total = 0;
+      let done = 0;
+      onProgress(`Downloading images… 0/${images.length}`);
+      await mapPool(images, FILE_CONCURRENCY, async (img) => {
+        if (total >= opts.maxTotalBytes) {
+          failed++;
+        } else {
+          let res: FetchImageResponse;
+          try {
+            res = await send<FetchImageResponse>({
+              target: OFFSCREEN_TARGET,
+              type: 'fetch-image',
+              jobId,
+              url: img.url,
+              pathBase: img.pathBase,
+              maxBytes: Math.min(opts.maxBytes, opts.maxTotalBytes - total),
+            });
+          } catch (e) {
+            res = { ok: false, error: e instanceof Error ? e.message : String(e) };
+          }
+          if (res?.ok) {
+            total += res.size;
+            saved.set(img.url, res.path);
+          } else {
+            failed++;
+          }
+        }
+        done++;
+        onProgress(`Downloading images… ${done}/${images.length}`);
+      });
+      return { saved, failed };
     },
 
     async saveZip(markdownPath, markdown, zipFilename) {

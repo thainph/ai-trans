@@ -11,6 +11,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | Translate | `public/translator/`, `src/translator/background.js` | Translate selected text / whole pages via OpenAI, Gemini or local Ollama |
 | Web → MD | `public/web-to-md/` | Convert the current page to Markdown (download / copy) |
 | Slack | `src/slack/popup/`, `src/core/`, `src/background/slack-export.ts` | Export a Slack thread to Markdown, optionally as a .zip with attachments |
+| Devdy | `src/devdy/popup/`, `src/background/devdy.ts` | Devdy connection: token, app (port) choice, outbox queue |
 
 This repo was previously the standalone AI Translator extension; its history is preserved.
 
@@ -22,13 +23,14 @@ pnpm build       # tsc --noEmit + vite build → dist/
 pnpm test        # vitest (Slack export + attachments)
 pnpm dev         # vite build --watch (popup/background/offscreen)
 pnpm dev:content # rebuild the Slack content script on change
+pnpm dev:page    # rebuild the page content script (selection ➤) on change
 ```
 
 Load `dist/` unpacked at `chrome://extensions/` (Developer mode). Reload the extension after rebuilding.
 
 ## Architecture
 
-- **Build:** Vite bundles TypeScript entries (`src/popup/index.html`, `src/slack/popup/popup.html`, `src/offscreen/offscreen.html`, `src/background/index.ts`). Everything in `public/` (manifest, icons, translator + web-to-md plain-JS files, `shared/theme.css`) is copied verbatim — those classic scripts are **not** bundled.
+- **Build:** Vite bundles TypeScript entries (`src/popup/index.html`, `src/slack/popup/popup.html`, `src/devdy/popup/popup.html`, `src/offscreen/offscreen.html`, `src/background/index.ts`); content scripts are built separately as IIFEs (`vite.content.config.ts --mode slack|page`). Everything in `public/` (manifest, icons, translator + web-to-md plain-JS files, `shared/theme.css`) is copied verbatim — those classic scripts are **not** bundled.
 - **Popup shell** (`src/popup/shell.ts`): tab bar that loads each tool's own popup page in a same-origin iframe (chrome.* APIs still work, CSS/IDs stay isolated). Iframes are created lazily and auto-sized. Code inside an iframe must call `window.top.close()` to close the popup.
 - **Service worker** (`src/background/index.ts`): imports `../translator/background.js` (`chrome.runtime.onMessage` with `request.action`) and `./slack-export` (`chrome.runtime.onConnect`, port `slack-thread-export`). Independent channels — add new features as separate modules imported here.
 - **Offscreen document** (`src/offscreen/`): fetches Slack attachments with the browser's cookies and builds the zip (fflate) → blob: URL for `chrome.downloads`. Needed because MV3 service workers can't create blob URLs and data: URLs cap at ~2 MB. Messages use `target: 'context-kit-offscreen'` (`src/types/offscreen.ts`).
@@ -48,12 +50,14 @@ Load `dist/` unpacked at `chrome://extensions/` (Developer mode). Reload the ext
 
 ## Devdy integration
 
-- "Send to Devdy" posts the thread to Devdy's local Inbox API (`POST http://127.0.0.1:{47821..47830}/v1/slack-threads`, Bearer token). Contract: `devdy/docs/slack-thread-inbox-api.md`.
-- All sends go through `DevdyOutbox` (`src/core/devdy-outbox.ts`): payload stored in IndexedDB (`src/core/blob-store.ts`, shared with the offscreen document which writes zips there via `store-zip`), metadata in `chrome.storage.local.devdyOutbox`. Retryable outcomes (`unreachable`, `no_token`, `unauthorized`, `server_error`) stay queued and are retried by the `devdy-outbox-retry` alarm; others are dropped.
-- Quick send inside Slack: `src/slack/content/` is a content script on app.slack.com (built separately as an IIFE via `vite.content.config.ts` — content scripts can't use `import`). It injects "Send to Devdy" into Slack's own message menu (`message-dom.ts`: selectors try `data-qa` → `c-*` classes → ARIA; when nothing matches it does nothing) and shows toasts. `src/background/quick-send.ts` runs the export (always reactions + attachments, no project) and also registers the browser context-menu fallback (`contextMenus`).
+- "Send to Devdy" posts to Devdy's local Inbox API (`POST http://127.0.0.1:{47821..47830}/v1/{slack-threads|web-pages}`, Bearer token). Contract: `devdy/docs/inbox-api.md`. Settings live in the Devdy tab (`src/devdy/popup/`).
+- Instance choice: `resolveDevdy()` uses the pinned port (`devdyPortPinned`) exclusively, otherwise the single running app; with several apps and no pin, sends stay queued (`choose_instance`) — never guess.
+- All sends go through `DevdyOutbox` (`src/core/devdy-outbox.ts`): payload stored in IndexedDB (`src/core/blob-store.ts`, shared with the offscreen document which writes zips there via `store-zip`), metadata in `chrome.storage.local.devdyOutbox`. Retryable outcomes (`unreachable`, `choose_instance`, `no_token`, `unauthorized`, `server_error`) stay queued and are retried by the `devdy-outbox-retry` alarm; others are dropped.
+- Quick send inside Slack: `src/slack/content/` is a content script on app.slack.com (built separately as an IIFE via `vite.content.config.ts` — content scripts can't use `import`). It injects "Send to Devdy" into Slack's own message menu (`message-dom.ts`: selectors try `data-qa` → `c-*` classes → ARIA; when nothing matches it does nothing) and shows toasts. `src/background/quick-send.ts` runs the export (always reactions + attachments, no project). No browser context menus anywhere (they could clash with sites' own menus).
+- Web pages / selections: the translator's selection toolbar (`public/translator/content.js`) shows a ➤ button (non-editable selections only) that calls `window.__contextKitDevdy.sendSelection()` from `src/web/content/` (built as `dist/page-content.js`, loaded after `web-to-md/converter.js` in the same content-script entry). `src/background/web-capture.ts` builds the Devdy front matter (`src/core/web-capture.ts`), downloads images via the offscreen `fetch-image` command into `images/` and enqueues for `/v1/web-pages`. The Web → MD popup's "Send to Devdy" uses the same path (`send-page`).
 - Fetches to Devdy must run in extension contexts (service worker / offscreen), never in content scripts (CORS + Private Network Access).
 
 ## Storage keys
 
 - `chrome.storage.sync` — translator: `provider, apiKey, openaiModel, geminiApiKey, geminiModel, ollamaUrl, ollamaModel, style, targetLang, popupWidth` (defaults in `DEFAULT_SETTINGS` in `src/translator/background.js`, re-declared in `public/translator/popup.js` — keep aligned). Slack: `includeReactions, includeFiles, zipFiles`.
-- `chrome.storage.local` — `contextKitLastTab`; Devdy: `devdyToken, devdyPort, devdyOutbox`.
+- `chrome.storage.local` — `contextKitLastTab`; Devdy: `devdyToken, devdyPort, devdyPortPinned, devdyOutbox`; `contextKitOpenTab` (one-shot tab for the popup shell).

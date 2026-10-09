@@ -215,7 +215,7 @@ async function handleDevdyExport(
 
   post({ type: 'progress', text: 'Sending to Devdy…' });
   // No project: Devdy assigns it later.
-  const delivery = await outbox.enqueue({ id, title: result.filename, contentType }, blob);
+  const delivery = await outbox.enqueue({ id, kind: 'slack-threads', title: result.filename, contentType }, blob);
   post(
     makeDoneResponse(
       'devdy',

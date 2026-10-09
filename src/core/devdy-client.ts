@@ -3,6 +3,7 @@
 //   GET  /health            → {"app":"devdy","version":"…","api":1}   (no token)
 //   GET  /v1/projects       → [{"id","name"}]                         (Bearer token)
 //   POST /v1/slack-threads  → 201 {"id","status":"created"} | 200 {"id","status":"updated"}
+//   POST /v1/web-pages      → same (web page / selection captures)
 //
 // Loopback only, on the first free port in 47821…47830. Must be called from an
 // extension context (service worker / offscreen): Devdy only accepts a
@@ -21,6 +22,9 @@ const UPLOAD_TIMEOUT_MS = 5 * 60_000;
 
 export type FetchFn = typeof fetch;
 
+/** Inbox endpoint (`/v1/<kind>`). */
+export type CaptureKind = 'slack-threads' | 'web-pages';
+
 export interface DevdyHealth {
   app: 'devdy';
   version?: string;
@@ -36,6 +40,8 @@ export type SendOutcome =
   | { kind: 'created' | 'updated'; id: string }
   /** Devdy not running / port not found / network error → queue and retry later. */
   | { kind: 'unreachable'; message: string }
+  /** Several Devdy apps answer /health and none is chosen → ask the user; retry afterwards. */
+  | { kind: 'choose_instance'; message: string }
   /** No token saved yet → ask the user to paste it; retry afterwards. */
   | { kind: 'no_token'; message: string }
   /** Wrong or regenerated token → ask the user to paste it again; retry afterwards. */
@@ -47,7 +53,13 @@ export type SendOutcome =
 
 /** Outcomes worth keeping in the outbox for a later retry. */
 export function isRetryable(o: SendOutcome): boolean {
-  return o.kind === 'unreachable' || o.kind === 'no_token' || o.kind === 'unauthorized' || o.kind === 'server_error';
+  return (
+    o.kind === 'unreachable' ||
+    o.kind === 'choose_instance' ||
+    o.kind === 'no_token' ||
+    o.kind === 'unauthorized' ||
+    o.kind === 'server_error'
+  );
 }
 
 const base = (port: number) => `http://127.0.0.1:${port}`;
@@ -74,19 +86,40 @@ export async function checkHealth(port: number, fetchFn: FetchFn = fetch): Promi
   }
 }
 
-/** Try the last known port first, then scan 47821…47830. */
-export async function findDevdy(
-  preferredPort: number | undefined,
+export interface DevdyInstance {
+  port: number;
+  health: DevdyHealth;
+}
+
+/** Every Devdy inbox answering on 47821…47830 (e.g. a production and a dev build). */
+export async function findAllDevdy(fetchFn: FetchFn = fetch): Promise<DevdyInstance[]> {
+  const ports = Array.from({ length: DEVDY_PORT_LAST - DEVDY_PORT_FIRST + 1 }, (_, i) => DEVDY_PORT_FIRST + i);
+  const found = await Promise.all(ports.map(async (port) => ({ port, health: await checkHealth(port, fetchFn) })));
+  return found.filter((f): f is DevdyInstance => f.health !== null);
+}
+
+export type ResolveResult =
+  | { kind: 'ok'; instance: DevdyInstance }
+  | { kind: 'none' }
+  /** Several instances and the user has not picked one. */
+  | { kind: 'ambiguous'; instances: DevdyInstance[] };
+
+/**
+ * Which Devdy to talk to. A port the user picked (`pinned`) is used exclusively;
+ * otherwise the single running instance — never a guess between several.
+ */
+export async function resolveDevdy(
+  settings: { port?: number; pinned?: boolean },
   fetchFn: FetchFn = fetch,
-): Promise<{ port: number; health: DevdyHealth } | null> {
-  const ports: number[] = [];
-  if (preferredPort && preferredPort >= DEVDY_PORT_FIRST && preferredPort <= DEVDY_PORT_LAST) ports.push(preferredPort);
-  for (let p = DEVDY_PORT_FIRST; p <= DEVDY_PORT_LAST; p++) if (p !== preferredPort) ports.push(p);
-  for (const port of ports) {
-    const health = await checkHealth(port, fetchFn);
-    if (health) return { port, health };
+): Promise<ResolveResult> {
+  if (settings.pinned && settings.port) {
+    const health = await checkHealth(settings.port, fetchFn);
+    return health ? { kind: 'ok', instance: { port: settings.port, health } } : { kind: 'none' };
   }
-  return null;
+  const all = await findAllDevdy(fetchFn);
+  if (all.length === 0) return { kind: 'none' };
+  if (all.length === 1) return { kind: 'ok', instance: all[0]! };
+  return { kind: 'ambiguous', instances: all };
 }
 
 export type ProjectsResult =
@@ -114,19 +147,22 @@ export async function listProjects(port: number, token: string, fetchFn: FetchFn
   return { ok: true, projects };
 }
 
-export interface ThreadPayload {
+export interface CapturePayload {
+  /** Endpoint; defaults to slack-threads. */
+  kind?: CaptureKind;
   body: Blob;
   /** "application/zip" or "text/markdown; charset=utf-8". */
   contentType: string;
   projectId?: string;
 }
 
-export async function postThread(
+export async function postCapture(
   port: number,
   token: string,
-  payload: ThreadPayload,
+  payload: CapturePayload,
   fetchFn: FetchFn = fetch,
 ): Promise<SendOutcome> {
+  const kind = payload.kind ?? 'slack-threads';
   if (payload.body.size > DEVDY_MAX_BODY_BYTES) {
     return { kind: 'rejected', status: 413, message: 'The export is larger than Devdy’s 50 MB limit.' };
   }
@@ -138,7 +174,7 @@ export async function postThread(
 
   let res: Response;
   try {
-    res = await fetchFn(`${base(port)}/v1/slack-threads`, {
+    res = await fetchFn(`${base(port)}/v1/${kind}`, {
       method: 'POST',
       headers,
       body: payload.body,
@@ -164,7 +200,9 @@ export function describeOutcome(o: SendOutcome): string {
     case 'created':
       return 'Sent to Devdy.';
     case 'updated':
-      return 'Updated the existing thread in Devdy.';
+      return 'Updated the existing item in Devdy.';
+    case 'choose_instance':
+      return 'Several Devdy apps are running — pick one in Context Kit → Devdy. The export is queued.';
     case 'unreachable':
       return 'Devdy is not running — queued, it will be sent automatically when Devdy is available.';
     case 'no_token':
@@ -172,7 +210,7 @@ export function describeOutcome(o: SendOutcome): string {
     case 'unauthorized':
       return 'Devdy rejected the token. Paste the token from Devdy → Settings → Inbox API again.';
     case 'server_error':
-      return `Devdy could not save the thread (${o.message}) — queued for retry.`;
+      return `Devdy could not save it (${o.message}) — queued for retry.`;
     case 'rejected':
       return o.status === 413
         ? 'The export is too large for Devdy (max 50 MB zipped / 200 MB unzipped).'

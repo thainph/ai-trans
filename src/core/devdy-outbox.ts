@@ -4,15 +4,18 @@
 // dropped. Dependencies are injected so the logic is unit-testable.
 
 import {
+  type CaptureKind,
+  type CapturePayload,
   describeOutcome,
-  type DevdyHealth,
   isRetryable,
+  type ResolveResult,
   type SendOutcome,
-  type ThreadPayload,
 } from './devdy-client';
 
 export interface OutboxEntry {
   id: string;
+  /** Endpoint; entries queued before web pages existed have none → slack-threads. */
+  kind?: CaptureKind;
   title: string;
   contentType: string;
   createdAt: string;
@@ -23,6 +26,8 @@ export interface OutboxEntry {
 export interface DevdySettings {
   token?: string;
   port?: number;
+  /** The user picked `port` among several running Devdy apps → use only that one. */
+  pinned?: boolean;
 }
 
 export interface OutboxDeps {
@@ -33,8 +38,8 @@ export interface OutboxDeps {
   putBlob(id: string, blob: Blob): Promise<void>;
   getBlob(id: string): Promise<Blob | undefined>;
   deleteBlob(id: string): Promise<void>;
-  findDevdy(preferredPort?: number): Promise<{ port: number; health: DevdyHealth } | null>;
-  postThread(port: number, token: string, payload: ThreadPayload): Promise<SendOutcome>;
+  resolveDevdy(settings: DevdySettings): Promise<ResolveResult>;
+  postCapture(port: number, token: string, payload: CapturePayload): Promise<SendOutcome>;
   /** Turn the periodic retry alarm on/off. */
   setRetryAlarm(on: boolean): Promise<void>;
   now?(): Date;
@@ -110,12 +115,15 @@ export class DevdyOutbox {
     let port: number | undefined;
 
     // Reachability first: with Devdy down, a missing token is not the problem yet.
-    const found = await this.deps.findDevdy(settings.port);
-    if (!found) {
+    const found = await this.deps.resolveDevdy(settings);
+    if (found.kind === 'none') {
       stopWith = { kind: 'unreachable', message: 'Devdy is not running.' };
+    } else if (found.kind === 'ambiguous') {
+      const ports = found.instances.map((i) => i.port).join(', ');
+      stopWith = { kind: 'choose_instance', message: `Several Devdy apps are running (ports ${ports}).` };
     } else {
-      port = found.port;
-      if (found.port !== settings.port) await this.deps.savePort(found.port);
+      port = found.instance.port;
+      if (port !== settings.port) await this.deps.savePort(port);
       if (!settings.token) stopWith = NO_TOKEN;
     }
 
@@ -132,7 +140,8 @@ export class DevdyOutbox {
         results.set(entry.id, { kind: 'rejected', status: 0, message: 'The queued export data is missing.' });
         continue;
       }
-      const outcome = await this.deps.postThread(port!, settings.token!, {
+      const outcome = await this.deps.postCapture(port!, settings.token!, {
+        kind: entry.kind ?? 'slack-threads',
         body: blob,
         contentType: entry.contentType,
       });

@@ -1,28 +1,22 @@
 // Content script for app.slack.com: adds "Send to Devdy" to Slack's own message
-// menu (right-click on a message, or the message's "More actions" ⋮ button),
-// remembers the last right-clicked message for the browser context-menu
-// fallback, and shows quick-send toasts.
+// menu (right-click on a message, or the message's "More actions" ⋮ button)
+// and shows quick-send toasts.
 //
 // Debug: run `localStorage.setItem('context-kit-debug', '1')` on app.slack.com
 // and reload to log what the script detects.
 
 import {
-  CONTENT_TARGET,
-  type ContentQuery,
-  type ContentQueryResponse,
   QUICK_SEND_TARGET,
   type QuickSendRequest,
   TOAST_TARGET,
   type ToastMessage,
 } from '../../types/quick-send';
 import { findMenu, findMessageElement, injectMenuItem, messageLink } from './message-dom';
-import { Toaster } from './toast';
+import { Toaster } from '../../content/toast';
 
 const MENU_LABEL = 'Send to Devdy';
 /** A menu that appears this soon after a click/right-click on a message belongs to it. */
 const TRIGGER_WINDOW_MS = 1500;
-/** How long the right-clicked message is remembered for the browser context menu. */
-const CONTEXT_LINK_TTL_MS = 60_000;
 /** Ignore repeated clicks for the same thread. */
 const RESEND_GUARD_MS = 3000;
 
@@ -38,7 +32,6 @@ const debug = (...args: unknown[]) => {
 };
 
 let trigger: { link: string; at: number } | null = null;
-let lastContext: { link: string; at: number } | null = null;
 let hoveredMessage: Element | null = null;
 const recentSends = new Map<string, number>();
 
@@ -75,7 +68,6 @@ document.addEventListener(
   (e) => {
     const link = linkFor(e.target);
     trigger = link ? { link, at: Date.now() } : null;
-    if (link) lastContext = { link, at: Date.now() };
     debug('contextmenu', link ?? '(not a message)');
   },
   true,
@@ -152,16 +144,8 @@ new MutationObserver((mutations) => {
 }).observe(document.documentElement, { childList: true, subtree: true });
 
 if (extensionAlive()) {
-  chrome.runtime.onMessage.addListener((msg: ToastMessage | ContentQuery, _sender, sendResponse) => {
-    if (msg?.target === TOAST_TARGET) {
-      toaster.show(msg);
-      return;
-    }
-    if (msg?.target === CONTENT_TARGET && msg.type === 'last-context-link') {
-      const fresh = lastContext && Date.now() - lastContext.at < CONTEXT_LINK_TTL_MS;
-      const res: ContentQueryResponse = fresh ? { link: lastContext!.link } : {};
-      sendResponse(res);
-    }
+  chrome.runtime.onMessage.addListener((msg: ToastMessage) => {
+    if (msg?.target === TOAST_TARGET) toaster.show(msg);
   });
 }
 

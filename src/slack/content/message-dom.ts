@@ -4,8 +4,8 @@
 // Slack's markup is not a public API. Every lookup therefore tries several
 // selectors, most stable first: `data-qa` attributes (Slack's own test hooks),
 // then `c-*` class names, then generic ARIA roles. When nothing matches we do
-// nothing (Slack's menu stays untouched) — the browser context menu fallback
-// still works.
+// nothing (Slack's menu stays untouched) — threads can still be sent from the
+// Slack tab of the popup.
 
 import { parseThreadLink } from '../../core/permalink';
 

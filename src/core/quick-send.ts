@@ -2,24 +2,6 @@
 
 import type { ExportResponse } from '../types/messages';
 import { TOAST_TARGET, type ToastMessage, type ToastState } from '../types/quick-send';
-import { parseThreadLink } from './permalink';
-
-/**
- * Pick the thread link for the browser context-menu fallback:
- * 1. the right-clicked link (e.g. a message timestamp),
- * 2. the message the content script saw being right-clicked,
- * 3. the tab URL when a thread is open in the side pane.
- */
-export function resolveContextMenuLink(candidates: {
-  linkUrl?: string;
-  lastContextLink?: string;
-  tabUrl?: string;
-}): string | null {
-  for (const c of [candidates.linkUrl, candidates.lastContextLink, candidates.tabUrl]) {
-    if (c && parseThreadLink(c).ok) return c;
-  }
-  return null;
-}
 
 /** Map an export response to the toast shown inside Slack (null = no change). */
 export function toastFor(msg: ExportResponse, key: string): ToastMessage | null {
@@ -44,6 +26,8 @@ export function toastFor(msg: ExportResponse, key: string): ToastMessage | null 
     case 'unreachable':
     case 'server_error':
       return t('queued', d.message);
+    case 'choose_instance':
+      return t('queued', d.message, 'open-settings');
     case 'no_token':
     case 'unauthorized':
       return t('error', d.message, 'open-settings');

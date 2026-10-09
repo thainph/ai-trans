@@ -29,6 +29,40 @@
 
   function repeat(ch, n) { return new Array(n + 1).join(ch); }
 
+  // Lazy-loaded images keep a tiny data: placeholder in `src` until they scroll
+  // into view; the real URL is in data-src (or similar) / srcset.
+  // Keep in sync with bestImageSrc() in src/web/content/selection.ts.
+  const PLACEHOLDER_RE = /^data:image\/(gif|png|svg\+xml)[;,]/i;
+  const LAZY_ATTRS = ["data-src", "data-lazy-src", "data-original", "data-actualsrc", "data-url"];
+
+  function largestFromSrcset(srcset) {
+    if (!srcset) return null;
+    let best = null;
+    for (const part of srcset.split(/,\s+/)) {
+      const bits = part.trim().split(/\s+/);
+      const url = bits[0];
+      const d = bits[1] || "1x";
+      if (!url) continue;
+      const size = parseFloat(d) * (d.endsWith("w") ? 1 : 1000);
+      if (!best || size > best.size) best = { url, size: isFinite(size) ? size : 0 };
+    }
+    return best ? best.url : null;
+  }
+
+  function realImageSrc(img) {
+    const src = img.getAttribute("src");
+    const isPlaceholder = !src || PLACEHOLDER_RE.test(src);
+    if (isPlaceholder) {
+      for (const a of LAZY_ATTRS) {
+        const v = img.getAttribute(a);
+        if (v) return v;
+      }
+      const fromSet = largestFromSrcset(img.getAttribute("srcset") || img.getAttribute("data-srcset"));
+      if (fromSet) return fromSet;
+    }
+    return src || largestFromSrcset(img.getAttribute("srcset"));
+  }
+
   // Chuyển 1 node thành markdown. opts: {keepImages, keepLinks, baseUrl}
   function walk(node, opts, listCtx) {
     let out = "";
@@ -112,7 +146,7 @@
       }
       case "IMG": {
         if (!opts.keepImages) return "";
-        const src = absUrl(node.getAttribute("src") || node.getAttribute("data-src"), opts.baseUrl);
+        const src = absUrl(realImageSrc(node), opts.baseUrl);
         if (!src) return "";
         const alt = (node.getAttribute("alt") || "").trim();
         return "![" + alt + "](" + src + ")";

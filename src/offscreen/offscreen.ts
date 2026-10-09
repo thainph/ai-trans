@@ -5,9 +5,11 @@
 import { type Zippable, zipSync } from 'fflate';
 import { isAllowedFileUrl, isCompressiblePath } from '../core/attachments';
 import { putBlob } from '../core/blob-store';
+import { imageExtension, isFetchableImageUrl } from '../core/web-capture';
 import {
   type BuildZipResponse,
   type FetchFileResponse,
+  type FetchImageResponse,
   OFFSCREEN_TARGET,
   type OffscreenRequest,
   type StoreZipResponse,
@@ -87,6 +89,34 @@ async function fetchFile(req: Extract<OffscreenRequest, { type: 'fetch-file' }>)
   }
 }
 
+async function fetchImage(req: Extract<OffscreenRequest, { type: 'fetch-image' }>): Promise<FetchImageResponse> {
+  if (!isFetchableImageUrl(req.url)) return { ok: false, error: 'URL not allowed' };
+  let res: Response;
+  try {
+    // Same request the page made to render it (cookies included for login-only images).
+    res = await fetch(req.url, {
+      credentials: 'include',
+      redirect: 'follow',
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+  } catch (e) {
+    const timedOut = e instanceof DOMException && e.name === 'TimeoutError';
+    return { ok: false, error: timedOut ? 'download timed out' : 'network error' };
+  }
+  if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+  const type = res.headers.get('Content-Type') ?? '';
+  const ext = imageExtension(type, req.url);
+  if (!type.toLowerCase().startsWith('image/') && ext === 'img') return { ok: false, error: `not an image (${type || 'unknown type'})` };
+  try {
+    const bytes = await readCapped(res, req.maxBytes);
+    const path = `${req.pathBase}.${ext}`;
+    job(req.jobId).files.set(path, bytes);
+    return { ok: true, path, size: bytes.byteLength };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 /** Zip every fetched file of the job plus the given text entries. */
 function makeZip(jobId: string, texts: { path: string; text: string }[]): Uint8Array {
   const j = job(jobId);
@@ -133,6 +163,9 @@ chrome.runtime.onMessage.addListener((msg: OffscreenRequest, _sender, sendRespon
   switch (msg.type) {
     case 'fetch-file':
       fetchFile(msg).then(sendResponse);
+      return true; // async response
+    case 'fetch-image':
+      fetchImage(msg).then(sendResponse);
       return true; // async response
     case 'build-zip':
       sendResponse(buildZip(msg));

@@ -2,15 +2,18 @@
 // iframe. The pages are same-origin extension pages, so chrome.* APIs work
 // inside them, and their CSS/IDs stay isolated from each other.
 
-type ToolId = 'translator' | 'web-to-md' | 'slack';
+type ToolId = 'translator' | 'web-to-md' | 'slack' | 'devdy';
 
 const TOOL_PAGES: Record<ToolId, string> = {
   translator: '/translator/popup.html',
   'web-to-md': '/web-to-md/popup.html',
   slack: '/src/slack/popup/popup.html',
+  devdy: '/src/devdy/popup/popup.html',
 };
 
 const LAST_TAB_KEY = 'contextKitLastTab';
+/** One-shot request to open a given tab (set by the background's openSettings). */
+const OPEN_TAB_KEY = 'contextKitOpenTab';
 
 // Sub-pages were designed as standalone popups with a fixed body width.
 const EMBED_CSS = 'html, body { width: auto !important; min-width: 0 !important; overflow: hidden !important; }';
@@ -66,6 +69,11 @@ function show(tool: ToolId): void {
 }
 
 async function initialTool(): Promise<ToolId> {
+  const once = await chrome.storage.local.get(OPEN_TAB_KEY);
+  if (isToolId(once[OPEN_TAB_KEY])) {
+    await chrome.storage.local.remove(OPEN_TAB_KEY);
+    return once[OPEN_TAB_KEY];
+  }
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (tab?.url?.startsWith('https://app.slack.com/')) return 'slack';
@@ -82,5 +90,12 @@ for (const tab of tabs) {
     if (isToolId(tab.dataset.tool)) show(tab.dataset.tool);
   });
 }
+
+// Tool pages (same-origin iframes) can ask to switch tab, e.g. "Open Devdy settings".
+window.addEventListener('message', (e) => {
+  if (e.origin !== location.origin) return;
+  const data = e.data as { type?: string; tool?: unknown } | null;
+  if (data?.type === 'context-kit-open-tab' && isToolId(data.tool)) show(data.tool);
+});
 
 void initialTool().then(show);

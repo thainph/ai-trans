@@ -64,6 +64,17 @@
   color: #86efac;
 }
 
+/* Teal accent for Send to Devdy */
+.ai-translator-trigger-devdy:hover {
+  background: rgba(20, 184, 166, 0.35);
+  color: #5eead4;
+}
+
+.ai-translator-trigger-devdy svg {
+  display: block;
+  pointer-events: none;
+}
+
 /* Divider between buttons */
 .ai-translator-trigger + .ai-translator-trigger::before {
   content: "";

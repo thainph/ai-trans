@@ -4,10 +4,11 @@ import {
   type SendOutcome,
   checkHealth,
   describeOutcome,
-  findDevdy,
+  findAllDevdy,
   isRetryable,
   listProjects,
-  postThread,
+  postCapture,
+  resolveDevdy,
 } from '../src/core/devdy-client';
 import { DevdyOutbox, type OutboxDeps, type OutboxEntry } from '../src/core/devdy-outbox';
 
@@ -35,22 +36,33 @@ describe('devdy-client: discovery', () => {
     expect(await checkHealth(47822, fakeDevdy(47821, HEALTH))).toBeNull();
   });
 
-  it('tries the saved port first, then scans 47821…47830', async () => {
-    const calls: string[] = [];
-    const inner = fakeDevdy(47825, HEALTH);
-    const spy = (async (input: RequestInfo | URL, init?: RequestInit) => {
-      calls.push(new URL(String(input)).port);
-      return inner(input, init);
+  it('finds every running instance', async () => {
+    const two = (async (input: RequestInfo | URL) => {
+      const port = new URL(String(input)).port;
+      if (port === '47821' || port === '47822') return json(200, { app: 'devdy', version: port });
+      throw new TypeError('Failed to fetch');
     }) as FetchFn;
+    expect((await findAllDevdy(two)).map((i) => i.port)).toEqual([47821, 47822]);
+    expect(await findAllDevdy(fakeDevdy(1, HEALTH))).toEqual([]);
+  });
 
-    expect(await findDevdy(47825, spy)).toMatchObject({ port: 47825 });
-    expect(calls).toEqual(['47825']);
+  it('resolves: single instance → ok; several → ambiguous unless pinned; pinned down → none', async () => {
+    const one = fakeDevdy(47825, HEALTH);
+    expect(await resolveDevdy({}, one)).toMatchObject({ kind: 'ok', instance: { port: 47825 } });
+    expect(await resolveDevdy({}, fakeDevdy(1, HEALTH))).toEqual({ kind: 'none' });
 
-    calls.length = 0;
-    expect(await findDevdy(47830, spy)).toMatchObject({ port: 47825 });
-    expect(calls).toEqual(['47830', '47821', '47822', '47823', '47824', '47825']);
-
-    expect(await findDevdy(undefined, fakeDevdy(9999, HEALTH))).toBeNull();
+    const two = (async (input: RequestInfo | URL) => {
+      const port = new URL(String(input)).port;
+      if (port === '47821' || port === '47822') return json(200, { app: 'devdy' });
+      throw new TypeError('Failed to fetch');
+    }) as FetchFn;
+    const amb = await resolveDevdy({ port: 47821 }, two); // remembered but not pinned
+    expect(amb.kind).toBe('ambiguous');
+    expect(await resolveDevdy({ port: 47822, pinned: true }, two)).toMatchObject({
+      kind: 'ok',
+      instance: { port: 47822 },
+    });
+    expect(await resolveDevdy({ port: 47823, pinned: true }, two)).toEqual({ kind: 'none' });
   });
 });
 
@@ -79,7 +91,7 @@ describe('devdy-client: API calls', () => {
       },
     });
     const body = new Blob(['# hi'], { type: 'text/markdown' });
-    const out = await postThread(47821, 'tok', { body, contentType: 'text/markdown; charset=utf-8', projectId: 'p1' }, f);
+    const out = await postCapture(47821, 'tok', { body, contentType: 'text/markdown; charset=utf-8', projectId: 'p1' }, f);
     expect(out).toEqual({ kind: 'created', id: 't1' });
     expect(seen).toEqual({ ct: 'text/markdown; charset=utf-8', project: 'p1' });
   });
@@ -92,18 +104,18 @@ describe('devdy-client: API calls', () => {
     [500, { error: 'storage error' }, 'server_error'],
   ])('maps HTTP %i to %s', async (status, body, kind) => {
     const f = fakeDevdy(47821, { 'POST /v1/slack-threads': () => json(status, body) });
-    const out = await postThread(47821, 't', { body: new Blob(['x']), contentType: 'text/plain' }, f);
+    const out = await postCapture(47821, 't', { body: new Blob(['x']), contentType: 'text/plain' }, f);
     expect(out.kind).toBe(kind);
   });
 
   it('treats a network error as unreachable and refuses >50 MB locally', async () => {
     const down = fakeDevdy(1, {});
-    expect((await postThread(47821, 't', { body: new Blob(['x']), contentType: 'text/plain' }, down)).kind).toBe(
+    expect((await postCapture(47821, 't', { body: new Blob(['x']), contentType: 'text/plain' }, down)).kind).toBe(
       'unreachable',
     );
     const big = { size: 51 * 1024 * 1024 } as Blob;
     const fetchSpy = vi.fn();
-    const out = await postThread(47821, 't', { body: big, contentType: 'application/zip' }, fetchSpy as unknown as FetchFn);
+    const out = await postCapture(47821, 't', { body: big, contentType: 'application/zip' }, fetchSpy as unknown as FetchFn);
     expect(out).toMatchObject({ kind: 'rejected', status: 413 });
     expect(fetchSpy).not.toHaveBeenCalled();
   });
@@ -131,6 +143,7 @@ function memoryDeps(over: Partial<OutboxDeps> & { token?: string } = {}) {
   const blobs = new Map<string, Blob>();
   const alarm = { on: false };
   const posted: string[] = [];
+  const kinds: string[] = [];
   const deps: OutboxDeps = {
     loadEntries: async () => entries.map((e) => ({ ...e })),
     saveEntries: async (e) => {
@@ -141,8 +154,9 @@ function memoryDeps(over: Partial<OutboxDeps> & { token?: string } = {}) {
     putBlob: async (id, b) => void blobs.set(id, b),
     getBlob: async (id) => blobs.get(id),
     deleteBlob: async (id) => void blobs.delete(id),
-    findDevdy: async () => ({ port: 47821, health: { app: 'devdy' } }),
-    postThread: async (_p, _t, payload) => {
+    resolveDevdy: async () => ({ kind: 'ok', instance: { port: 47821, health: { app: 'devdy' } } }),
+    postCapture: async (_p, _t, payload) => {
+      kinds.push(payload.kind ?? 'slack-threads');
       posted.push(await payload.body.text());
       return { kind: 'created', id: 'srv' };
     },
@@ -152,12 +166,39 @@ function memoryDeps(over: Partial<OutboxDeps> & { token?: string } = {}) {
     now: () => new Date('2026-10-08T00:00:00Z'),
     ...over,
   };
-  return { deps, blobs, alarm, posted, entries: () => entries };
+  return { deps, blobs, alarm, posted, kinds, entries: () => entries };
 }
 
 const md = (s: string) => new Blob([s], { type: 'text/markdown' });
 
 describe('DevdyOutbox', () => {
+  it('posts each entry to its endpoint (legacy entries default to slack-threads)', async () => {
+    const m = memoryDeps({ resolveDevdy: async () => ({ kind: 'none' }) });
+    const box = new DevdyOutbox(m.deps);
+    await box.enqueue({ id: 'old', title: 'legacy', contentType: 'x' }, md('old'));
+    await box.enqueue({ id: 'w', kind: 'web-pages', title: 'web', contentType: 'x' }, md('w'));
+    m.deps.resolveDevdy = async () => ({ kind: 'ok', instance: { port: 47821, health: { app: 'devdy' } } });
+    await box.flush();
+    expect(m.kinds).toEqual(['slack-threads', 'web-pages']);
+  });
+
+  it('waits for a choice when several Devdy apps run', async () => {
+    const m = memoryDeps({
+      resolveDevdy: async () => ({
+        kind: 'ambiguous',
+        instances: [
+          { port: 47821, health: { app: 'devdy' } },
+          { port: 47822, health: { app: 'devdy' } },
+        ],
+      }),
+    });
+    const r = await new DevdyOutbox(m.deps).enqueue({ id: 'a', title: 'A', contentType: 'x' }, md('A'));
+    expect(r.outcome).toMatchObject({ kind: 'choose_instance' });
+    expect(r.message).toMatch(/pick one/);
+    expect(r.pending).toBe(1);
+    expect(m.posted).toEqual([]);
+  });
+
   it('delivers immediately and leaves nothing queued', async () => {
     const m = memoryDeps();
     const r = await new DevdyOutbox(m.deps).enqueue({ id: 'a', title: 'A', contentType: 'text/markdown' }, md('# A'));
@@ -170,7 +211,10 @@ describe('DevdyOutbox', () => {
 
   it('queues while Devdy is down and flushes oldest-first once it is back', async () => {
     let up = false;
-    const m = memoryDeps({ findDevdy: async () => (up ? { port: 47821, health: { app: 'devdy' } } : null) });
+    const m = memoryDeps({
+      resolveDevdy: async () =>
+        up ? { kind: 'ok', instance: { port: 47821, health: { app: 'devdy' } } } : { kind: 'none' },
+    });
     const box = new DevdyOutbox(m.deps);
 
     const r1 = await box.enqueue({ id: 'a', title: 'A', contentType: 'text/markdown' }, md('A'));
@@ -195,13 +239,13 @@ describe('DevdyOutbox', () => {
     expect(r.pending).toBe(1);
 
     // Devdy down AND no token → report "not running", not a token problem.
-    const both = memoryDeps({ token: undefined, findDevdy: async () => null });
+    const both = memoryDeps({ token: undefined, resolveDevdy: async () => ({ kind: 'none' }) });
     const r2 = await new DevdyOutbox(both.deps).enqueue({ id: 'a', title: 'A', contentType: 'x' }, md('A'));
     expect(r2.outcome.kind).toBe('unreachable');
 
     let calls = 0;
     const bad = memoryDeps({
-      postThread: async () => {
+      postCapture: async () => {
         calls++;
         return { kind: 'unauthorized', message: 'invalid token' };
       },
@@ -215,7 +259,7 @@ describe('DevdyOutbox', () => {
   });
 
   it('drops permanently rejected payloads', async () => {
-    const m = memoryDeps({ postThread: async () => ({ kind: 'rejected', status: 400, message: 'zip has two .md' }) });
+    const m = memoryDeps({ postCapture: async () => ({ kind: 'rejected', status: 400, message: 'zip has two .md' }) });
     const r = await new DevdyOutbox(m.deps).enqueue({ id: 'a', title: 'A', contentType: 'application/zip' }, md('A'));
     expect(r.outcome).toMatchObject({ kind: 'rejected', status: 400 });
     expect(r.pending).toBe(0);
@@ -231,7 +275,7 @@ describe('DevdyOutbox', () => {
   });
 
   it('serializes concurrent enqueues (no lost entries)', async () => {
-    const m = memoryDeps({ findDevdy: async () => null });
+    const m = memoryDeps({ resolveDevdy: async () => ({ kind: 'none' }) });
     const box = new DevdyOutbox(m.deps);
     await Promise.all(
       ['a', 'b', 'c', 'd'].map((id) => box.enqueue({ id, title: id, contentType: 'x' }, md(id))),

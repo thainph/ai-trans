@@ -17,6 +17,7 @@ export default defineConfig({
         popup: 'src/popup/index.html',
         'slack-popup': 'src/slack/popup/popup.html',
         offscreen: 'src/offscreen/offscreen.html',
+        'devdy-popup': 'src/devdy/popup/popup.html',
         background: 'src/background/index.ts',
       },
       output: {

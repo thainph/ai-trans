@@ -5,6 +5,8 @@ const statusEl = $("status");
 const previewEl = $("preview");
 
 let lastMarkdown = "";
+/** What "Send to Devdy" posts (body without the local front matter). */
+let lastCapture = null;
 let lastFilename = "page.md";
 
 function setStatus(msg, isError) {
@@ -67,6 +69,7 @@ function extractInPage(mode) {
         div.appendChild(sel.getRangeAt(i).cloneContents());
       }
       result.html = div.innerHTML;
+      result.text = sel.toString();
     }
     return finalize();
   }
@@ -220,6 +223,20 @@ async function generate() {
 
   lastMarkdown = doc;
   lastFilename = slugify(data.title) + ".md";
+  lastCapture = {
+    // Selection: just the excerpt (Devdy titles it from its first line).
+    markdown: mode === "selection" ? md : `# ${data.title}\n\n${md}`,
+    selection: mode === "selection",
+    selectionText: mode === "selection" ? (best.text || "") : undefined,
+    page: {
+      url: data.url,
+      pageTitle: data.title || undefined,
+      siteName: data.siteName || undefined,
+      author: data.byline || undefined,
+      description: data.description || undefined,
+      publishedAt: data.published || undefined,
+    },
+  };
 
   previewEl.textContent = doc.length > 4000 ? doc.slice(0, 4000) + "\n… (preview truncated)" : doc;
   previewEl.classList.remove("muted");
@@ -252,6 +269,34 @@ $("copy").addEventListener("click", async () => {
   } catch (e) {
     setStatus("Copy error: " + e.message, true);
   }
+});
+
+// Send to Devdy (POST /v1/web-pages via the background outbox)
+const NEEDS_SETTINGS = ["no_token", "unauthorized", "choose_instance"];
+$("devdy").addEventListener("click", async () => {
+  const btn = $("devdy");
+  const doc = await generate();
+  if (!doc || !lastCapture) return;
+  btn.disabled = true;
+  setStatus("Sending to Devdy…");
+  try {
+    const res = await chrome.runtime.sendMessage({ target: "context-kit-web", type: "send-page", ...lastCapture });
+    if (!res || !res.ok) {
+      setStatus("Could not send: " + ((res && res.error) || "no response"), true);
+      return;
+    }
+    const kind = res.result.delivery.kind;
+    setStatus(res.text, kind === "rejected" || NEEDS_SETTINGS.includes(kind));
+    $("openDevdy").hidden = !NEEDS_SETTINGS.includes(kind);
+  } catch (e) {
+    setStatus("Could not send: " + e.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+});
+// Switch the popup shell to the Devdy tab (token / instance settings).
+$("openDevdy").addEventListener("click", () => {
+  window.parent.postMessage({ type: "context-kit-open-tab", tool: "devdy" }, location.origin);
 });
 
 // Đổi tuỳ chọn -> tạo lại lần bấm sau
