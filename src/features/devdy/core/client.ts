@@ -116,10 +116,26 @@ export async function resolveDevdy(
     const health = await checkHealth(settings.port, fetchFn);
     return health ? { kind: 'ok', instance: { port: settings.port, health } } : { kind: 'none' };
   }
-  const all = await findAllDevdy(fetchFn);
+  return resolveFromInstances(await findAllDevdy(fetchFn), settings);
+}
+
+/** `resolveDevdy` from an already probed `findAllDevdy()` list (no extra requests). */
+export function resolveFromInstances(
+  all: DevdyInstance[],
+  settings: { port?: number; pinned?: boolean },
+): ResolveResult {
+  if (settings.pinned && settings.port) {
+    const pinned = all.find((i) => i.port === settings.port);
+    return pinned ? { kind: 'ok', instance: pinned } : { kind: 'none' };
+  }
   if (all.length === 0) return { kind: 'none' };
   if (all.length === 1) return { kind: 'ok', instance: all[0]! };
   return { kind: 'ambiguous', instances: all };
+}
+
+/** A port Devdy may listen on (47821…47830). */
+export function isDevdyPort(port: unknown): port is number {
+  return Number.isInteger(port) && (port as number) >= DEVDY_PORT_FIRST && (port as number) <= DEVDY_PORT_LAST;
 }
 
 export type ProjectsResult =
@@ -154,6 +170,8 @@ export interface CapturePayload {
   /** "application/zip" or "text/markdown; charset=utf-8". */
   contentType: string;
   projectId?: string;
+  /** Sent as `Idempotency-Key` (the outbox entry id) so a resend after a crash can be deduplicated. */
+  idempotencyKey?: string;
 }
 
 export async function postCapture(
@@ -171,6 +189,7 @@ export async function postCapture(
     'Content-Type': payload.contentType,
   };
   if (payload.projectId) headers['X-Devdy-Project-Id'] = payload.projectId;
+  if (payload.idempotencyKey) headers['Idempotency-Key'] = payload.idempotencyKey;
 
   let res: Response;
   try {
@@ -212,8 +231,10 @@ export function describeOutcome(o: SendOutcome): string {
     case 'server_error':
       return `Devdy could not save it (${o.message}) — queued for retry.`;
     case 'rejected':
+      // status 0: refused locally (queue full, data missing…) — the message says why.
+      if (o.status === 0) return o.message;
       return o.status === 413
-        ? 'The export is too large for Devdy (max 50 MB zipped / 200 MB unzipped).'
-        : `Devdy rejected the export: ${o.message}`;
+        ? 'The export is too large for Devdy (max 50 MB zipped / 200 MB unzipped). It is kept in Context Kit → Devdy, where you can download it.'
+        : `Devdy rejected the export (${o.message}). It is kept in Context Kit → Devdy.`;
   }
 }

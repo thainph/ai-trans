@@ -4,6 +4,7 @@
 
 import { onTargetMessage, type Result } from '../../../shared/messaging';
 import { openSettings } from '../../devdy/background/open-settings';
+import { fromSlackContent } from '../../devdy/background/sender';
 import { toastFor } from '../core/quick-send';
 import {
   QUICK_SEND_OPTIONS,
@@ -49,10 +50,13 @@ export async function quickSend(link: string, tabId: number, frameId?: number): 
 }
 
 onTargetMessage<QuickSendRequest>(QUICK_SEND_TARGET, (msg, sender): Result | undefined => {
+  // Sent by the Slack content script only (app.slack.com).
+  if (!fromSlackContent(sender)) return { ok: false, error: 'Not allowed.' };
   switch (msg.type) {
     case 'devdy-send': {
       const tabId = sender.tab?.id;
       if (tabId === undefined) return;
+      if (typeof msg.link !== 'string') return { ok: false, error: 'Invalid link.' };
       void quickSend(msg.link, tabId, sender.frameId);
       return { ok: true }; // accepted; progress/result arrive as toasts
     }

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   type AttachmentOutcome,
   isAllowedFileUrl,
-  isCompressiblePath,
+  isPrecompressedPath,
   planAttachments,
 } from '../src/features/slack/core/attachments';
 import { buildThreadMarkdown, type ThreadData } from '../src/features/slack/core/md-builder';
@@ -105,12 +105,12 @@ describe('planAttachments', () => {
   });
 });
 
-describe('isCompressiblePath', () => {
-  it('deflates text-like files only', () => {
-    expect(isCompressiblePath('thread.md')).toBe(true);
-    expect(isCompressiblePath('attachments/01-log.TXT')).toBe(true);
-    expect(isCompressiblePath('attachments/02-a.png')).toBe(false);
-    expect(isCompressiblePath('attachments/03-a.zip')).toBe(false);
+describe('isPrecompressedPath', () => {
+  it('stores already-compressed formats, deflates the rest', () => {
+    expect(isPrecompressedPath('thread.md')).toBe(false);
+    expect(isPrecompressedPath('attachments/01-log.TXT')).toBe(false);
+    expect(isPrecompressedPath('attachments/02-a.png')).toBe(true);
+    expect(isPrecompressedPath('attachments/03-a.zip')).toBe(true);
   });
 });
 

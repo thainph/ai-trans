@@ -47,3 +47,9 @@ export async function getBlob(id: string): Promise<Blob | undefined> {
 export async function deleteBlob(id: string): Promise<void> {
   await run('readwrite', (s) => s.delete(id));
 }
+
+/** Every stored blob id (orphan cleanup). */
+export async function listBlobIds(): Promise<string[]> {
+  const keys = await run<IDBValidKey[]>('readonly', (s) => s.getAllKeys());
+  return keys.filter((k): k is string => typeof k === 'string');
+}

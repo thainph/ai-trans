@@ -36,7 +36,14 @@ export type WebRequest =
    * Web → MD "Download": zip `<name>.md` + images/ when the Markdown references
    * downloadable images; `zipped: false` → the popup saves the plain .md itself.
    */
-  | { target: typeof WEB_TARGET; type: 'download-page'; markdown: string; filename: string }
+  | {
+      target: typeof WEB_TARGET;
+      type: 'download-page';
+      markdown: string;
+      filename: string;
+      /** Page URL: images of the same site are fetched with cookies. */
+      pageUrl?: string;
+    }
   /** "Open settings" on a toast → popup on the Devdy tab. */
   | { target: typeof WEB_TARGET; type: 'open-settings' };
 

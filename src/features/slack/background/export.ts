@@ -7,8 +7,9 @@ import { keepAliveSleep } from '../../../background/keepalive';
 import { startZipJob } from '../../../background/zip-export';
 import { errorMessage } from '../../../shared/errors';
 import { outbox } from '../../devdy/background';
+import { fromExtension } from '../../devdy/background/sender';
 import { DEVDY_MAX_ATTACHMENTS } from '../../devdy/core/client';
-import { MAX_FILE_BYTES, planAttachments } from '../core/attachments';
+import { MAX_FILE_BYTES, MAX_TOTAL_BYTES, planAttachments } from '../core/attachments';
 import type { ThreadData } from '../core/md-builder';
 import { buildThreadMarkdown } from '../core/md-builder';
 import { parseThreadLink } from '../core/permalink';
@@ -130,7 +131,10 @@ export async function handleExport(
   if (plan && plan.downloads.length > 0) {
     const job = await startZipJob();
     try {
-      const fetched = await job.fetchFiles(plan, onProgress);
+      const fetched = await job.fetchFiles(plan, onProgress, {
+        maxFileBytes: MAX_FILE_BYTES,
+        maxTotalBytes: MAX_TOTAL_BYTES,
+      });
       attachments = fetched.outcomes;
       if (fetched.failed) {
         fileWarning = `${fetched.failed} file(s) could not be downloaded; their Slack links are kept in the Markdown.`;
@@ -200,34 +204,44 @@ async function handleDevdyExport(
   let blob: Blob | null = null;
   let contentType = 'text/markdown; charset=utf-8';
 
-  if (plan && plan.downloads.length > 0) {
-    const job = await startZipJob();
-    try {
-      const fetched = await job.fetchFiles(plan, onProgress);
-      attachments = fetched.outcomes;
-      if (fetched.failed) {
-        fileWarning = `${fetched.failed} file(s) could not be downloaded; their Slack links are kept in the Markdown.`;
+  // The zip is written to the outbox store before enqueue: keep the orphan cleanup off it.
+  const unhold = outbox.hold(id);
+  let delivery: Awaited<ReturnType<typeof outbox.enqueue>>;
+  try {
+    if (plan && plan.downloads.length > 0) {
+      const job = await startZipJob();
+      try {
+        const fetched = await job.fetchFiles(plan, onProgress, {
+          maxFileBytes: MAX_FILE_BYTES,
+          maxTotalBytes: DEVDY_MAX_TOTAL_FILE_BYTES,
+        });
+        attachments = fetched.outcomes;
+        if (fetched.failed) {
+          fileWarning = `${fetched.failed} file(s) could not be downloaded; their Slack links are kept in the Markdown.`;
+        }
+        if (fetched.saved > 0) {
+          result = buildThreadMarkdown(data, { ...req.options, attachments });
+          post({ type: 'progress', text: 'Building zip…' });
+          await job.storeZip(id, result.filename, result.markdown); // stored straight into the outbox
+          contentType = 'application/zip';
+          files = { saved: fetched.saved, notIncluded: attachments.size - fetched.saved };
+        }
+      } finally {
+        job.dispose();
       }
-      if (fetched.saved > 0) {
-        result = buildThreadMarkdown(data, { ...req.options, attachments });
-        post({ type: 'progress', text: 'Building zip…' });
-        await job.storeZip(id, result.filename, result.markdown); // stored straight into the outbox
-        contentType = 'application/zip';
-        files = { saved: fetched.saved, notIncluded: attachments.size - fetched.saved };
-      }
-    } finally {
-      job.dispose();
     }
-  }
 
-  if (!result) {
-    result = buildThreadMarkdown(data, { ...req.options, attachments });
-    blob = new Blob([result.markdown], { type: 'text/markdown;charset=utf-8' });
-  }
+    if (!result) {
+      result = buildThreadMarkdown(data, { ...req.options, attachments });
+      blob = new Blob([result.markdown], { type: 'text/markdown;charset=utf-8' });
+    }
 
-  post({ type: 'progress', text: 'Sending to Devdy…' });
-  // No project: Devdy assigns it later.
-  const delivery = await outbox.enqueue({ id, kind: 'slack-threads', title: result.filename, contentType }, blob);
+    post({ type: 'progress', text: 'Sending to Devdy…' });
+    // No project: Devdy assigns it later.
+    delivery = await outbox.enqueue({ id, kind: 'slack-threads', title: result.filename, contentType }, blob);
+  } finally {
+    unhold();
+  }
   post(
     makeDoneResponse('devdy', result, [fetchWarning, fileWarning].filter(Boolean).join(' ') || undefined, files, {
       kind: delivery.outcome.kind,
@@ -239,6 +253,11 @@ async function handleDevdyExport(
 
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== EXPORT_PORT_NAME) return;
+  // Only the Slack tab of the popup (an extension page) opens this port.
+  if (!port.sender || !fromExtension(port.sender)) {
+    port.disconnect();
+    return;
+  }
   let connected = true;
   port.onDisconnect.addListener(() => {
     connected = false;

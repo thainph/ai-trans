@@ -2,7 +2,14 @@
 // The heavy lifting (fetching files with cookies, zipping, blob: URL) happens
 // in the offscreen document; this module orchestrates it.
 
-import { type AttachmentOutcome, type AttachmentPlan, MAX_FILE_BYTES } from '../features/slack/core/attachments';
+import {
+  type AttachmentOutcome,
+  type AttachmentPlan,
+  ByteBudget,
+  formatBytes,
+  MAX_FILE_BYTES,
+  MAX_TOTAL_BYTES,
+} from '../features/slack/core/attachments';
 import { mapPool } from '../features/slack/core/slack-client';
 import type { PlannedImage } from '../features/web-to-md/core/web-capture';
 import {
@@ -21,26 +28,66 @@ const OFFSCREEN_URL = 'src/offscreen/offscreen.html';
 const FILE_CONCURRENCY = 3;
 /** Give up waiting for the download to finish before revoking the blob URL. */
 const DOWNLOAD_WAIT_MS = 10 * 60_000;
+/** Close the offscreen document this long after the last job ended (frees its memory). */
+const OFFSCREEN_IDLE_MS = 30_000;
 
 let creating: Promise<void> | null = null;
+let closing: Promise<void> | null = null;
+let closeTimer: ReturnType<typeof setTimeout> | undefined;
+/** Zip jobs started and not disposed yet. */
+let activeJobs = 0;
+
+/** Whether the offscreen document is open; null when Chrome can't tell (< 116). */
+async function hasOffscreen(): Promise<boolean | null> {
+  if (!('getContexts' in chrome.runtime)) return null;
+  const contexts = await chrome.runtime.getContexts({
+    contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT],
+    documentUrls: [chrome.runtime.getURL(OFFSCREEN_URL)],
+  });
+  return contexts.length > 0;
+}
 
 async function ensureOffscreen(): Promise<void> {
+  if (closing) await closing;
   if (creating) return creating;
-  creating = chrome.offscreen
-    .createDocument({
-      url: OFFSCREEN_URL,
-      reasons: [chrome.offscreen.Reason.BLOBS],
-      justification: 'Fetch Slack attachments and build a zip blob for chrome.downloads.',
-    })
-    .catch((e: unknown) => {
-      // Already open (e.g. a previous export) is fine.
-      if (!errorMessage(e).includes('single offscreen')) throw e;
-    })
-    .finally(() => {
-      creating = null;
-    });
+  creating = (async () => {
+    if (await hasOffscreen()) return;
+    await chrome.offscreen
+      .createDocument({
+        url: OFFSCREEN_URL,
+        reasons: [chrome.offscreen.Reason.BLOBS],
+        justification: 'Fetch Slack attachments and build a zip blob for chrome.downloads.',
+      })
+      .catch((e: unknown) => {
+        // Already open (e.g. a previous export) is fine.
+        if (!errorMessage(e).includes('single offscreen')) throw e;
+      });
+  })().finally(() => {
+    creating = null;
+  });
   return creating;
 }
+
+/** Close the offscreen document after OFFSCREEN_IDLE_MS without jobs (debounced). */
+function scheduleClose(): void {
+  clearTimeout(closeTimer);
+  closeTimer = setTimeout(() => {
+    if (activeJobs > 0 || creating || closing) return;
+    closing = (async () => {
+      if ((await hasOffscreen()) === false) return;
+      await chrome.offscreen.closeDocument();
+    })()
+      .catch(() => {
+        // Not open: nothing to close.
+      })
+      .finally(() => {
+        closing = null;
+      });
+  }, OFFSCREEN_IDLE_MS);
+}
+
+// A document left open by a previous service worker instance has no live jobs.
+scheduleClose();
 
 function send<T>(msg: OffscreenRequest): Promise<T> {
   return chrome.runtime.sendMessage(msg) as Promise<T>;
@@ -70,15 +117,24 @@ export interface ZipFetchResult {
 }
 
 export interface ZipJob {
-  /** Download all planned files into the job (offscreen memory). */
-  fetchFiles(plan: AttachmentPlan, onProgress: (text: string) => void): Promise<ZipFetchResult>;
+  /**
+   * Download all planned files into the job (offscreen memory). The total is
+   * enforced on the real downloaded sizes (files without a size from Slack
+   * included); files that don't fit are skipped with a reason.
+   */
+  fetchFiles(
+    plan: AttachmentPlan,
+    onProgress: (text: string) => void,
+    opts?: { maxFileBytes?: number; maxTotalBytes?: number },
+  ): Promise<ZipFetchResult>;
   /**
    * Download web images into the job. Returns url → zip path for the saved ones;
-   * stops adding once `maxTotalBytes` is reached.
+   * stops adding once `maxTotalBytes` is reached. Cookies are sent only to
+   * images of the same site as `pageUrl`.
    */
   fetchImages(
     images: PlannedImage[],
-    opts: { maxBytes: number; maxTotalBytes: number },
+    opts: { maxBytes: number; maxTotalBytes: number; pageUrl?: string },
     onProgress: (text: string) => void,
   ): Promise<{ saved: Map<string, string>; failed: number }>;
   /** Zip fetched files + markdown and save it via chrome.downloads. */
@@ -90,7 +146,15 @@ export interface ZipJob {
 }
 
 export async function startZipJob(): Promise<ZipJob> {
-  await ensureOffscreen();
+  activeJobs++;
+  clearTimeout(closeTimer);
+  try {
+    await ensureOffscreen();
+  } catch (e) {
+    activeJobs--;
+    scheduleClose();
+    throw e;
+  }
   const jobId = crypto.randomUUID();
   // Fetching big files can take longer than the 30 s MV3 idle timeout.
   const keepalive = setInterval(() => void chromePing(), KEEPALIVE_CHUNK_MS);
@@ -100,10 +164,15 @@ export async function startZipJob(): Promise<ZipJob> {
     if (released) return;
     released = true;
     void send({ target: OFFSCREEN_TARGET, type: 'release', jobId }).catch(() => {});
+    activeJobs--;
+    if (activeJobs === 0) scheduleClose();
   };
 
   return {
-    async fetchFiles(plan, onProgress) {
+    async fetchFiles(plan, onProgress, opts = {}) {
+      const maxFile = opts.maxFileBytes ?? MAX_FILE_BYTES;
+      const budget = new ByteBudget(opts.maxTotalBytes ?? MAX_TOTAL_BYTES);
+      const overBudget = `export size limit (${formatBytes(budget.total)}) reached`;
       const outcomes = new Map<string, AttachmentOutcome>(plan.skipped);
       let done = 0;
       let saved = 0;
@@ -111,25 +180,36 @@ export async function startZipJob(): Promise<ZipJob> {
       const total = plan.downloads.length;
       onProgress(`Downloading files… 0/${total}`);
       await mapPool(plan.downloads, FILE_CONCURRENCY, async (d) => {
-        let res: FetchFileResponse;
-        try {
-          res = await send<FetchFileResponse>({
-            target: OFFSCREEN_TARGET,
-            type: 'fetch-file',
-            jobId,
-            url: d.url,
-            path: d.path,
-            maxBytes: MAX_FILE_BYTES,
-          });
-        } catch (e) {
-          res = fail(e);
-        }
-        if (res?.ok) {
-          outcomes.set(d.id, { kind: 'saved', path: d.path, isImage: d.isImage });
-          saved++;
+        // Reserve before fetching: parallel downloads can't overshoot the total.
+        const known = d.size !== undefined;
+        const grant = await budget.reserve(known ? Math.min(d.size!, maxFile) : maxFile, known);
+        if (grant === null) {
+          outcomes.set(d.id, { kind: 'skipped', reason: overBudget });
         } else {
-          outcomes.set(d.id, { kind: 'skipped', reason: `download failed: ${res?.error ?? 'unknown error'}` });
-          failed++;
+          let res: FetchFileResponse;
+          try {
+            res = await send<FetchFileResponse>({
+              target: OFFSCREEN_TARGET,
+              type: 'fetch-file',
+              jobId,
+              url: d.url,
+              path: d.path,
+              maxBytes: grant,
+            });
+          } catch (e) {
+            res = fail(e);
+          }
+          budget.settle(grant, res?.ok ? res.size : 0);
+          if (res?.ok) {
+            outcomes.set(d.id, { kind: 'saved', path: d.path, isImage: d.isImage });
+            saved++;
+          } else if (grant < maxFile && res?.error?.startsWith('too large')) {
+            // Bigger than what was left of the total (size unknown up front).
+            outcomes.set(d.id, { kind: 'skipped', reason: overBudget });
+          } else {
+            outcomes.set(d.id, { kind: 'skipped', reason: `download failed: ${res?.error ?? 'unknown error'}` });
+            failed++;
+          }
         }
         done++;
         onProgress(`Downloading files… ${done}/${total}`);
@@ -139,12 +219,13 @@ export async function startZipJob(): Promise<ZipJob> {
 
     async fetchImages(images, opts, onProgress) {
       const saved = new Map<string, string>();
+      const budget = new ByteBudget(opts.maxTotalBytes);
       let failed = 0;
-      let total = 0;
       let done = 0;
       onProgress(`Downloading images… 0/${images.length}`);
       await mapPool(images, FILE_CONCURRENCY, async (img) => {
-        if (total >= opts.maxTotalBytes) {
+        const grant = await budget.reserve(opts.maxBytes, false);
+        if (grant === null) {
           failed++;
         } else {
           let res: FetchImageResponse;
@@ -155,17 +236,15 @@ export async function startZipJob(): Promise<ZipJob> {
               jobId,
               url: img.url,
               pathBase: img.pathBase,
-              maxBytes: Math.min(opts.maxBytes, opts.maxTotalBytes - total),
+              maxBytes: grant,
+              pageUrl: opts.pageUrl,
             });
           } catch (e) {
             res = fail(e);
           }
-          if (res?.ok) {
-            total += res.size;
-            saved.set(img.url, res.path);
-          } else {
-            failed++;
-          }
+          budget.settle(grant, res?.ok ? res.size : 0);
+          if (res?.ok) saved.set(img.url, res.path);
+          else failed++;
         }
         done++;
         onProgress(`Downloading images… ${done}/${images.length}`);

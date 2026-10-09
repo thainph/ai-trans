@@ -2,9 +2,9 @@
 // zip. Runs as an extension page, so cross-origin fetches to files.slack.com
 // are allowed by host permissions and carry the user's Slack cookies.
 
-import { type Zippable, zipSync } from 'fflate';
+import { fromExtension } from '../features/devdy/background/sender';
 import { putBlob } from '../features/devdy/core/blob-store';
-import { isAllowedFileUrl, isCompressiblePath } from '../features/slack/core/attachments';
+import { isAllowedFileUrl } from '../features/slack/core/attachments';
 import { imageExtension, isFetchableImageUrl } from '../features/web-to-md/core/web-capture';
 import { errorMessage } from '../shared/errors';
 import { onTargetMessage, type Result } from '../shared/messaging';
@@ -16,12 +16,20 @@ import {
   type OffscreenRequest,
   type StoreZipResponse,
 } from './messages';
+import { isPublicHttpUrl, isSameSite } from './url-safety';
+import { buildZipBlob } from './zip-stream';
 
 const FETCH_TIMEOUT_MS = 120_000;
+/**
+ * Jobs untouched this long are freed (service worker died before `release`).
+ * Longer than the background's 10 min wait for a zip download to finish.
+ */
+const JOB_TTL_MS = 15 * 60_000;
 
 interface Job {
   files: Map<string, Uint8Array>;
   blobUrl?: string;
+  touched: number;
 }
 
 const jobs = new Map<string, Job>();
@@ -29,11 +37,17 @@ const jobs = new Map<string, Job>();
 function job(id: string): Job {
   let j = jobs.get(id);
   if (!j) {
-    j = { files: new Map() };
+    j = { files: new Map(), touched: Date.now() };
     jobs.set(id, j);
   }
+  j.touched = Date.now();
   return j;
 }
+
+setInterval(() => {
+  const cutoff = Date.now() - JOB_TTL_MS;
+  for (const [id, j] of jobs) if (j.touched < cutoff) release(id);
+}, 60_000);
 
 async function readCapped(res: Response, maxBytes: number): Promise<Uint8Array> {
   const declared = Number(res.headers.get('Content-Length'));
@@ -92,12 +106,16 @@ async function fetchFile(req: Extract<OffscreenRequest, { type: 'fetch-file' }>)
 }
 
 async function fetchImage(req: Extract<OffscreenRequest, { type: 'fetch-image' }>): Promise<FetchImageResponse> {
-  if (!isFetchableImageUrl(req.url)) return { ok: false, error: 'URL not allowed' };
+  const isData = req.url.startsWith('data:');
+  if (!isFetchableImageUrl(req.url) || (!isData && !isPublicHttpUrl(req.url))) {
+    return { ok: false, error: 'URL not allowed' };
+  }
   let res: Response;
   try {
-    // Same request the page made to render it (cookies included for login-only images).
+    // Cookies only for images of the page's own site (login-only images);
+    // never send the user's cookies to third parties.
     res = await fetch(req.url, {
-      credentials: 'include',
+      credentials: !isData && isSameSite(req.url, req.pageUrl) ? 'include' : 'omit',
       redirect: 'follow',
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
@@ -106,6 +124,8 @@ async function fetchImage(req: Extract<OffscreenRequest, { type: 'fetch-image' }
     return { ok: false, error: timedOut ? 'download timed out' : 'network error' };
   }
   if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+  // A redirect may have led to a private address: don't keep what it returned.
+  if (!isData && !isPublicHttpUrl(res.url || req.url)) return { ok: false, error: 'URL not allowed' };
   const type = res.headers.get('Content-Type') ?? '';
   const ext = imageExtension(type, req.url);
   if (!type.toLowerCase().startsWith('image/') && ext === 'img')
@@ -120,26 +140,12 @@ async function fetchImage(req: Extract<OffscreenRequest, { type: 'fetch-image' }
   }
 }
 
-/** Zip every fetched file of the job plus the given text entries. */
-function makeZip(jobId: string, texts: { path: string; text: string }[]): Uint8Array {
-  const j = job(jobId);
-  const enc = new TextEncoder();
-  const entries: Zippable = {};
-  for (const t of texts) entries[t.path] = [enc.encode(t.text), { level: 6 }];
-  for (const [path, bytes] of j.files) entries[path] = [bytes, { level: isCompressiblePath(path) ? 6 : 0 }];
-  const zipped = zipSync(entries);
-  j.files.clear(); // the zip now owns the data
-  return zipped;
-}
-
-const zipBlob = (bytes: Uint8Array) => new Blob([bytes as Uint8Array<ArrayBuffer>], { type: 'application/zip' });
-
 function buildZip(req: Extract<OffscreenRequest, { type: 'build-zip' }>): BuildZipResponse {
   try {
-    const zipped = makeZip(req.jobId, req.texts);
     const j = job(req.jobId);
-    j.blobUrl = URL.createObjectURL(zipBlob(zipped));
-    return { ok: true, url: j.blobUrl, size: zipped.byteLength };
+    const blob = buildZipBlob(j.files, req.texts);
+    j.blobUrl = URL.createObjectURL(blob);
+    return { ok: true, url: j.blobUrl, size: blob.size };
   } catch (e) {
     return { ok: false, error: errorMessage(e) };
   }
@@ -147,9 +153,9 @@ function buildZip(req: Extract<OffscreenRequest, { type: 'build-zip' }>): BuildZ
 
 async function storeZip(req: Extract<OffscreenRequest, { type: 'store-zip' }>): Promise<StoreZipResponse> {
   try {
-    const zipped = makeZip(req.jobId, req.texts);
-    await putBlob(req.blobId, zipBlob(zipped));
-    return { ok: true, size: zipped.byteLength };
+    const blob = buildZipBlob(job(req.jobId).files, req.texts);
+    await putBlob(req.blobId, blob);
+    return { ok: true, size: blob.size };
   } catch (e) {
     return { ok: false, error: errorMessage(e) };
   }
@@ -161,7 +167,9 @@ function release(jobId: string): void {
   jobs.delete(jobId);
 }
 
-onTargetMessage<OffscreenRequest>(OFFSCREEN_TARGET, (msg) => {
+onTargetMessage<OffscreenRequest>(OFFSCREEN_TARGET, (msg, sender) => {
+  // Fetches with the user's cookies and IndexedDB writes: only for the service worker.
+  if (!fromExtension(sender)) return { ok: false, error: 'Not allowed.' } satisfies Result;
   switch (msg.type) {
     case 'fetch-file':
       return fetchFile(msg);

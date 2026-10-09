@@ -141,7 +141,54 @@ export function planAttachments(messages: SlackMessage[], options: PlanOptions =
   return { downloads, skipped };
 }
 
-/** File extensions worth deflating in the zip (others are stored as-is). */
-export function isCompressiblePath(path: string): boolean {
-  return /\.(md|txt|log|csv|tsv|json|xml|html?|css|js|ts|py|rb|go|java|sql|ya?ml|svg|diff|patch)$/i.test(path);
+/** Already-compressed formats: stored as-is in the zip (deflating them only costs CPU). */
+export function isPrecompressedPath(path: string): boolean {
+  return /\.(png|jpe?g|gif|webp|avif|heic|heif|zip|gz|tgz|bz2|xz|7z|rar|pdf|mp4|m4v|mov|webm|mkv|avi|mp3|m4a|aac|ogg|opus|flac|docx|xlsx|pptx|odt|ods|odp|key|pages|numbers|jar|apk|ipa|dmg|woff2?)$/i.test(
+    path,
+  );
+}
+
+/**
+ * Shared byte budget for parallel downloads. Each download reserves its
+ * maximum size *before* fetching, so concurrent fetches can never overshoot
+ * the total; `settle()` returns the unused part once the real size is known.
+ * When the budget is short, `reserve()` waits for in-flight downloads to
+ * settle before giving up or granting a smaller amount.
+ */
+export class ByteBudget {
+  private used = 0;
+  private reserved = 0;
+  private inFlight = 0;
+  private waiters: (() => void)[] = [];
+
+  constructor(readonly total: number) {}
+
+  get remaining(): number {
+    return Math.max(0, this.total - this.used - this.reserved);
+  }
+
+  /**
+   * Reserve up to `want` bytes. `exact`: the file needs all of it (known size)
+   * → null when it can't fit; otherwise grant what is left (> 0) or null.
+   */
+  async reserve(want: number, exact: boolean): Promise<number | null> {
+    while (this.remaining < want && this.inFlight > 0) {
+      await new Promise<void>((r) => this.waiters.push(r));
+    }
+    const grant = Math.min(want, this.remaining);
+    if (grant <= 0 || (exact && grant < want)) return null;
+    this.reserved += grant;
+    this.inFlight++;
+    return grant;
+  }
+
+  /** Release a reservation, keeping `actual` bytes (0 when the download failed). */
+  settle(reserved: number, actual: number): void {
+    this.reserved -= reserved;
+    this.used += Math.min(actual, reserved);
+    this.inFlight--;
+    const waiters = this.waiters;
+    this.waiters = [];
+    for (const w of waiters) w();
+  }
 }

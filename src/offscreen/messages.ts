@@ -20,6 +20,8 @@ export type OffscreenRequest =
       url: string;
       pathBase: string;
       maxBytes: number;
+      /** URL of the page the image comes from: cookies are sent only to the same site. */
+      pageUrl?: string;
     }
   /** Zip every fetched file of the job plus the given text entries; returns a blob: URL. */
   | { target: typeof OFFSCREEN_TARGET; type: 'build-zip'; jobId: string; texts: { path: string; text: string }[] }
@@ -31,7 +33,7 @@ export type OffscreenRequest =
       blobId: string;
       texts: { path: string; text: string }[];
     }
-  /** Free the job's memory and revoke its blob: URL. */
+  /** Free the job's memory and revoke its blob: URL. Jobs idle for 15 min are freed anyway. */
   | { target: typeof OFFSCREEN_TARGET; type: 'release'; jobId: string };
 
 export type FetchFileResponse = Result<{ size: number }>;
