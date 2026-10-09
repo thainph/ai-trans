@@ -23,102 +23,7 @@ function hideOpenContent() {
   $("openContent").hidden = true;
 }
 
-/* =========================================================================
- * Hàm CHẠY TRONG TRANG (injected). Không dùng biến ngoài, chỉ trả về data.
- * mode: "article" | "full" | "selection"
- * ========================================================================= */
-function extractInPage(mode) {
-  const meta = (name) => {
-    const el =
-      document.querySelector(`meta[property="${name}"]`) ||
-      document.querySelector(`meta[name="${name}"]`);
-    return el ? (el.getAttribute("content") || "").trim() : "";
-  };
-
-  const result = {
-    title: (meta("og:title") || document.title || "").trim(),
-    url: location.href,
-    description: meta("description") || meta("og:description") || "",
-    byline: meta("author") || meta("article:author") || "",
-    siteName: meta("og:site_name") || location.hostname,
-    published: meta("article:published_time") || "",
-    html: "",
-    textLen: 0,
-    isTop: window.top === window.self,
-    host: location.hostname,
-    mode: mode,
-  };
-
-  // Phát hiện host chứa nội dung thật của Claude artifact (iframe claudeusercontent.com)
-  const slot = document.querySelector("[data-frame-uchost]");
-  result.uchost = slot ? slot.getAttribute("data-frame-uchost") : "";
-
-  const finalize = () => {
-    const tmp = document.createElement("div");
-    tmp.innerHTML = result.html || "";
-    result.textLen = (tmp.textContent || "").replace(/\s+/g, " ").trim().length;
-    return result;
-  };
-
-  // Chế độ selection
-  if (mode === "selection") {
-    const sel = window.getSelection();
-    if (sel && sel.rangeCount && !sel.isCollapsed) {
-      const div = document.createElement("div");
-      for (let i = 0; i < sel.rangeCount; i++) {
-        div.appendChild(sel.getRangeAt(i).cloneContents());
-      }
-      result.html = div.innerHTML;
-      result.text = sel.toString();
-    }
-    return finalize();
-  }
-
-  // Chế độ full
-  if (mode === "full") {
-    result.html = document.body ? document.body.innerHTML : "";
-    return finalize();
-  }
-
-  // Chế độ article: heuristic kiểu Readability
-  const NOISE = "nav,header,footer,aside,form,button,.nav,.menu,.sidebar,.advert,.ads,.ad,.social,.share,.comment,.comments,.related,.newsletter,.subscribe,.cookie,.popup,.modal,[role=navigation],[role=banner],[role=complementary],[aria-hidden=true]";
-
-  // 1) Ưu tiên các thẻ ngữ nghĩa
-  let candidate =
-    document.querySelector("article") ||
-    document.querySelector("main") ||
-    document.querySelector("[role=main]");
-
-  // 2) Nếu không có, chọn container có nhiều text nhất
-  if (!candidate) {
-    let best = null, bestScore = 0;
-    const nodes = document.querySelectorAll("div,section,article,main");
-    for (const n of nodes) {
-      // bỏ qua node quá nhỏ hoặc là noise
-      if (n.closest(NOISE)) continue;
-      const text = n.innerText || "";
-      const len = text.replace(/\s+/g, " ").trim().length;
-      const pCount = n.querySelectorAll("p").length;
-      const linkLen = Array.from(n.querySelectorAll("a"))
-        .reduce((a, el) => a + (el.innerText || "").length, 0);
-      const linkDensity = len ? linkLen / len : 1;
-      // điểm: ưu tiên nhiều chữ, nhiều <p>, ít mật độ link
-      const score = len * (1 - linkDensity) + pCount * 50;
-      if (score > bestScore) { bestScore = score; best = n; }
-    }
-    candidate = best || document.body;
-  }
-
-  // Clone rồi dọn noise để không phá trang thật
-  const clone = candidate.cloneNode(true);
-  clone.querySelectorAll(NOISE).forEach((el) => el.remove());
-  clone.querySelectorAll("script,style,noscript,template,svg,iframe").forEach((el) => el.remove());
-
-  result.html = clone.innerHTML;
-  return finalize();
-}
-
-/* ========================================================================= */
+// extractInPage() lives in extract.js (loaded before this file; testable on its own).
 
 function slugify(s) {
   return (s || "page")
@@ -248,11 +153,36 @@ async function generate() {
 $("download").addEventListener("click", async () => {
   const doc = await generate();
   if (!doc) return;
+  const btn = $("download");
+
+  // Images in the Markdown → a .zip (<name>.md + images/) like the Slack export.
+  let note = "";
+  if ($("keepImages").checked) {
+    btn.disabled = true;
+    setStatus("Downloading images…");
+    try {
+      const res = await chrome.runtime.sendMessage({
+        target: "context-kit-web", type: "download-page", markdown: doc, filename: lastFilename,
+      });
+      if (res && res.ok && res.zipped) {
+        const kept = res.images.failed ? `, ${res.images.failed} kept as links` : "";
+        setStatus(`Saved ${res.filename} (${res.images.saved} image${res.images.saved === 1 ? "" : "s"}${kept})`);
+        return;
+      }
+      if (res && res.ok && res.images.failed) note = ` (${res.images.failed} image(s) could not be downloaded; links kept)`;
+      if (res && !res.ok) note = ` (zip failed: ${res.error})`;
+    } catch (e) {
+      note = ` (zip failed: ${e.message})`;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
   const blob = new Blob([doc], { type: "text/markdown;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   try {
     await chrome.downloads.download({ url, filename: lastFilename, saveAs: true });
-    setStatus("Downloaded: " + lastFilename);
+    setStatus("Saved " + lastFilename + note);
   } catch (e) {
     setStatus("Download error: " + e.message, true);
   } finally {

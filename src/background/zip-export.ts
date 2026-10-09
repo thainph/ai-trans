@@ -80,7 +80,7 @@ export interface ZipJob {
     onProgress: (text: string) => void,
   ): Promise<{ saved: Map<string, string>; failed: number }>;
   /** Zip fetched files + markdown and save it via chrome.downloads. */
-  saveZip(markdownPath: string, markdown: string, zipFilename: string): Promise<void>;
+  saveZip(markdownPath: string, markdown: string, zipFilename: string, opts?: { saveAs?: boolean }): Promise<void>;
   /** Zip fetched files + markdown into the IndexedDB outbox (Devdy export). Returns the zip size. */
   storeZip(blobId: string, markdownPath: string, markdown: string): Promise<number>;
   /** Always call (finally): frees offscreen memory. */
@@ -171,7 +171,7 @@ export async function startZipJob(): Promise<ZipJob> {
       return { saved, failed };
     },
 
-    async saveZip(markdownPath, markdown, zipFilename) {
+    async saveZip(markdownPath, markdown, zipFilename, opts = {}) {
       const res = await send<BuildZipResponse>({
         target: OFFSCREEN_TARGET,
         type: 'build-zip',
@@ -182,7 +182,7 @@ export async function startZipJob(): Promise<ZipJob> {
       const downloadId = await chrome.downloads.download({
         url: res.url,
         filename: zipFilename,
-        saveAs: false,
+        saveAs: opts.saveAs ?? false,
         conflictAction: 'uniquify',
       });
       // The blob URL must stay alive until Chrome has finished writing the file.

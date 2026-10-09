@@ -31,6 +31,11 @@ export type WebRequest =
       selection: boolean;
       selectionText?: string;
     }
+  /**
+   * Web → MD "Download": zip `<name>.md` + images/ when the Markdown references
+   * downloadable images; `zipped: false` → the popup saves the plain .md itself.
+   */
+  | { target: typeof WEB_TARGET; type: 'download-page'; markdown: string; filename: string }
   /** "Open settings" on a toast → popup on the Devdy tab. */
   | { target: typeof WEB_TARGET; type: 'open-settings' };
 
@@ -38,6 +43,11 @@ export interface WebSendResult {
   delivery: DevdyDelivery;
   images: { saved: number; failed: number };
 }
+
+export type DownloadPageResponse =
+  | { ok: true; zipped: true; filename: string; images: { saved: number; failed: number } }
+  | { ok: true; zipped: false; images: { saved: number; failed: number } }
+  | { ok: false; error: string };
 
 export interface WebToastMessage {
   target: typeof WEB_TOAST_TARGET;

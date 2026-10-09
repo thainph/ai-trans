@@ -7,7 +7,7 @@ Chrome extension (MV3) gộp 3 extension cũ:
 | Tab | Nguồn gốc | Chức năng |
 |---|---|---|
 | 🌐 Translate | `ai-translator` | Dịch đoạn bôi đen / cả trang bằng OpenAI, Gemini, Ollama |
-| 📄 Web → MD | `artifact-exporter` | Chuyển trang hiện tại thành Markdown (tải về / copy) |
+| 📄 Web → MD | `artifact-exporter` | Chuyển trang hiện tại (mặc định cả trang) thành Markdown: copy / tải về (có ảnh → `.zip` gồm `.md` + `images/`) |
 | 💬 Slack | `slack-summarier` | Export một Slack thread ra Markdown |
 | ➤ Devdy | mới | Kết nối app Devdy: token, chọn app, hàng đợi gửi |
 
@@ -52,6 +52,12 @@ extension nên `chrome.*` vẫn hoạt động). Nhờ vậy CSS/ID của 3 popu
 
 - Tab mặc định: **Slack** nếu tab đang mở là `app.slack.com`, ngược lại là tab dùng lần trước (`chrome.storage.local.contextKitLastTab`).
 - Code chạy trong iframe muốn đóng popup phải gọi `window.top.close()`.
+
+### Web → MD: Export kèm ảnh (.zip)
+
+**Export** (trước đây "Download .md") khi chip **Images** bật và nội dung có ảnh → lưu `<tên>.zip` gồm `<tên>.md` + `images/01-…png`
+(link ảnh trong md trỏ sang file trong zip). Ảnh tải lỗi giữ URL gốc; không có ảnh / không tải được ảnh nào →
+lưu `.md` như cũ. Dùng chung đường tải ảnh với Send to Devdy (offscreen `fetch-image`, `background/web-capture.ts`).
 
 ### Slack: export kèm file đính kèm (.zip)
 

@@ -14,7 +14,14 @@ import {
   webFrontMatter,
 } from '../core/web-capture';
 import type { ToastState } from '../types/quick-send';
-import { WEB_TARGET, WEB_TOAST_TARGET, type WebRequest, type WebSendResult, type WebToastMessage } from '../types/web';
+import {
+  type DownloadPageResponse,
+  WEB_TARGET,
+  WEB_TOAST_TARGET,
+  type WebRequest,
+  type WebSendResult,
+  type WebToastMessage,
+} from '../types/web';
 import { outbox } from './devdy';
 import { openSettings } from './settings';
 import { startZipJob } from './zip-export';
@@ -69,6 +76,31 @@ export async function sendWebCapture(
   const title = input.title ?? input.page.pageTitle ?? input.page.url;
   const r = await outbox.enqueue({ id, kind: 'web-pages', title, contentType }, blob);
   return { delivery: { kind: r.outcome.kind, message: r.message, pending: r.pending }, images: stats };
+}
+
+/**
+ * Web → MD "Download": when the Markdown references images, save a zip
+ * (`<name>.md` + images/, links rewritten to them) — like the Slack export.
+ * Without downloadable images the popup saves the plain .md.
+ */
+export async function downloadPageZip(markdown: string, filename: string): Promise<DownloadPageResponse> {
+  const images = planImages(collectImageUrls(markdown));
+  if (images.length === 0) return { ok: true, zipped: false, images: { saved: 0, failed: 0 } };
+  const job = await startZipJob();
+  try {
+    const { saved, failed } = await job.fetchImages(
+      images,
+      { maxBytes: MAX_IMAGE_BYTES, maxTotalBytes: MAX_TOTAL_IMAGE_BYTES },
+      () => {},
+    );
+    if (saved.size === 0) return { ok: true, zipped: false, images: { saved: 0, failed } };
+    const zipName = filename.replace(/\.md$/i, '') + '.zip';
+    // Same "Save as" dialog as the plain .md download.
+    await job.saveZip(filename, rewriteImageLinks(markdown, saved), zipName, { saveAs: true });
+    return { ok: true, zipped: true, filename: zipName, images: { saved: saved.size, failed } };
+  } finally {
+    job.dispose();
+  }
 }
 
 // ---- toasts in the page ------------------------------------------------------
@@ -129,6 +161,13 @@ chrome.runtime.onMessage.addListener((req: WebRequest, sender, sendResponse) => 
     const title = req.selection && req.selectionText ? firstLineTitle(req.selectionText) : undefined;
     sendWebCapture({ markdown: req.markdown, page: req.page, selection: req.selection, title })
       .then((r) => sendResponse({ ok: true, result: r, text: resultText(r, req.selection ? 'Selection' : 'Page') }))
+      .catch((e: unknown) => sendResponse({ ok: false, error: e instanceof Error ? e.message : String(e) }));
+    return true; // async response
+  }
+
+  if (req.type === 'download-page') {
+    downloadPageZip(req.markdown, req.filename)
+      .then(sendResponse)
       .catch((e: unknown) => sendResponse({ ok: false, error: e instanceof Error ? e.message : String(e) }));
     return true; // async response
   }

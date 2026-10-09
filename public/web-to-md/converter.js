@@ -173,6 +173,21 @@
     }
   }
 
+  // A list item's content may be several blocks (a card: heading, date line,
+  // image…). The first block goes on the marker line, later lines are indented
+  // under it; a plain one-liner stays on one line. Code fences keep their lines.
+  function formatListItem(text, indent, marker) {
+    const pad = indent + repeat(" ", marker.length);
+    const blocks = text.trim().split(/\n[ \t]*\n+/).map((b) => b.trim()).filter(Boolean);
+    const lines = [];
+    for (const b of blocks) {
+      if (/^```/.test(b)) lines.push(...b.split("\n"));
+      else lines.push(...b.split("\n").map((l) => l.replace(/\s+/g, " ").trim()).filter(Boolean));
+    }
+    if (!lines.length) return indent + marker.trimEnd();
+    return indent + marker + lines[0] + lines.slice(1).map((l) => "\n" + pad + l).join("");
+  }
+
   function renderList(listNode, opts, listCtx) {
     const ordered = listNode.tagName === "OL";
     const depth = (listCtx && listCtx.depth) || 0;
@@ -192,8 +207,7 @@
         if (c.nodeType === 1 && (c.tagName === "UL" || c.tagName === "OL")) continue;
         text += render(c, opts, listCtx);
       }
-      text = text.replace(/\s+/g, " ").trim();
-      lines.push(indent + marker + text);
+      lines.push(formatListItem(text, indent, marker));
       for (const nl of nested) {
         lines.push(renderList(nl, opts, { depth: depth + 1 }));
       }
