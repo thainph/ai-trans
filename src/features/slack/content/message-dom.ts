@@ -172,7 +172,9 @@ export function injectMenuItem(menu: Element, label: string, onSelect: () => voi
     if (hadQa) el.setAttribute('data-qa', 'context-kit-send-to-devdy');
   }
   setLabel(row, label);
-  row.querySelectorAll('.c-menu_item__shortcut, [data-qa="menu_item_shortcut"], kbd').forEach((k) => k.remove());
+  row.querySelectorAll('.c-menu_item__shortcut, [data-qa="menu_item_shortcut"], kbd').forEach((k) => {
+    k.remove();
+  });
 
   const clickable = row.matches('[role="menuitem"], button') ? row : row.querySelector('[role="menuitem"], button') ?? row;
   clickable.setAttribute('role', 'menuitem');

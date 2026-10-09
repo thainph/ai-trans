@@ -126,8 +126,7 @@ export function mrkdwnToMd(text: string | undefined, ctx: RenderContext): string
   const codeRe = /```([\s\S]*?)```|`[^`\n]+`/g;
   let out = '';
   let last = 0;
-  let m: RegExpExecArray | null;
-  while ((m = codeRe.exec(text)) !== null) {
+  for (let m = codeRe.exec(text); m !== null; m = codeRe.exec(text)) {
     out += convertInlineSegment(text.slice(last, m.index), ctx);
     const whole = m[0];
     if (m[1] !== undefined && m[1].includes('\n')) {

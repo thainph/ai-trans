@@ -32,6 +32,9 @@
       },
       "complexity": {
         "noImportantStyles": "off"
+      },
+      "suspicious": {
+        "noFocusedTests": "off"
       }
     }
   },
@@ -49,5 +52,19 @@
         "organizeImports": "on"
       }
     }
-  }
+  },
+  "overrides": [
+    {
+      "includes": [
+        "tests/**"
+      ],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noFocusedTests": "error"
+          }
+        }
+      }
+    }
+  ]
 }
