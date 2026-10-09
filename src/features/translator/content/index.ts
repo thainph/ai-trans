@@ -26,6 +26,8 @@ let triggerBtn: HTMLDivElement | null = null;
 let popupHost: HTMLDivElement | null = null;
 let shadowRoot: ShadowRoot | null = null;
 let currentSelection = '';
+/** requestId of the selection translation / grammar check in flight (cancelled on close / new request). */
+let activeRequestId: string | null = null;
 let lastDetectedSourceLang: string | null = null;
 
 // --- Selection context ---
@@ -46,6 +48,13 @@ let grammarEditable: Element | null = null; // contenteditable node to write bac
 let grammarRange: Range | null = null; // cloned Range (contenteditable)
 let grammarStart = 0;
 let grammarEnd = 0;
+
+/** Page scripts can dispatch synthetic events: our widgets only react to real user input. */
+function trusted<E extends Event>(handler: (e: E) => void): (e: E) => void {
+  return (e) => {
+    if (e.isTrusted) handler(e);
+  };
+}
 
 function cleanup(): void {
   removeTrigger();
@@ -77,15 +86,21 @@ function triggerButton(className: string, title: string, onClick: () => void): H
   const btn = document.createElement('button');
   btn.className = `ai-translator-trigger ${className}`;
   btn.title = title;
-  btn.addEventListener('mousedown', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-  });
-  btn.addEventListener('click', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    onClick();
-  });
+  btn.addEventListener(
+    'mousedown',
+    trusted((e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    }),
+  );
+  btn.addEventListener(
+    'click',
+    trusted((e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      onClick();
+    }),
+  );
   return btn;
 }
 
@@ -148,7 +163,7 @@ function showTrigger(rect: DOMRect, anchorEl: Element | null): void {
   } else {
     host.style.top = `${rect.bottom + scrollY + gap}px`;
   }
-  const root = host.attachShadow({ mode: 'open' });
+  const root = host.attachShadow({ mode: 'closed' });
   const style = document.createElement('style');
   style.textContent = TRIGGER_CSS;
   root.append(style, container);
@@ -217,7 +232,8 @@ async function createPopup(
         </select>`;
   const loadingLabel = isGrammar ? 'Checking...' : 'Translating...';
 
-  const root = host.attachShadow({ mode: 'open' });
+  // Closed: page scripts can't reach into the popup (we keep the root in `shadowRoot`).
+  const root = host.attachShadow({ mode: 'closed' });
   shadowRoot = root;
   root.innerHTML = `
     <style>${POPUP_CSS}</style>
@@ -298,42 +314,54 @@ async function createPopup(
   });
 
   // Event listeners
-  root.getElementById('closeBtn')!.addEventListener('click', removePopup);
+  root.getElementById('closeBtn')!.addEventListener('click', trusted(removePopup));
 
-  root.getElementById('copyBtn')!.addEventListener('click', () => {
-    const resultEl = root.getElementById('result')!;
-    const text = resultEl.textContent ?? '';
-    void navigator.clipboard.writeText(text).then(() => {
-      const btn = root.getElementById('copyBtn')!;
-      btn.textContent = 'Copied!';
-      setTimeout(() => {
-        btn.textContent = 'Copy';
-      }, 1500);
-    });
-  });
+  root.getElementById('copyBtn')!.addEventListener(
+    'click',
+    trusted(() => {
+      const resultEl = root.getElementById('result')!;
+      const text = resultEl.textContent ?? '';
+      void navigator.clipboard.writeText(text).then(() => {
+        const btn = root.getElementById('copyBtn')!;
+        btn.textContent = 'Copied!';
+        setTimeout(() => {
+          btn.textContent = 'Copy';
+        }, 1500);
+      });
+    }),
+  );
 
   if (isGrammar) {
     // Replace → write the corrected text back into the editable field
-    root.getElementById('replaceBtn')!.addEventListener('click', () => {
-      const resultEl = root.getElementById('result')!;
-      applyGrammarReplace(resultEl.textContent ?? '');
-    });
+    root.getElementById('replaceBtn')!.addEventListener(
+      'click',
+      trusted(() => {
+        const resultEl = root.getElementById('result')!;
+        applyGrammarReplace(resultEl.textContent ?? '');
+      }),
+    );
   } else {
     (root.getElementById('styleSelect') as HTMLSelectElement).value = saved.style;
 
     // Target language change → re-translate
-    root.getElementById('targetSelect')!.addEventListener('change', (e) => {
-      const value = (e.target as HTMLSelectElement).value;
-      void saveSettings({ targetLang: value });
-      translate(currentSelection, sourceLang, value);
-    });
+    root.getElementById('targetSelect')!.addEventListener(
+      'change',
+      trusted((e) => {
+        const value = (e.target as HTMLSelectElement).value;
+        void saveSettings({ targetLang: value });
+        translate(currentSelection, sourceLang, value);
+      }),
+    );
 
     // Style change → re-translate
-    root.getElementById('styleSelect')!.addEventListener('change', (e) => {
-      void saveSettings({ style: (e.target as HTMLSelectElement).value as TranslationStyle });
-      const targetSel = root.getElementById('targetSelect') as HTMLSelectElement;
-      translate(currentSelection, sourceLang, targetSel.value);
-    });
+    root.getElementById('styleSelect')!.addEventListener(
+      'change',
+      trusted((e) => {
+        void saveSettings({ style: (e.target as HTMLSelectElement).value as TranslationStyle });
+        const targetSel = root.getElementById('targetSelect') as HTMLSelectElement;
+        translate(currentSelection, sourceLang, targetSel.value);
+      }),
+    );
   }
 
   // Resize handles
@@ -355,6 +383,7 @@ function setupResizeHandle(handle: Element, side: 'left' | 'right' | 'top' | 'bo
 
   handle.addEventListener('mousedown', (ev) => {
     const e = ev as MouseEvent;
+    if (!e.isTrusted) return;
     e.preventDefault();
     e.stopPropagation();
     const host = popupHost;
@@ -370,7 +399,7 @@ function setupResizeHandle(handle: Element, side: 'left' | 'right' | 'top' | 'bo
     const maxHeight = Math.max(window.innerHeight - 40, minHeight);
 
     function onMouseMove(e: MouseEvent): void {
-      if (!host || !popup) return;
+      if (!e.isTrusted || !host || !popup) return;
       if (isVertical) {
         const delta = e.clientY - startY;
         let newHeight: number;
@@ -395,7 +424,8 @@ function setupResizeHandle(handle: Element, side: 'left' | 'right' | 'top' | 'bo
       }
     }
 
-    function onMouseUp(): void {
+    function onMouseUp(e: MouseEvent): void {
+      if (!e.isTrusted) return;
       document.removeEventListener('mousemove', onMouseMove);
       document.removeEventListener('mouseup', onMouseUp);
       if (!popup) return;
@@ -413,6 +443,7 @@ function setupResizeHandle(handle: Element, side: 'left' | 'right' | 'top' | 'bo
 
 function setupDragHandle(header: HTMLElement): void {
   header.addEventListener('mousedown', (e) => {
+    if (!e.isTrusted) return;
     // Don't drag when clicking on buttons or selects
     if ((e.target as Element).closest('button, select')) return;
     e.preventDefault();
@@ -428,14 +459,15 @@ function setupDragHandle(header: HTMLElement): void {
     header.style.cursor = 'grabbing';
 
     function onMouseMove(e: MouseEvent): void {
-      if (!host) return;
+      if (!e.isTrusted || !host) return;
       const dx = e.clientX - startX;
       const dy = e.clientY - startY;
       host.style.left = `${startLeft + dx}px`;
       host.style.top = `${startTop + dy}px`;
     }
 
-    function onMouseUp(): void {
+    function onMouseUp(e: MouseEvent): void {
+      if (!e.isTrusted) return;
       document.removeEventListener('mousemove', onMouseMove);
       document.removeEventListener('mouseup', onMouseUp);
       header.style.cursor = '';
@@ -446,7 +478,23 @@ function setupDragHandle(header: HTMLElement): void {
   });
 }
 
+/** Abort the selection translation / grammar check in flight, if any. */
+function cancelActiveRequest(): void {
+  const requestId = activeRequestId;
+  activeRequestId = null;
+  if (requestId && isExtensionAlive()) void callTranslator({ type: 'cancel', requestId }).catch(() => undefined);
+}
+
+/** Start a cancellable request (cancelling the previous one); returns its id. */
+function newRequestId(): string {
+  cancelActiveRequest();
+  // crypto.randomUUID() needs a secure context (missing on http:// pages).
+  activeRequestId = Array.from(crypto.getRandomValues(new Uint32Array(3)), (n) => n.toString(36)).join('');
+  return activeRequestId;
+}
+
 function removePopup(): void {
+  cancelActiveRequest();
   if (popupHost) {
     popupHost.remove();
     popupHost = null;
@@ -476,18 +524,26 @@ function escapeHtml(str: string): string {
   return div.innerHTML;
 }
 
-/** Show a background response in the popup: the payload, or its error / a runtime error. */
+/** Show the response of request `requestId` in the popup (unless superseded/cancelled): the payload, or its error. */
 function showResponse<T extends object>(
+  requestId: string,
   request: Promise<Result<T> | undefined>,
   pick: (value: T) => string,
   failure: string,
 ): void {
+  const current = () => activeRequestId === requestId;
   request.then(
     (response) => {
+      if (!current()) return;
+      activeRequestId = null;
       if (response?.ok) showResult(pick(response));
       else showError((response && !response.ok && response.error) || failure);
     },
-    (err: unknown) => showError(errorMessage(err)),
+    (err: unknown) => {
+      if (!current()) return;
+      activeRequestId = null;
+      showError(errorMessage(err));
+    },
   );
 }
 
@@ -503,9 +559,12 @@ function translate(text: string, sourceLang: string, targetLang: string): void {
   const copyBtn = shadowRoot.getElementById('copyBtn') as HTMLButtonElement;
   copyBtn.disabled = true;
 
+  const requestId = newRequestId();
   void loadSettings('style').then(({ style }) => {
+    if (activeRequestId !== requestId) return;
     showResponse(
-      callTranslator({ type: 'translate', text, sourceLang, targetLang, style }),
+      requestId,
+      callTranslator({ type: 'translate', text, sourceLang, targetLang, style, requestId }),
       (r) => r.translation,
       'Translation failed',
     );
@@ -526,7 +585,13 @@ function checkGrammar(text: string): void {
   const replaceBtn = shadowRoot.getElementById('replaceBtn') as HTMLButtonElement | null;
   if (replaceBtn) replaceBtn.disabled = true;
 
-  showResponse(callTranslator({ type: 'grammar-check', text }), (r) => r.corrected, 'Grammar check failed');
+  const requestId = newRequestId();
+  showResponse(
+    requestId,
+    callTranslator({ type: 'grammar-check', text, requestId }),
+    (r) => r.corrected,
+    'Grammar check failed',
+  );
 }
 
 function onGrammarClick(): void {
@@ -672,6 +737,7 @@ function onReverseTriggerClick(): void {
 
 // --- Selection Listener ---
 document.addEventListener('mouseup', (e) => {
+  if (!e.isTrusted) return;
   // Events from inside our Shadow DOM widgets are retargeted to their host.
   const target = e.target as Element;
   if (target === triggerBtn) return;
