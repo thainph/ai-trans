@@ -5,8 +5,8 @@ import { defineConfig } from 'vite';
 //   vite build -c vite.content.config.ts --mode slack   → dist/slack-content.js
 //   vite build -c vite.content.config.ts --mode page    → dist/page-content.js
 const ENTRIES = {
-  slack: { entry: 'src/slack/content/index.ts', file: 'slack-content.js', name: 'ContextKitSlack' },
-  page: { entry: 'src/web/content/index.ts', file: 'page-content.js', name: 'ContextKitPage' },
+  slack: { entry: 'src/features/slack/content/index.ts', file: 'slack-content.js', name: 'ContextKitSlack' },
+  page: { entry: 'src/features/web-to-md/content/send-selection.ts', file: 'page-content.js', name: 'ContextKitPage' },
 } as const;
 
 export default defineConfig(({ mode }) => {

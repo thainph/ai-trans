@@ -9,8 +9,8 @@ import {
   listProjects,
   postCapture,
   resolveDevdy,
-} from '../src/core/devdy-client';
-import { DevdyOutbox, type OutboxDeps, type OutboxEntry } from '../src/core/devdy-outbox';
+} from '../src/features/devdy/core/client';
+import { DevdyOutbox, type OutboxDeps, type OutboxEntry } from '../src/features/devdy/core/outbox';
 
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });

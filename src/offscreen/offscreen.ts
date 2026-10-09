@@ -3,9 +3,9 @@
 // are allowed by host permissions and carry the user's Slack cookies.
 
 import { type Zippable, zipSync } from 'fflate';
-import { isAllowedFileUrl, isCompressiblePath } from '../core/attachments';
-import { putBlob } from '../core/blob-store';
-import { imageExtension, isFetchableImageUrl } from '../core/web-capture';
+import { isAllowedFileUrl, isCompressiblePath } from '../features/slack/core/attachments';
+import { putBlob } from '../features/devdy/core/blob-store';
+import { imageExtension, isFetchableImageUrl } from '../features/web-to-md/core/web-capture';
 import {
   type BuildZipResponse,
   type FetchFileResponse,
@@ -13,7 +13,7 @@ import {
   OFFSCREEN_TARGET,
   type OffscreenRequest,
   type StoreZipResponse,
-} from '../types/offscreen';
+} from './messages';
 
 const FETCH_TIMEOUT_MS = 120_000;
 

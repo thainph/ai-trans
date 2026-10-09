@@ -7,7 +7,7 @@ import {
   planImages,
   rewriteImageLinks,
   webFrontMatter,
-} from '../src/core/web-capture';
+} from '../src/features/web-to-md/core/web-capture';
 
 describe('firstLineTitle', () => {
   it('uses the first non-empty line, collapsed and capped', () => {

@@ -11,8 +11,8 @@ import {
   describeSlackError,
   fetchThread,
   pageSlackApi,
-} from '../src/core/slack-client';
-import type { SlackMessage, SlackRepliesResponse } from '../src/types/slack';
+} from '../src/features/slack/core/slack-client';
+import type { SlackMessage, SlackRepliesResponse } from '../src/features/slack/core/types';
 import fixture from './fixtures/replies.json';
 
 const replies = fixture as unknown as SlackRepliesResponse;

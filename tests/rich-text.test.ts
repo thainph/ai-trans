@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import type { RenderContext } from '../src/core/mrkdwn-to-md';
-import { applyStyle, layoutBlocksToMd, richTextBlocksToMd } from '../src/core/rich-text-to-md';
-import type { SlackBlock } from '../src/types/slack';
+import type { RenderContext } from '../src/features/slack/core/mrkdwn-to-md';
+import { applyStyle, layoutBlocksToMd, richTextBlocksToMd } from '../src/features/slack/core/rich-text-to-md';
+import type { SlackBlock } from '../src/features/slack/core/types';
 
 const ctx: RenderContext = {
   userName: (id) => ({ U1: 'Alice' })[id] ?? id,

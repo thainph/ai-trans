@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { toastFor } from '../src/core/quick-send';
+import { toastFor } from '../src/features/slack/core/quick-send';
 import {
   FALLBACK_HIGHLIGHT_ATTR,
   INJECTED_ATTR,
@@ -10,7 +10,7 @@ import {
   injectMenuItem,
   messageLink,
   messageTs,
-} from '../src/slack/content/message-dom';
+} from '../src/features/slack/content/message-dom';
 
 // Fixtures approximate Slack's web client markup (data-qa hooks + c-* classes).
 const CHANNEL_URL = 'https://app.slack.com/client/T0TEAM/C0DEV1234';

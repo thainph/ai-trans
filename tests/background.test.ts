@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { keepAliveSleep } from '../src/background/keepalive';
-import { makeDoneResponse } from '../src/background/respond';
+import { makeDoneResponse } from '../src/features/slack/background/respond';
 import manifest from '../public/manifest.json';
 
 describe('keepAliveSleep (finding #3)', () => {

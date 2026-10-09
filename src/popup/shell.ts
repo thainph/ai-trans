@@ -7,8 +7,8 @@ type ToolId = 'translator' | 'web-to-md' | 'slack' | 'devdy';
 const TOOL_PAGES: Record<ToolId, string> = {
   translator: '/translator/popup.html',
   'web-to-md': '/web-to-md/popup.html',
-  slack: '/src/slack/popup/popup.html',
-  devdy: '/src/devdy/popup/popup.html',
+  slack: '/src/features/slack/popup/popup.html',
+  devdy: '/src/features/devdy/popup/popup.html',
 };
 
 const LAST_TAB_KEY = 'contextKitLastTab';

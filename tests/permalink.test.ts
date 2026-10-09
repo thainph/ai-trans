@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildPermalink, parseThreadLink, pSegmentToTs, tsToPSegment } from '../src/core/permalink';
+import { buildPermalink, parseThreadLink, pSegmentToTs, tsToPSegment } from '../src/features/slack/core/permalink';
 
 describe('parseThreadLink', () => {
   it('parses a workspace archive permalink', () => {

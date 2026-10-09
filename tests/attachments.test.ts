@@ -5,9 +5,9 @@ import {
   planAttachments,
   safeFileName,
   type AttachmentOutcome,
-} from '../src/core/attachments';
-import { buildThreadMarkdown, type ThreadData } from '../src/core/md-builder';
-import type { SlackFile, SlackMessage } from '../src/types/slack';
+} from '../src/features/slack/core/attachments';
+import { buildThreadMarkdown, type ThreadData } from '../src/features/slack/core/md-builder';
+import type { SlackFile, SlackMessage } from '../src/features/slack/core/types';
 
 const MB = 1024 * 1024;
 

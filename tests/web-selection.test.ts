@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it } from 'vitest';
-import { bestImageSrc, largestFromSrcset, pageMeta, selectionHtml } from '../src/web/content/selection';
+import { bestImageSrc, largestFromSrcset, pageMeta, selectionHtml } from '../src/features/web-to-md/content/selection';
 
 beforeEach(() => {
   document.head.innerHTML = '';

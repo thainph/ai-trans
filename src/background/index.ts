@@ -6,7 +6,7 @@
 // - web capture (selection toolbar / Web → MD): chrome.runtime.onMessage ({ target: 'context-kit-web' })
 // The channels are independent, so importing each module is enough.
 import '../translator/background.js';
-import './devdy';
-import './slack-export';
-import './quick-send';
-import './web-capture';
+import '../features/devdy/background';
+import '../features/slack/background/export';
+import '../features/slack/background/quick-send';
+import '../features/web-to-md/background/web-capture';

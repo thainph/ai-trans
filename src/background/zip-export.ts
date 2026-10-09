@@ -2,9 +2,9 @@
 // The heavy lifting (fetching files with cookies, zipping, blob: URL) happens
 // in the offscreen document; this module orchestrates it.
 
-import { type AttachmentOutcome, type AttachmentPlan, MAX_FILE_BYTES } from '../core/attachments';
-import { mapPool } from '../core/slack-client';
-import type { PlannedImage } from '../core/web-capture';
+import { type AttachmentOutcome, type AttachmentPlan, MAX_FILE_BYTES } from '../features/slack/core/attachments';
+import { mapPool } from '../features/slack/core/slack-client';
+import type { PlannedImage } from '../features/web-to-md/core/web-capture';
 import {
   type BuildZipResponse,
   type FetchFileResponse,
@@ -12,7 +12,7 @@ import {
   OFFSCREEN_TARGET,
   type OffscreenRequest,
   type StoreZipResponse,
-} from '../types/offscreen';
+} from '../offscreen/messages';
 import { chromePing, KEEPALIVE_CHUNK_MS } from './keepalive';
 
 const OFFSCREEN_URL = 'src/offscreen/offscreen.html';
