@@ -2,6 +2,7 @@
 // small message API the Devdy tab uses for settings/status.
 
 import { fail, ok, onTargetMessage } from '../../../shared/messaging';
+import { fromExtensionPage } from '../../../shared/sender';
 import { deleteBlob, getBlob, listBlobIds, putBlob } from '../core/blob-store';
 import {
   findAllDevdy,
@@ -13,7 +14,6 @@ import {
 } from '../core/client';
 import { DevdyOutbox, type DevdySettings, isQueued, type OutboxEntry, type OutboxState } from '../core/outbox';
 import { DEVDY_TARGET, type DevdyFlushResult, type DevdyRequest, type DevdyStatus } from '../messages';
-import { fromExtension } from './sender';
 
 const KEYS = {
   token: 'devdyToken',
@@ -142,7 +142,7 @@ async function handle(msg: DevdyRequest): Promise<DevdyStatus | DevdyFlushResult
 
 onTargetMessage<DevdyRequest>(DEVDY_TARGET, (msg, sender) => {
   // Token, instance and queue commands: only the Devdy tab (extension pages).
-  if (!fromExtension(sender)) return fail(new Error('Not allowed.'));
+  if (!fromExtensionPage(sender)) return fail(new Error('Not allowed.'));
   return handle(msg).then(ok, fail);
 });
 

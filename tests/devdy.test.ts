@@ -21,7 +21,6 @@ import {
   type OutboxEntry,
   type OutboxState,
 } from '../src/features/devdy/core/outbox';
-import { isExtensionSender, isSlackContentSender } from '../src/features/devdy/core/sender';
 
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
@@ -579,22 +578,5 @@ describe('devdy-client: resolveFromInstances / isDevdyPort', () => {
     expect(isDevdyPort(80)).toBe(false);
     expect(isDevdyPort(47821.5)).toBe(false);
     expect(isDevdyPort('47821')).toBe(false);
-  });
-});
-
-describe('message sender checks', () => {
-  const ID = 'abc';
-  const BASE = 'chrome-extension://abc/';
-  it('accepts only extension pages / the service worker for privileged commands', () => {
-    expect(isExtensionSender({ id: ID, url: `${BASE}src/features/devdy/popup/popup.html` }, ID, BASE)).toBe(true);
-    expect(isExtensionSender({ id: ID, url: `${BASE}background.js` }, ID, BASE)).toBe(true);
-    expect(isExtensionSender({ id: ID, url: 'https://evil.example/', tab: {} }, ID, BASE)).toBe(false);
-    expect(isExtensionSender({ id: 'other', url: `${BASE}x.html` }, ID, BASE)).toBe(false);
-    expect(isExtensionSender({ id: ID }, ID, BASE)).toBe(false);
-  });
-  it('accepts quick send only from app.slack.com', () => {
-    expect(isSlackContentSender({ id: ID, url: 'https://app.slack.com/client/T1/C1' }, ID)).toBe(true);
-    expect(isSlackContentSender({ id: ID, url: 'https://app.slack.com.evil.example/' }, ID)).toBe(false);
-    expect(isSlackContentSender({ id: ID, url: 'https://example.com/' }, ID)).toBe(false);
   });
 });

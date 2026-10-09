@@ -1,17 +1,8 @@
-// Who may send which translator request (pure → unit-tested).
+// Translator allow-list: which sender kind (src/shared/sender.ts) may send which
+// request, plus request validation (pure → unit-tested).
 
+import { isExtensionPage, isExtensionSender } from '../../../shared/sender';
 import { MAX_BATCH_ITEMS, MAX_TEXT_CHARS, type TranslatorRequest } from '../shared/messages';
-
-/** Sent by this extension (content script or extension page). */
-export function isOwnSender(sender: chrome.runtime.MessageSender, extensionId: string): boolean {
-  return sender.id === extensionId;
-}
-
-/** Sent by one of this extension's own pages (popup, options…), not a content script. */
-export function isExtensionPage(sender: chrome.runtime.MessageSender, extensionId: string): boolean {
-  const origin = `chrome-extension://${extensionId}`;
-  return sender.id === extensionId && (sender.origin === origin || !!sender.url?.startsWith(`${origin}/`));
-}
 
 const isRequestId = (id: unknown) => typeof id === 'string' && id.length > 0 && id.length <= 64;
 
@@ -26,7 +17,7 @@ export function rejectReason(
   sender: chrome.runtime.MessageSender,
   extensionId: string,
 ): string | null {
-  if (!isOwnSender(sender, extensionId)) return 'Unknown sender';
+  if (!isExtensionSender(sender, extensionId)) return 'Unknown sender';
   const isText = (t: unknown) => typeof t === 'string' && t.length <= MAX_TEXT_CHARS;
   switch (request.type) {
     case 'fetch-ollama-models':

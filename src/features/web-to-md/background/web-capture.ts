@@ -5,10 +5,10 @@
 import { startZipJob } from '../../../background/zip-export';
 import { errorMessage } from '../../../shared/errors';
 import { ok, onTargetMessage, type Result } from '../../../shared/messaging';
+import { fromExtensionPage } from '../../../shared/sender';
 import type { ToastState } from '../../../shared/toast';
 import { outbox } from '../../devdy/background';
 import { openSettings } from '../../devdy/background/open-settings';
-import { fromExtension } from '../../devdy/background/sender';
 import type { SendOutcome } from '../../devdy/core/client';
 import {
   collectImageUrls,
@@ -178,7 +178,7 @@ function toast(tabId: number, frameId: number | undefined, msg: Omit<WebToastMes
 const CONTENT_COMMANDS = new Set<WebRequest['type']>(['send-selection', 'open-settings']);
 
 onTargetMessage<WebRequest>(WEB_TARGET, (req, sender) => {
-  if (!CONTENT_COMMANDS.has(req.type) && !fromExtension(sender)) {
+  if (!CONTENT_COMMANDS.has(req.type) && !fromExtensionPage(sender)) {
     return { ok: false, error: 'Not allowed.' } satisfies Result;
   }
   if (req.type !== 'open-settings') {

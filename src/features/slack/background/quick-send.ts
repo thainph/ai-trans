@@ -3,8 +3,8 @@
 // inside the Slack tab.
 
 import { onTargetMessage, type Result } from '../../../shared/messaging';
+import { fromContentScriptOf } from '../../../shared/sender';
 import { openSettings } from '../../devdy/background/open-settings';
-import { fromSlackContent } from '../../devdy/background/sender';
 import { toastFor } from '../core/quick-send';
 import {
   QUICK_SEND_OPTIONS,
@@ -14,6 +14,9 @@ import {
   type ToastMessage,
 } from '../quick-send-messages';
 import { exportErrorMessage, handleExport } from './export';
+
+/** Quick sends are accepted only from the Slack content script (app.slack.com frames). */
+const SLACK_APP_ORIGIN = 'https://app.slack.com';
 
 /** Threads currently being sent (avoid double sends from repeated clicks). */
 const inFlight = new Set<string>();
@@ -51,7 +54,7 @@ export async function quickSend(link: string, tabId: number, frameId?: number): 
 
 onTargetMessage<QuickSendRequest>(QUICK_SEND_TARGET, (msg, sender): Result | undefined => {
   // Sent by the Slack content script only (app.slack.com).
-  if (!fromSlackContent(sender)) return { ok: false, error: 'Not allowed.' };
+  if (!fromContentScriptOf(sender, SLACK_APP_ORIGIN)) return { ok: false, error: 'Not allowed.' };
   switch (msg.type) {
     case 'devdy-send': {
       const tabId = sender.tab?.id;

@@ -4,12 +4,12 @@
 // files.slack.com are allowed by host permissions and carry the user's Slack
 // cookies. Each fetched file goes straight into the job's streaming zip.
 
-import { fromExtension } from '../features/devdy/background/sender';
 import { putBlob } from '../features/devdy/core/blob-store';
 import { isAllowedFileUrl } from '../features/slack/core/attachments';
 import { imageExtension, isFetchableImageUrl } from '../features/web-to-md/core/web-capture';
 import { errorMessage } from '../shared/errors';
 import { onTargetMessage, type Result } from '../shared/messaging';
+import { fromExtensionPage } from '../shared/sender';
 import { fetchImage as fetchImageResponse } from './image-fetch';
 import {
   type BuildZipResponse,
@@ -158,7 +158,7 @@ function release(jobId: string): void {
 
 onTargetMessage<OffscreenRequest>(OFFSCREEN_TARGET, (msg, sender) => {
   // Fetches with the user's cookies and IndexedDB writes: only for the service worker.
-  if (!fromExtension(sender)) return { ok: false, error: 'Not allowed.' } satisfies Result;
+  if (!fromExtensionPage(sender)) return { ok: false, error: 'Not allowed.' } satisfies Result;
   switch (msg.type) {
     case 'fetch-file':
       return fetchFile(msg);

@@ -6,8 +6,8 @@
 import { keepAliveSleep } from '../../../background/keepalive';
 import { startZipJob } from '../../../background/zip-export';
 import { errorMessage } from '../../../shared/errors';
+import { fromExtensionPage } from '../../../shared/sender';
 import { outbox } from '../../devdy/background';
-import { fromExtension } from '../../devdy/background/sender';
 import { DEVDY_MAX_ATTACHMENTS } from '../../devdy/core/client';
 import { MAX_FILE_BYTES, MAX_TOTAL_BYTES, planAttachments } from '../core/attachments';
 import type { ThreadData } from '../core/md-builder';
@@ -265,7 +265,7 @@ async function handleDevdyExport(
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== EXPORT_PORT_NAME) return;
   // Only the Slack tab of the popup (an extension page) opens this port.
-  if (!port.sender || !fromExtension(port.sender)) {
+  if (!port.sender || !fromExtensionPage(port.sender)) {
     port.disconnect();
     return;
   }

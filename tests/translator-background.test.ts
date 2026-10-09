@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { CANCELLED, signalWithTimeout } from '../src/features/translator/background/llm';
 import { ollamaCorsRules, ollamaOrigin } from '../src/features/translator/background/ollama-cors';
-import { isExtensionPage, rejectReason, requestKey } from '../src/features/translator/background/sender';
+import { rejectReason, requestKey } from '../src/features/translator/background/sender';
 import {
   BATCH_KEY,
   buildBatchInput,
   buildBatchPrompt,
   parseBatchResponse,
 } from '../src/features/translator/core/batch-protocol';
+import { isExtensionPage } from '../src/shared/sender';
 
 const SRC = ['Hello', 'World', 'Good bye'];
 const NONE = [null, null, null];
