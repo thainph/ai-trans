@@ -1,46 +1,56 @@
-// extractInPage(mode) runs inside the page via chrome.scripting.executeScript
+// extractInPage(mode, depth) runs inside the page via chrome.scripting.executeScript
 // ({ func: extractInPage }), so it must stay SELF-CONTAINED: no imports, no
 // outer variables (type-only imports are fine). Returns plain data only.
+// It is also the single source of page metadata for selection captures
+// (content/selection.ts pageMeta() calls it with depth "meta").
 // Unit-tested in tests/web-extract.test.ts.
+
+import type { PageMeta } from './web-capture';
 
 export type ExtractMode = 'article' | 'full' | 'selection';
 
+/**
+ * How much work to do / data to return:
+ * - "meta": page metadata only (no content extraction);
+ * - "score": also extract the content but return only its text length, so the
+ *   popup can pick the best frame without shipping every frame's HTML over IPC;
+ * - "content": everything, including `html` (and `text` in selection mode).
+ */
+export type ExtractDepth = 'meta' | 'score' | 'content';
+
 export interface ExtractResult {
-  title: string;
-  url: string;
-  description: string;
-  byline: string;
-  siteName: string;
-  published: string;
+  meta: PageMeta;
+  /** Extracted HTML ("" unless depth is "content"). */
   html: string;
-  /** Length of the extracted text (whitespace collapsed). */
+  /** Length of the extracted text (whitespace collapsed); 0 at depth "meta". */
   textLen: number;
   isTop: boolean;
-  host: string;
   mode: ExtractMode;
   /** Host of a Claude artifact's real content (claudeusercontent.com iframe), or "". */
   uchost: string;
-  /** Selected plain text ("selection" mode). */
+  /** Selected plain text ("selection" mode, depth "content"). */
   text?: string;
 }
 
-export function extractInPage(mode: ExtractMode): ExtractResult {
+export function extractInPage(mode: ExtractMode, depth: ExtractDepth = 'content'): ExtractResult {
   const meta = (name: string) => {
-    const el = document.querySelector(`meta[property="${name}"]`) || document.querySelector(`meta[name="${name}"]`);
-    return el ? (el.getAttribute('content') || '').trim() : '';
+    const el = document.querySelector(`meta[property="${name}"]`) ?? document.querySelector(`meta[name="${name}"]`);
+    return el?.getAttribute('content')?.trim() || undefined;
   };
+  const host = location.hostname.replace(/^www\./, '');
 
   const result: ExtractResult = {
-    title: (meta('og:title') || document.title || '').trim(),
-    url: location.href,
-    description: meta('description') || meta('og:description') || '',
-    byline: meta('author') || meta('article:author') || '',
-    siteName: meta('og:site_name') || location.hostname,
-    published: meta('article:published_time') || '',
+    meta: {
+      url: location.href,
+      pageTitle: meta('og:title') || document.title.trim() || undefined,
+      siteName: meta('og:site_name') || host || undefined,
+      author: meta('author') || meta('article:author'),
+      description: meta('description') || meta('og:description'),
+      publishedAt: meta('article:published_time'),
+    },
     html: '',
     textLen: 0,
     isTop: window.top === window.self,
-    host: location.hostname,
     mode: mode,
     uchost: '',
   };
@@ -49,17 +59,23 @@ export function extractInPage(mode: ExtractMode): ExtractResult {
   const slot = document.querySelector('[data-frame-uchost]');
   result.uchost = slot?.getAttribute('data-frame-uchost') || '';
 
+  if (depth === 'meta') return result;
+
   const finalize = () => {
     const tmp = document.createElement('div');
     tmp.innerHTML = result.html || '';
     result.textLen = (tmp.textContent || '').replace(/\s+/g, ' ').trim().length;
+    if (depth !== 'content') {
+      result.html = '';
+      delete result.text;
+    }
     return result;
   };
 
   // Selection mode
   if (mode === 'selection') {
     const sel = window.getSelection();
-    if (sel && sel.rangeCount && !sel.isCollapsed) {
+    if (sel?.rangeCount && !sel.isCollapsed) {
       const div = document.createElement('div');
       for (let i = 0; i < sel.rangeCount; i++) {
         div.appendChild(sel.getRangeAt(i).cloneContents());

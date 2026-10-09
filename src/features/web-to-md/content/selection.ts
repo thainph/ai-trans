@@ -1,5 +1,6 @@
 // DOM helpers for capturing the user's selection (no chrome.* → unit-tested).
 
+import { extractInPage } from '../core/extract';
 import { bestImageSrc } from '../core/image-src';
 import type { PageMeta } from '../core/web-capture';
 
@@ -20,24 +21,8 @@ export function selectionHtml(range: Range, baseUrl: string): string {
   return div.innerHTML;
 }
 
-/** Page metadata for the Devdy front matter (title, site, author, …). */
-export function pageMeta(doc: Document, url: string): PageMeta {
-  const meta = (name: string) => {
-    const el = doc.querySelector(`meta[property="${name}"]`) ?? doc.querySelector(`meta[name="${name}"]`);
-    return el?.getAttribute('content')?.trim() || undefined;
-  };
-  let host = '';
-  try {
-    host = new URL(url).hostname.replace(/^www\./, '');
-  } catch {
-    // keep empty
-  }
-  return {
-    url,
-    pageTitle: meta('og:title') || doc.title.trim() || undefined,
-    siteName: meta('og:site_name') || host || undefined,
-    author: meta('author') || meta('article:author'),
-    description: meta('description') || meta('og:description'),
-    publishedAt: meta('article:published_time'),
-  };
+/** Page metadata for the Devdy front matter (title, site, author, …) — the
+ *  same values the Web → MD tab reads, from the same code. */
+export function pageMeta(): PageMeta {
+  return extractInPage('selection', 'meta').meta;
 }

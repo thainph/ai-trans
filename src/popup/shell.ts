@@ -68,19 +68,22 @@ function show(tool: ToolId): void {
   void chrome.storage.local.set({ [LAST_TAB_KEY]: tool });
 }
 
+/** Picks the tab to open. Storage and the active tab are read in parallel so
+ *  the first iframe starts loading as early as possible. */
 async function initialTool(): Promise<ToolId> {
-  const once = await chrome.storage.local.get(OPEN_TAB_KEY);
-  if (isToolId(once[OPEN_TAB_KEY])) {
-    await chrome.storage.local.remove(OPEN_TAB_KEY);
-    return once[OPEN_TAB_KEY];
+  const [stored, activeTab] = await Promise.all([
+    chrome.storage.local.get([OPEN_TAB_KEY, LAST_TAB_KEY]),
+    chrome.tabs
+      .query({ active: true, currentWindow: true })
+      .then(([tab]) => tab)
+      .catch(() => undefined), // best effort only
+  ]);
+  const once = stored[OPEN_TAB_KEY];
+  if (isToolId(once)) {
+    void chrome.storage.local.remove(OPEN_TAB_KEY);
+    return once;
   }
-  try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (tab?.url?.startsWith('https://app.slack.com/')) return 'slack';
-  } catch {
-    // Best effort only.
-  }
-  const stored = await chrome.storage.local.get(LAST_TAB_KEY);
+  if (activeTab?.url?.startsWith('https://app.slack.com/')) return 'slack';
   const last = stored[LAST_TAB_KEY];
   return isToolId(last) ? last : 'translator';
 }

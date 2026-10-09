@@ -58,22 +58,22 @@ async function generate(): Promise<string | null> {
     return null;
   }
 
-  let injection: chrome.scripting.InjectionResult<ExtractResult>[];
+  // Pass 1: every frame (the page + its iframes, e.g. a Claude artifact) reports
+  // its metadata and text length only — no HTML over IPC yet.
+  let frames: { frameId: number; data: ExtractResult }[];
   try {
-    injection = await chrome.scripting.executeScript({
+    const injection = await chrome.scripting.executeScript({
       target: { tabId: tab.id, allFrames: true },
       func: extractInPage,
-      args: [mode],
+      args: [mode, 'score'],
     });
+    frames = (injection || [])
+      .filter((r) => typeof r?.result?.textLen === 'number')
+      .map((r) => ({ frameId: r.frameId, data: r.result as ExtractResult }));
   } catch (e) {
     setStatus(`Injection error: ${errorMessage(e)}`, true);
     return null;
   }
-
-  // Results of every frame (the page + its iframes, e.g. a Claude artifact)
-  const frames = (injection || [])
-    .map((r) => r?.result)
-    .filter((d): d is ExtractResult => typeof d?.textLen === 'number');
 
   if (!frames.length) {
     setStatus('Could not extract any content.', true);
@@ -81,27 +81,17 @@ async function generate(): Promise<string | null> {
   }
 
   // Metadata comes from the top frame first
-  const top = frames.find((f) => f.isTop) || frames[0]!;
+  const topFrame = frames.find((f) => f.data.isTop) || frames[0]!;
   // Content: the frame with the most text (an artifact iframe beats its shell page)
-  const best = frames.reduce((a, b) => (b.textLen > a.textLen ? b : a), frames[0]!);
-
-  const data = {
-    url: top.url,
-    siteName: top.siteName,
-    published: top.published || best.published,
-    title: best.textLen > top.textLen && best.title ? best.title : top.title || best.title,
-    description: top.description || best.description,
-    byline: top.byline || best.byline,
-    html: best.html,
-    frameCount: frames.length,
-    fromIframe: best !== top,
-    uchost: top.uchost || '',
-  };
+  const bestFrame = frames.reduce((a, b) => (b.data.textLen > a.data.textLen ? b : a), frames[0]!);
+  const top = topFrame.data.meta;
+  const bestMeta = bestFrame.data.meta;
+  const uchost = topFrame.data.uchost;
 
   // Claude artifact: only the (nearly empty) shell was readable, but the content host is known
-  const looksEmpty = !data.html || best.textLen < 40;
-  if (looksEmpty && data.uchost) {
-    const contentUrl = `https://${data.uchost}${location.search}`;
+  const looksEmpty = bestFrame.data.textLen < 40;
+  if (looksEmpty && uchost) {
+    const contentUrl = `https://${uchost}${location.search}`;
     offerOpenContent(contentUrl);
     setStatus(
       "The artifact content is inside an iframe that can't be read. Click the button below to open the content page, then convert it.",
@@ -120,31 +110,55 @@ async function generate(): Promise<string | null> {
     return null;
   }
 
-  const md = htmlToMarkdown(data.html, {
+  // Pass 2: the HTML of the winning frame only.
+  let best: ExtractResult | undefined;
+  try {
+    const [res] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id, frameIds: [bestFrame.frameId] },
+      func: extractInPage,
+      args: [mode, 'content'],
+    });
+    best = res?.result as ExtractResult | undefined;
+  } catch (e) {
+    setStatus(`Injection error: ${errorMessage(e)}`, true);
+    return null;
+  }
+  if (!best?.html) {
+    setStatus('Could not extract any content (the page changed; try again).', true);
+    return null;
+  }
+
+  const fromIframe = bestFrame !== topFrame;
+  const page: PageMeta = {
+    url: top.url,
+    pageTitle:
+      bestFrame.data.textLen > topFrame.data.textLen && bestMeta.pageTitle
+        ? bestMeta.pageTitle
+        : top.pageTitle || bestMeta.pageTitle,
+    siteName: top.siteName,
+    author: top.author || bestMeta.author,
+    description: top.description || bestMeta.description,
+    publishedAt: top.publishedAt || bestMeta.publishedAt,
+  };
+  const title = page.pageTitle ?? '';
+
+  const md = htmlToMarkdown(best.html, {
     keepImages: keepImagesOpt.checked,
     keepLinks: keepLinksOpt.checked,
-    baseUrl: data.url,
+    baseUrl: page.url,
   });
 
-  const page: PageMeta = {
-    url: data.url,
-    pageTitle: data.title || undefined,
-    siteName: data.siteName || undefined,
-    author: data.byline || undefined,
-    description: data.description || undefined,
-    publishedAt: data.published || undefined,
-  };
   const selection = mode === 'selection';
 
   let doc = '';
   if (frontmatterOpt.checked) doc += webFrontMatter(page, { selection, capturedAt: new Date() });
-  doc += `# ${data.title}\n\n`;
+  doc += `# ${title}\n\n`;
   doc += md;
 
-  lastFilename = `${filenamePart(data.title, 'page')}.md`;
+  lastFilename = `${filenamePart(title, 'page')}.md`;
   lastCapture = {
     // Selection: just the excerpt (Devdy titles it from its first line).
-    markdown: selection ? md : `# ${data.title}\n\n${md}`,
+    markdown: selection ? md : `# ${title}\n\n${md}`,
     selection,
     selectionText: selection ? best.text || '' : undefined,
     page,
@@ -152,7 +166,7 @@ async function generate(): Promise<string | null> {
 
   previewEl.textContent = doc.length > 4000 ? `${doc.slice(0, 4000)}\n… (preview truncated)` : doc;
   previewEl.classList.remove('muted');
-  const src = data.fromIframe ? ` · from iframe (1 of ${data.frameCount} frames)` : '';
+  const src = fromIframe ? ` · from iframe (1 of ${frames.length} frames)` : '';
   setStatus(`Done · ${doc.length.toLocaleString('en-US')} chars · ~${Math.ceil(doc.length / 4)} tokens${src}.`);
   return doc;
 }

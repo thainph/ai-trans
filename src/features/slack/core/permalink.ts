@@ -32,7 +32,7 @@ function fail(code: PermalinkErrorCode, message: string): ParseResult {
 /** Convert the "p1700000000123456" path segment to "1700000000.123456". */
 export function pSegmentToTs(segment: string): string | null {
   const m = P_TS_RE.exec(segment);
-  if (!m || !m[1]) return null;
+  if (!m?.[1]) return null;
   return `${m[1].slice(0, 10)}.${m[1].slice(10)}`;
 }
 

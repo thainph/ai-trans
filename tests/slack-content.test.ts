@@ -208,8 +208,7 @@ describe('hover highlight on the injected row', () => {
   });
 
   it('skips the inline fallback when the borrowed class already changes the background', () => {
-    document.body.innerHTML =
-      '<style>.c-menu_item__button--highlighted { background-color: rgb(18, 100, 163); }</style>' + slackMenu();
+    document.body.innerHTML = `<style>.c-menu_item__button--highlighted { background-color: rgb(18, 100, 163); }</style>${slackMenu()}`;
     const menu = findMenu(document.body)!;
     const ours = injectMenuItem(menu, 'Send to Devdy', () => {})!.querySelector('button')!;
     hover(ours, 'mouseenter');

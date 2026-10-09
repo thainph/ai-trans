@@ -62,5 +62,8 @@ describe('minified page-injected functions', () => {
     const r = revive(minified.extractInPage)('article');
     expect(r.html).toContain('Body text');
     expect(r.html).not.toContain('menu');
+    const score = revive(minified.extractInPage)('article', 'score');
+    expect(score.html).toBe('');
+    expect(score.textLen).toBe(r.textLen);
   });
 });

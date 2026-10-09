@@ -43,7 +43,7 @@ export async function sendSelection(range: Range, text: string): Promise<void> {
     toaster.show({ key: 'reloaded', state: 'error', text: 'Context Kit was updated. Reload this page and try again.' });
     return;
   }
-  const key = 'local-' + Date.now();
+  const key = `local-${Date.now()}`;
   toaster.show({ key, state: 'progress', text: 'Preparing selection…' });
   try {
     const html = await inlineBlobImages(selectionHtml(range, location.href));
@@ -53,7 +53,7 @@ export async function sendSelection(range: Range, text: string): Promise<void> {
       type: 'send-selection',
       markdown: md.trim() ? md : text,
       selectionText: text,
-      page: pageMeta(document, location.href),
+      page: pageMeta(),
     };
     await chrome.runtime.sendMessage(req);
     toaster.dismiss(key); // the background's toast (same position) takes over
