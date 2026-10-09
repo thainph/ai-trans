@@ -1,10 +1,9 @@
 // @vitest-environment happy-dom
 import { describe, expect, it } from 'vitest';
-import converterSource from '../public/web-to-md/converter.js?raw';
+import { htmlToMarkdown } from '../src/features/web-to-md/core/converter';
 
-new Function(converterSource)(); // defines window.htmlToMarkdown
 const toMd = (html: string) =>
-  (window as unknown as { htmlToMarkdown: (h: string, o: object) => string }).htmlToMarkdown(html, {
+  htmlToMarkdown(html, {
     keepImages: true,
     keepLinks: true,
     baseUrl: 'https://example.com/docs/',
@@ -54,7 +53,9 @@ describe('htmlToMarkdown: images, headings, code', () => {
     expect(toMd('<img src="data:image/svg+xml,x" srcset="/s.png 1x, /l.png 2x" alt="b">')).toContain(
       '![b](https://example.com/l.png)',
     );
-    expect(toMd('<img src="/plain.png" data-src="/other.png" alt="c">')).toContain('![c](https://example.com/plain.png)');
+    expect(toMd('<img src="/plain.png" data-src="/other.png" alt="c">')).toContain(
+      '![c](https://example.com/plain.png)',
+    );
   });
 
   it('renders ATX headings and fenced code', () => {

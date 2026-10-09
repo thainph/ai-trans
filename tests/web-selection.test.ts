@@ -1,6 +1,10 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it } from 'vitest';
-import { bestImageSrc, largestFromSrcset, pageMeta, selectionHtml } from '../src/web/content/selection';
+import { pageMeta, selectionHtml } from '../src/features/web-to-md/content/selection';
+import { extractInPage } from '../src/features/web-to-md/core/extract';
+import { bestImageSrc, largestFromSrcset } from '../src/features/web-to-md/core/image-src';
+
+const setUrl = (url: string) => (window as unknown as { happyDOM: { setURL(u: string): void } }).happyDOM.setURL(url);
 
 beforeEach(() => {
   document.head.innerHTML = '';
@@ -54,7 +58,8 @@ describe('pageMeta', () => {
       <meta name="author" content="Jane">
       <meta name="description" content="How to">
       <meta property="article:published_time" content="2026-09-01">`;
-    expect(pageMeta(document, 'https://v2.tauri.app/x')).toEqual({
+    setUrl('https://v2.tauri.app/x');
+    expect(pageMeta()).toEqual({
       url: 'https://v2.tauri.app/x',
       pageTitle: 'Capabilities',
       siteName: 'Tauri',
@@ -66,10 +71,29 @@ describe('pageMeta', () => {
 
   it('falls back to <title> and the host name', () => {
     document.head.innerHTML = '<title> Plain page </title>';
-    expect(pageMeta(document, 'https://www.example.com/a')).toMatchObject({
+    setUrl('https://www.example.com/a');
+    expect(pageMeta()).toMatchObject({
       pageTitle: 'Plain page',
       siteName: 'example.com',
       author: undefined,
+    });
+  });
+
+  it('matches the metadata the Web → MD tab extracts (same DOM, same values)', () => {
+    setUrl('https://www.example.com/post');
+    document.head.innerHTML = `
+      <title>Doc title</title>
+      <meta name="og:description" content="  From og  ">
+      <meta property="article:author" content="Kim">`;
+    document.body.innerHTML = '<main><p>Body text</p></main>';
+    const fromTab = extractInPage('article', 'content').meta;
+    expect(pageMeta()).toEqual(fromTab);
+    expect(fromTab).toMatchObject({
+      url: 'https://www.example.com/post',
+      pageTitle: 'Doc title',
+      siteName: 'example.com',
+      author: 'Kim',
+      description: 'From og',
     });
   });
 });

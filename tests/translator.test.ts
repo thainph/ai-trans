@@ -2,23 +2,16 @@ import { describe, expect, it } from 'vitest';
 import {
   buildRequestBody,
   buildTranslatePrompt,
-  mapLimit,
   ollamaContextSize,
   parseLLMResponse,
   splitForTranslation,
   splitOuterWhitespace,
   stripTextTags,
   wrapText,
-} from '../src/translator/llm-utils.js';
-import contentScript from '../public/translator/content.js?raw';
-
-// detectLanguage lives in the classic content script; load just that function.
-function loadDetectLanguage(): (text: string) => string {
-  const src = contentScript;
-  const start = src.indexOf('function detectLanguage(text) {');
-  const end = src.indexOf('\n  }\n', start) + 4;
-  return new Function(`${src.slice(start, end)}; return detectLanguage;`)();
-}
+} from '../src/features/translator/background/llm';
+import { detectLanguage } from '../src/features/translator/content/detect-language';
+import { DEFAULT_SETTINGS } from '../src/features/translator/shared/settings';
+import { mapLimit } from '../src/shared/async';
 
 describe('splitForTranslation', () => {
   it('returns short text unchanged', () => {
@@ -26,7 +19,7 @@ describe('splitForTranslation', () => {
   });
 
   it('splits on line boundaries and reassembles to the exact original', () => {
-    const text = Array.from({ length: 50 }, (_, i) => `Line ${i} with some words.`).join('\n') + '\n\n';
+    const text = `${Array.from({ length: 50 }, (_, i) => `Line ${i} with some words.`).join('\n')}\n\n`;
     const segs = splitForTranslation(text, 120);
     expect(segs.length).toBeGreaterThan(1);
     expect(segs.join('')).toBe(text);
@@ -49,7 +42,7 @@ describe('splitForTranslation', () => {
   });
 
   it('keeps special characters intact', () => {
-    const text = '・項目 <a href="x">&amp;</a> {{name}} $var '.repeat(30) + '\n🙂 ★ ※ → ① `code` [0] ---';
+    const text = `${'・項目 <a href="x">&amp;</a> {{name}} $var '.repeat(30)}\n🙂 ★ ※ → ① \`code\` [0] ---`;
     expect(splitForTranslation(text, 200).join('')).toBe(text);
   });
 });
@@ -89,6 +82,17 @@ describe('buildRequestBody', () => {
     expect(body.options!.num_predict).toBe(-1);
     expect(ollamaContextSize(10)).toBe(4096);
     expect(ollamaContextSize(1_000_000)).toBe(32768);
+  });
+
+  it('asks each provider for a JSON reply only when requested', () => {
+    expect(buildRequestBody('openai', 'm', 's', 'u', true).response_format).toEqual({ type: 'json_object' });
+    expect(buildRequestBody('openai', 'm', 's', 'u')).not.toHaveProperty('response_format');
+    expect(buildRequestBody('gemini', 'm', 's', 'u', true).generationConfig).toEqual({
+      temperature: 0.3,
+      responseMimeType: 'application/json',
+    });
+    expect(buildRequestBody('ollama', 'm', 's', 'u', true).format).toBe('json');
+    expect(buildRequestBody('ollama', 'm', 's', 'u')).not.toHaveProperty('format');
   });
 });
 
@@ -144,7 +148,7 @@ describe('mapLimit', () => {
 });
 
 describe('detectLanguage (content script)', () => {
-  const detect = loadDetectLanguage();
+  const detect = detectLanguage;
 
   it.each([
     ['Xin chào, đây là một đoạn văn bản tiếng Việt.', 'vietnamese'],
@@ -158,5 +162,18 @@ describe('detectLanguage (content script)', () => {
     ['Привет, как дела?', 'russian'],
   ])('%s → %s', (text, lang) => {
     expect(detect(text)).toBe(lang);
+  });
+});
+
+describe('DEFAULT_SETTINGS', () => {
+  it('is the single source of the translator defaults', () => {
+    expect(DEFAULT_SETTINGS).toMatchObject({
+      provider: 'openai',
+      openaiModel: 'gpt-4o-mini',
+      geminiModel: 'gemini-2.5-flash',
+      ollamaUrl: 'http://localhost:11434',
+      popupWidth: 340,
+      popupHeight: 0,
+    });
   });
 });

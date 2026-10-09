@@ -1,16 +1,16 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { toastFor } from '../src/core/quick-send';
 import {
   FALLBACK_HIGHLIGHT_ATTR,
-  INJECTED_ATTR,
   findHighlighted,
   findMenu,
   findMessageElement,
+  INJECTED_ATTR,
   injectMenuItem,
   messageLink,
   messageTs,
-} from '../src/slack/content/message-dom';
+} from '../src/features/slack/content/message-dom';
+import { toastFor } from '../src/features/slack/core/quick-send';
 
 // Fixtures approximate Slack's web client markup (data-qa hooks + c-* classes).
 const CHANNEL_URL = 'https://app.slack.com/client/T0TEAM/C0DEV1234';
@@ -173,7 +173,7 @@ describe('injectMenuItem', () => {
 describe('hover highlight on the injected row', () => {
   const hover = (el: Element, type: 'mouseenter' | 'mouseleave') => el.dispatchEvent(new MouseEvent(type));
 
-  it('borrows Slack\'s highlight class from the highlighted row and gives it back on leave', () => {
+  it("borrows Slack's highlight class from the highlighted row and gives it back on leave", () => {
     document.body.innerHTML = slackMenu();
     const menu = findMenu(document.body)!;
     const slackRow = menu.querySelector('#mi-1')!;
@@ -189,7 +189,7 @@ describe('hover highlight on the injected row', () => {
     expect(slackRow.classList.contains('c-menu_item__button--highlighted')).toBe(true);
   });
 
-  it('uses Slack\'s known class (or paints Slack\'s highlight colour) when nothing is highlighted', () => {
+  it("uses Slack's known class (or paints Slack's highlight colour) when nothing is highlighted", () => {
     document.body.innerHTML = slackMenu();
     const menu = findMenu(document.body)!;
     const ours = injectMenuItem(menu, 'Send to Devdy', () => {})!.querySelector('button')! as HTMLElement;
@@ -208,8 +208,7 @@ describe('hover highlight on the injected row', () => {
   });
 
   it('skips the inline fallback when the borrowed class already changes the background', () => {
-    document.body.innerHTML =
-      '<style>.c-menu_item__button--highlighted { background-color: rgb(18, 100, 163); }</style>' + slackMenu();
+    document.body.innerHTML = `<style>.c-menu_item__button--highlighted { background-color: rgb(18, 100, 163); }</style>${slackMenu()}`;
     const menu = findMenu(document.body)!;
     const ours = injectMenuItem(menu, 'Send to Devdy', () => {})!.querySelector('button')!;
     hover(ours, 'mouseenter');
@@ -221,9 +220,15 @@ describe('hover highlight on the injected row', () => {
 describe('quick-send helpers', () => {
   it('maps export results to toasts', () => {
     const base = { type: 'done' as const, action: 'devdy' as const, filename: 'a.md', messageCount: 3 };
-    expect(toastFor({ type: 'progress', text: 'Fetching…' }, 'k')).toMatchObject({ state: 'progress', text: 'Fetching…' });
+    expect(toastFor({ type: 'progress', text: 'Fetching…' }, 'k')).toMatchObject({
+      state: 'progress',
+      text: 'Fetching…',
+    });
     expect(
-      toastFor({ ...base, files: { saved: 2, notIncluded: 0 }, devdy: { kind: 'created', message: '', pending: 0 } }, 'k'),
+      toastFor(
+        { ...base, files: { saved: 2, notIncluded: 0 }, devdy: { kind: 'created', message: '', pending: 0 } },
+        'k',
+      ),
     ).toMatchObject({ state: 'success', text: 'Sent to Devdy (3 messages, 2 files).' });
     expect(toastFor({ ...base, devdy: { kind: 'unreachable', message: 'queued', pending: 1 } }, 'k')?.state).toBe(
       'queued',

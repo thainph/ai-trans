@@ -12,8 +12,6 @@
     "isolatedModules": true,
     "resolveJsonModule": true,
     "skipLibCheck": true,
-    "allowJs": true,
-    "checkJs": false,
     "noEmit": true
   },
   "include": ["src", "tests", "vite.config.ts", "vite.content.config.ts"]

@@ -1,13 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import {
-  isAllowedFileUrl,
-  isCompressiblePath,
-  planAttachments,
-  safeFileName,
-  type AttachmentOutcome,
-} from '../src/core/attachments';
-import { buildThreadMarkdown, type ThreadData } from '../src/core/md-builder';
-import type { SlackFile, SlackMessage } from '../src/types/slack';
+import { type AttachmentOutcome, isAllowedFileUrl, planAttachments } from '../src/features/slack/core/attachments';
+import { buildThreadMarkdown, type ThreadData } from '../src/features/slack/core/md-builder';
+import type { SlackFile, SlackMessage } from '../src/features/slack/core/types';
+import { isPrecompressedPath, safeFileName } from '../src/shared/filename';
 
 const MB = 1024 * 1024;
 
@@ -105,12 +100,12 @@ describe('planAttachments', () => {
   });
 });
 
-describe('isCompressiblePath', () => {
-  it('deflates text-like files only', () => {
-    expect(isCompressiblePath('thread.md')).toBe(true);
-    expect(isCompressiblePath('attachments/01-log.TXT')).toBe(true);
-    expect(isCompressiblePath('attachments/02-a.png')).toBe(false);
-    expect(isCompressiblePath('attachments/03-a.zip')).toBe(false);
+describe('isPrecompressedPath', () => {
+  it('stores already-compressed formats, deflates the rest', () => {
+    expect(isPrecompressedPath('thread.md')).toBe(false);
+    expect(isPrecompressedPath('attachments/01-log.TXT')).toBe(false);
+    expect(isPrecompressedPath('attachments/02-a.png')).toBe(true);
+    expect(isPrecompressedPath('attachments/03-a.zip')).toBe(true);
   });
 });
 

@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Web → Markdown</title>
+  <link rel="stylesheet" href="../../../shared/styles/theme.css" />
+</head>
+<body>
+  <header class="app-header">
+    <span class="app-logo" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" />
+        <path d="M8 13h8" /><path d="M8 17h5" />
+      </svg>
+    </span>
+    <div>
+      <div class="app-title">Web → Markdown</div>
+      <div class="app-subtitle">Convert this page into clean Markdown</div>
+    </div>
+  </header>
+
+  <div class="section">
+    <label for="mode" class="field-label">Content</label>
+    <select id="mode" class="select-field">
+      <option value="full" selected>Entire page</option>
+      <option value="article">Main content (Readability)</option>
+      <option value="selection">Selected text only</option>
+    </select>
+  </div>
+
+  <div class="section">
+    <span class="field-label">Options</span>
+    <div class="chip-group">
+      <label class="chip" title="Add YAML frontmatter (title, URL, date)">
+        <input type="checkbox" id="frontmatter" checked />
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
+        <span>Frontmatter</span>
+      </label>
+      <label class="chip" title="Keep images as ![alt](url)">
+        <input type="checkbox" id="keepImages" checked />
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
+        <span>Images</span>
+      </label>
+      <label class="chip" title="Keep links as [text](url)">
+        <input type="checkbox" id="keepLinks" checked />
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
+        <span>Links</span>
+      </label>
+    </div>
+  </div>
+
+  <div class="btn-row">
+    <button class="btn btn-primary" id="download" type="button" title="Saves .md, or .zip (Markdown + images/) when Images is on and the page has images">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" />
+      </svg>
+      <span>Export</span>
+    </button>
+    <button class="btn btn-secondary" id="copy" type="button">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+      </svg>
+      <span>Copy</span>
+    </button>
+  </div>
+
+  <button class="btn btn-accent" id="devdy" type="button" style="margin-top:8px" title="Send this page (or the selection, in “Selected text only” mode) to Devdy">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" />
+    </svg>
+    <span>Send to Devdy</span>
+  </button>
+
+  <div id="status" class="status-line" role="status" aria-live="polite">Ready.</div>
+  <button class="link-btn" id="openDevdy" type="button" hidden>Open Devdy settings →</button>
+
+  <button class="btn btn-accent" id="openContent" type="button" hidden style="margin-top:10px">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" />
+    </svg>
+    <span>Open artifact content page</span>
+  </button>
+
+  <hr class="divider" style="margin-top:14px" />
+
+  <div class="section" style="margin-bottom:0">
+    <span class="field-label">Preview</span>
+    <div class="card">
+      <pre id="preview" class="code-preview muted">Click a button to generate Markdown…</pre>
+    </div>
+  </div>
+
+  <script type="module" src="./popup.ts"></script>
+</body>
+</html>

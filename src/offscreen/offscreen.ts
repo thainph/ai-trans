@@ -1,11 +1,14 @@
-// Offscreen document: fetches Slack-hosted attachments and builds the export
-// zip. Runs as an extension page, so cross-origin fetches to files.slack.com
-// are allowed by host permissions and carry the user's Slack cookies.
+// Offscreen document: fetches Slack-hosted attachments and web images and
+// builds the export zip (blob: URL for chrome.downloads, or IndexedDB for the
+// Devdy outbox). Runs as an extension page, so cross-origin fetches to
+// files.slack.com are allowed by host permissions and carry the user's Slack
+// cookies. Each fetched file goes straight into the job's streaming zip.
 
-import { type Zippable, zipSync } from 'fflate';
-import { isAllowedFileUrl, isCompressiblePath } from '../core/attachments';
-import { putBlob } from '../core/blob-store';
-import { imageExtension, isFetchableImageUrl } from '../core/web-capture';
+import { putBlob } from '../features/devdy/core/blob-store';
+import { isAllowedFileUrl } from '../features/slack/core/attachments';
+import { imageExtension, isFetchableImageUrl } from '../features/web-to-md/core/web-capture';
+import { errorMessage } from '../shared/errors';
+import { onTargetMessage, type Result } from '../shared/messaging';
 import {
   type BuildZipResponse,
   type FetchFileResponse,
@@ -13,13 +16,22 @@ import {
   OFFSCREEN_TARGET,
   type OffscreenRequest,
   type StoreZipResponse,
-} from '../types/offscreen';
+} from '../shared/offscreen/protocol';
+import { fromExtensionPage } from '../shared/sender';
+import { fetchImage as fetchImageResponse } from './image-fetch';
+import { ZipWriter } from './zip-stream';
 
 const FETCH_TIMEOUT_MS = 120_000;
+/**
+ * Jobs untouched this long are freed (service worker died before `release`).
+ * Longer than the background's 10 min wait for a zip download to finish.
+ */
+const JOB_TTL_MS = 15 * 60_000;
 
 interface Job {
-  files: Map<string, Uint8Array>;
+  zip: ZipWriter;
   blobUrl?: string;
+  touched: number;
 }
 
 const jobs = new Map<string, Job>();
@@ -27,11 +39,17 @@ const jobs = new Map<string, Job>();
 function job(id: string): Job {
   let j = jobs.get(id);
   if (!j) {
-    j = { files: new Map() };
+    j = { zip: new ZipWriter(), touched: Date.now() };
     jobs.set(id, j);
   }
+  j.touched = Date.now();
   return j;
 }
+
+setInterval(() => {
+  const cutoff = Date.now() - JOB_TTL_MS;
+  for (const [id, j] of jobs) if (j.touched < cutoff) release(id);
+}, 60_000);
 
 async function readCapped(res: Response, maxBytes: number): Promise<Uint8Array> {
   const declared = Number(res.headers.get('Content-Length'));
@@ -82,100 +100,76 @@ async function fetchFile(req: Extract<OffscreenRequest, { type: 'fetch-file' }>)
   }
   try {
     const bytes = await readCapped(res, req.maxBytes);
-    job(req.jobId).files.set(req.path, bytes);
+    job(req.jobId).zip.add(req.path, bytes);
     return { ok: true, size: bytes.byteLength };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    return { ok: false, error: errorMessage(e) };
   }
 }
 
 async function fetchImage(req: Extract<OffscreenRequest, { type: 'fetch-image' }>): Promise<FetchImageResponse> {
   if (!isFetchableImageUrl(req.url)) return { ok: false, error: 'URL not allowed' };
-  let res: Response;
-  try {
-    // Same request the page made to render it (cookies included for login-only images).
-    res = await fetch(req.url, {
-      credentials: 'include',
-      redirect: 'follow',
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-    });
-  } catch (e) {
-    const timedOut = e instanceof DOMException && e.name === 'TimeoutError';
-    return { ok: false, error: timedOut ? 'download timed out' : 'network error' };
-  }
+  // Public hosts only; cookies only for the page's own origin and never across a redirect.
+  const fetched = await fetchImageResponse(req.url, { pageUrl: req.pageUrl, timeoutMs: FETCH_TIMEOUT_MS });
+  if (!fetched.ok) return fetched;
+  const res = fetched.res;
   if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
   const type = res.headers.get('Content-Type') ?? '';
   const ext = imageExtension(type, req.url);
-  if (!type.toLowerCase().startsWith('image/') && ext === 'img') return { ok: false, error: `not an image (${type || 'unknown type'})` };
+  if (!type.toLowerCase().startsWith('image/') && ext === 'img')
+    return { ok: false, error: `not an image (${type || 'unknown type'})` };
   try {
     const bytes = await readCapped(res, req.maxBytes);
     const path = `${req.pathBase}.${ext}`;
-    job(req.jobId).files.set(path, bytes);
+    job(req.jobId).zip.add(path, bytes);
     return { ok: true, path, size: bytes.byteLength };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    return { ok: false, error: errorMessage(e) };
   }
 }
 
-/** Zip every fetched file of the job plus the given text entries. */
-function makeZip(jobId: string, texts: { path: string; text: string }[]): Uint8Array {
-  const j = job(jobId);
-  const enc = new TextEncoder();
-  const entries: Zippable = {};
-  for (const t of texts) entries[t.path] = [enc.encode(t.text), { level: 6 }];
-  for (const [path, bytes] of j.files) entries[path] = [bytes, { level: isCompressiblePath(path) ? 6 : 0 }];
-  const zipped = zipSync(entries);
-  j.files.clear(); // the zip now owns the data
-  return zipped;
-}
-
-const zipBlob = (bytes: Uint8Array) => new Blob([bytes as Uint8Array<ArrayBuffer>], { type: 'application/zip' });
-
 function buildZip(req: Extract<OffscreenRequest, { type: 'build-zip' }>): BuildZipResponse {
   try {
-    const zipped = makeZip(req.jobId, req.texts);
     const j = job(req.jobId);
-    j.blobUrl = URL.createObjectURL(zipBlob(zipped));
-    return { ok: true, url: j.blobUrl, size: zipped.byteLength };
+    const blob = j.zip.finish(req.texts);
+    j.blobUrl = URL.createObjectURL(blob);
+    return { ok: true, url: j.blobUrl, size: blob.size };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    return { ok: false, error: errorMessage(e) };
   }
 }
 
 async function storeZip(req: Extract<OffscreenRequest, { type: 'store-zip' }>): Promise<StoreZipResponse> {
   try {
-    const zipped = makeZip(req.jobId, req.texts);
-    await putBlob(req.blobId, zipBlob(zipped));
-    return { ok: true, size: zipped.byteLength };
+    const blob = job(req.jobId).zip.finish(req.texts);
+    await putBlob(req.blobId, blob);
+    return { ok: true, size: blob.size };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    return { ok: false, error: errorMessage(e) };
   }
 }
 
 function release(jobId: string): void {
   const j = jobs.get(jobId);
   if (j?.blobUrl) URL.revokeObjectURL(j.blobUrl);
+  j?.zip.abort();
   jobs.delete(jobId);
 }
 
-chrome.runtime.onMessage.addListener((msg: OffscreenRequest, _sender, sendResponse) => {
-  if (msg?.target !== OFFSCREEN_TARGET) return;
+onTargetMessage<OffscreenRequest>(OFFSCREEN_TARGET, (msg, sender) => {
+  // Fetches with the user's cookies and IndexedDB writes: only for the service worker.
+  if (!fromExtensionPage(sender)) return { ok: false, error: 'Not allowed.' } satisfies Result;
   switch (msg.type) {
     case 'fetch-file':
-      fetchFile(msg).then(sendResponse);
-      return true; // async response
+      return fetchFile(msg);
     case 'fetch-image':
-      fetchImage(msg).then(sendResponse);
-      return true; // async response
+      return fetchImage(msg);
     case 'build-zip':
-      sendResponse(buildZip(msg));
-      return;
+      return buildZip(msg);
     case 'store-zip':
-      storeZip(msg).then(sendResponse);
-      return true; // async response
+      return storeZip(msg);
     case 'release':
       release(msg.jobId);
-      sendResponse({ ok: true });
-      return;
+      return { ok: true } satisfies Result;
   }
 });

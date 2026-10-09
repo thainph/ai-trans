@@ -1,16 +1,8 @@
-/* Tab bar for the Context Kit popup. Tokens match public/shared/theme.css
-   and public/translator/popup.css. */
+/* Tab bar for the AI Trans popup. */
+@import "../shared/styles/tokens.css";
+
 :root {
-  --primary: #2563eb;
-  --text: #0f172a;
-  --text-muted: #64748b;
-  --bg: #ffffff;
-  --bg-subtle: #f8fafc;
-  --bg-hover: #f1f5f9;
-  --border: #e2e8f0;
-  --primary-ring: rgba(37, 99, 235, 0.18);
-  --ease: 200ms cubic-bezier(0.4, 0, 0.2, 1);
-  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-family: var(--font);
   font-size: 13px;
   -webkit-font-smoothing: antialiased;
 }
@@ -48,7 +40,9 @@ body {
   font: inherit;
   font-weight: 500;
   cursor: pointer;
-  transition: color var(--ease), border-color var(--ease);
+  transition:
+    color var(--ease),
+    border-color var(--ease);
 }
 
 .tab svg {

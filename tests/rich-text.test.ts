@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import type { RenderContext } from '../src/core/mrkdwn-to-md';
-import { applyStyle, layoutBlocksToMd, richTextBlocksToMd } from '../src/core/rich-text-to-md';
-import type { SlackBlock } from '../src/types/slack';
+import type { RenderContext } from '../src/features/slack/core/mrkdwn-to-md';
+import { applyStyle, layoutBlocksToMd, richTextBlocksToMd } from '../src/features/slack/core/rich-text-to-md';
+import type { SlackBlock } from '../src/features/slack/core/types';
 
 const ctx: RenderContext = {
   userName: (id) => ({ U1: 'Alice' })[id] ?? id,
@@ -60,7 +60,9 @@ describe('richTextBlocksToMd', () => {
       ),
       ctx,
     );
-    expect(out).toBe('Hi @Alice in #general @channel @S01 🎉:custom-one: https://x.com [Y \\[docs\\]](<https://y.com/a(b)>) Nov 14');
+    expect(out).toBe(
+      'Hi @Alice in #general @channel @S01 🎉:custom-one: https://x.com [Y \\[docs\\]](<https://y.com/a(b)>) Nov 14',
+    );
   });
 
   it('applies text styles and merges adjacent runs', () => {
@@ -88,10 +90,26 @@ describe('richTextBlocksToMd', () => {
     const out = richTextBlocksToMd(
       rt(
         section({ type: 'text', text: 'Todo:\n' }),
-        { type: 'rich_text_list', style: 'bullet', indent: 0, elements: [section({ type: 'text', text: 'one' }), section({ type: 'text', text: 'two' })] },
-        { type: 'rich_text_list', style: 'ordered', indent: 1, elements: [section({ type: 'text', text: 'sub a' }), section({ type: 'text', text: 'sub b' })] },
+        {
+          type: 'rich_text_list',
+          style: 'bullet',
+          indent: 0,
+          elements: [section({ type: 'text', text: 'one' }), section({ type: 'text', text: 'two' })],
+        },
+        {
+          type: 'rich_text_list',
+          style: 'ordered',
+          indent: 1,
+          elements: [section({ type: 'text', text: 'sub a' }), section({ type: 'text', text: 'sub b' })],
+        },
         { type: 'rich_text_list', style: 'bullet', indent: 0, elements: [section({ type: 'text', text: 'three' })] },
-        { type: 'rich_text_list', style: 'ordered', indent: 0, offset: 3, elements: [section({ type: 'text', text: 'fourth' })] },
+        {
+          type: 'rich_text_list',
+          style: 'ordered',
+          indent: 0,
+          offset: 3,
+          elements: [section({ type: 'text', text: 'fourth' })],
+        },
         section({ type: 'text', text: 'after' }),
       ),
       ctx,
@@ -105,17 +123,32 @@ describe('richTextBlocksToMd', () => {
     const out = richTextBlocksToMd(
       rt(
         section({ type: 'text', text: 'Code:' }),
-        { type: 'rich_text_preformatted', elements: [{ type: 'text', text: 'a *b* <c>\n' }, { type: 'link', url: 'https://u.com' }] },
-        { type: 'rich_text_quote', elements: [{ type: 'text', text: 'line 1\n\nline ' }, { type: 'text', text: '2', style: { bold: true } }] },
+        {
+          type: 'rich_text_preformatted',
+          elements: [
+            { type: 'text', text: 'a *b* <c>\n' },
+            { type: 'link', url: 'https://u.com' },
+          ],
+        },
+        {
+          type: 'rich_text_quote',
+          elements: [
+            { type: 'text', text: 'line 1\n\nline ' },
+            { type: 'text', text: '2', style: { bold: true } },
+          ],
+        },
         section({ type: 'text', text: 'end' }),
       ),
       ctx,
     );
-    expect(out).toBe(['Code:', '```', 'a *b* <c>', 'https://u.com', '```', '', '> line 1', '>', '> line **2**', '', 'end'].join('\n'));
+    expect(out).toBe(
+      ['Code:', '```', 'a *b* <c>', 'https://u.com', '```', '', '> line 1', '>', '> line **2**', '', 'end'].join('\n'),
+    );
   });
 
   it('picks a code fence longer than any backtick run inside (finding #5)', () => {
-    const pre = (text: string) => richTextBlocksToMd(rt({ type: 'rich_text_preformatted', elements: [{ type: 'text', text }] }), ctx);
+    const pre = (text: string) =>
+      richTextBlocksToMd(rt({ type: 'rich_text_preformatted', elements: [{ type: 'text', text }] }), ctx);
     expect(pre('a ``b`` c')).toBe('```\na ``b`` c\n```');
     expect(pre('```js\nx\n```')).toBe('````\n```js\nx\n```\n````');
     expect(pre('````\ny\n````')).toBe('`````\n````\ny\n````\n`````');
@@ -123,7 +156,9 @@ describe('richTextBlocksToMd', () => {
   });
 
   it('ignores unknown elements gracefully', () => {
-    expect(richTextBlocksToMd(rt({ type: 'rich_text_future' }, section({ type: 'mystery', text: 'ok' })), ctx)).toBe('ok');
+    expect(richTextBlocksToMd(rt({ type: 'rich_text_future' }, section({ type: 'mystery', text: 'ok' })), ctx)).toBe(
+      'ok',
+    );
   });
 });
 
@@ -135,10 +170,19 @@ describe('layoutBlocksToMd', () => {
         {
           type: 'section',
           text: { type: 'mrkdwn', text: '*Hi* <@U1>' },
-          fields: [{ type: 'mrkdwn', text: '*A*: 1' }, { type: 'plain_text', text: 'B: 2' }],
+          fields: [
+            { type: 'mrkdwn', text: '*A*: 1' },
+            { type: 'plain_text', text: 'B: 2' },
+          ],
         },
         { type: 'divider' },
-        { type: 'context', elements: [{ type: 'mrkdwn', text: 'by _bot_' }, { type: 'image', image_url: 'x' }] },
+        {
+          type: 'context',
+          elements: [
+            { type: 'mrkdwn', text: 'by _bot_' },
+            { type: 'image', image_url: 'x' },
+          ],
+        },
         { type: 'image', image_url: 'https://img/x.png', alt_text: 'chart' },
       ],
       ctx,
