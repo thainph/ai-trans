@@ -53,7 +53,9 @@ describe('htmlToMarkdown: images, headings, code', () => {
     expect(toMd('<img src="data:image/svg+xml,x" srcset="/s.png 1x, /l.png 2x" alt="b">')).toContain(
       '![b](https://example.com/l.png)',
     );
-    expect(toMd('<img src="/plain.png" data-src="/other.png" alt="c">')).toContain('![c](https://example.com/plain.png)');
+    expect(toMd('<img src="/plain.png" data-src="/other.png" alt="c">')).toContain(
+      '![c](https://example.com/plain.png)',
+    );
   });
 
   it('renders ATX headings and fenced code', () => {

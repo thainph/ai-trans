@@ -7,12 +7,7 @@
 
 import { isExtensionAlive } from '../../../shared/runtime';
 import { Toaster } from '../../../shared/toast';
-import {
-  QUICK_SEND_TARGET,
-  type QuickSendRequest,
-  TOAST_TARGET,
-  type ToastMessage,
-} from '../quick-send-messages';
+import { QUICK_SEND_TARGET, type QuickSendRequest, TOAST_TARGET, type ToastMessage } from '../quick-send-messages';
 import { findMenu, findMessageElement, injectMenuItem, messageLink } from './message-dom';
 
 const MENU_LABEL = 'Send to Devdy';
@@ -84,7 +79,8 @@ document.addEventListener(
     const btn = (e.target as Element | null)?.closest?.('button, [role="button"]');
     if (!btn || btn.closest('[data-context-kit-item]')) return;
     let link = linkFor(btn);
-    if (!link && hoveredMessage?.isConnected && isMoreActionsButton(btn)) link = messageLink(hoveredMessage, location.href);
+    if (!link && hoveredMessage?.isConnected && isMoreActionsButton(btn))
+      link = messageLink(hoveredMessage, location.href);
     if (link) {
       trigger = { link, at: Date.now() };
       debug('menu button', link);

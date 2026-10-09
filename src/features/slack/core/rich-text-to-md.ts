@@ -1,9 +1,9 @@
 // Convert Slack Block Kit "rich_text" blocks (and a few basic layout blocks
 // used by bots) to Markdown. Pure module.
 
-import type { RichTextInline, RichTextStyle, SlackBlock } from './types';
 import { renderEmoji } from './emoji';
-import { type RenderContext, fencedCode, inlineCode, markdownLink, mrkdwnToMd } from './mrkdwn-to-md';
+import { fencedCode, inlineCode, markdownLink, mrkdwnToMd, type RenderContext } from './mrkdwn-to-md';
+import type { RichTextInline, RichTextStyle, SlackBlock } from './types';
 
 type AnyRecord = Record<string, unknown>;
 
@@ -13,10 +13,7 @@ function str(v: unknown): string | undefined {
 
 function sameStyle(a?: RichTextStyle, b?: RichTextStyle): boolean {
   return (
-    !!a?.bold === !!b?.bold &&
-    !!a?.italic === !!b?.italic &&
-    !!a?.strike === !!b?.strike &&
-    !!a?.code === !!b?.code
+    !!a?.bold === !!b?.bold && !!a?.italic === !!b?.italic && !!a?.strike === !!b?.strike && !!a?.code === !!b?.code
   );
 }
 
@@ -157,7 +154,13 @@ function renderRichTextElement(el: AnyRecord, ctx: RenderContext): Part | null {
     }
     case 'rich_text_quote': {
       const body = renderInline(el.elements as unknown[], ctx).replace(/^\n+|\n+$/g, '');
-      return { kind: 'quote', text: body.split('\n').map((l) => (l ? `> ${l}` : '>')).join('\n') };
+      return {
+        kind: 'quote',
+        text: body
+          .split('\n')
+          .map((l) => (l ? `> ${l}` : '>'))
+          .join('\n'),
+      };
     }
     default: {
       // Unknown element: best effort on nested inline elements.
@@ -226,9 +229,7 @@ export function layoutBlocksToMd(blocks: SlackBlock[] | undefined, ctx: RenderCo
         break;
       }
       case 'context': {
-        const items = (Array.isArray(b.elements) ? b.elements : [])
-          .map((e) => textObjectToMd(e, ctx))
-          .filter(Boolean);
+        const items = (Array.isArray(b.elements) ? b.elements : []).map((e) => textObjectToMd(e, ctx)).filter(Boolean);
         if (items.length) out.push(items.join(' · '));
         break;
       }

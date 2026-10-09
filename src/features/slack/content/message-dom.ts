@@ -27,7 +27,7 @@ const PERMALINK_RE = /\/archives\/[CGD][A-Z0-9]+\/p\d{16}/;
  * last-resort ancestor scan (off for high-frequency events like mouseover).
  */
 export function findMessageElement(node: Node | null, deep = true): Element | null {
-  const el = node instanceof Element ? node : node?.parentElement ?? null;
+  const el = node instanceof Element ? node : (node?.parentElement ?? null);
   if (!el) return null;
   for (const sel of MESSAGE_SELECTORS) {
     const m = el.closest(sel);
@@ -176,7 +176,9 @@ export function injectMenuItem(menu: Element, label: string, onSelect: () => voi
     k.remove();
   });
 
-  const clickable = row.matches('[role="menuitem"], button') ? row : row.querySelector('[role="menuitem"], button') ?? row;
+  const clickable = row.matches('[role="menuitem"], button')
+    ? row
+    : (row.querySelector('[role="menuitem"], button') ?? row);
   clickable.setAttribute('role', 'menuitem');
   clickable.setAttribute('tabindex', '-1');
   const activate = (e: Event) => {

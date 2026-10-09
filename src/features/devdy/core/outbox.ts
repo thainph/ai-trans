@@ -72,10 +72,7 @@ export class DevdyOutbox {
   }
 
   /** Store a new export, then try to deliver it (and anything queued before it). */
-  enqueue(
-    entry: Omit<OutboxEntry, 'createdAt' | 'attempts'>,
-    blob: Blob | null,
-  ): Promise<DeliveryResult> {
+  enqueue(entry: Omit<OutboxEntry, 'createdAt' | 'attempts'>, blob: Blob | null): Promise<DeliveryResult> {
     return this.exclusive(async () => {
       if (blob) await this.deps.putBlob(entry.id, blob);
       const entries = await this.deps.loadEntries();

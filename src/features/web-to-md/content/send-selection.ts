@@ -4,10 +4,9 @@
 import { errorMessage } from '../../../shared/errors';
 import { isExtensionAlive } from '../../../shared/runtime';
 import { Toaster } from '../../../shared/toast';
-import { WEB_TARGET, WEB_TOAST_TARGET, type WebRequest, type WebToastMessage } from '../messages';
 import { htmlToMarkdown } from '../core/converter';
+import { WEB_TARGET, WEB_TOAST_TARGET, type WebRequest, type WebToastMessage } from '../messages';
 import { pageMeta, selectionHtml } from './selection';
-
 
 /** blob: images only exist in this page; inline small ones so Devdy gets them. */
 const MAX_INLINE_BLOB_BYTES = 5 * 1024 * 1024;

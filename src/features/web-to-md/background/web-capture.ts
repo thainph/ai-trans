@@ -2,20 +2,23 @@
 // Markdown → download referenced images into images/ → zip (or plain .md) →
 // outbox (queued + retried when Devdy is down).
 
+import { startZipJob } from '../../../background/zip-export';
+import { errorMessage } from '../../../shared/errors';
+import { ok, onTargetMessage, type Result } from '../../../shared/messaging';
+import type { ToastState } from '../../../shared/toast';
+import { outbox } from '../../devdy/background';
+import { openSettings } from '../../devdy/background/open-settings';
 import type { SendOutcome } from '../../devdy/core/client';
 import {
+  collectImageUrls,
+  firstLineTitle,
   MAX_IMAGE_BYTES,
   MAX_TOTAL_IMAGE_BYTES,
   type PageMeta,
-  collectImageUrls,
-  firstLineTitle,
   planImages,
   rewriteImageLinks,
   webFrontMatter,
 } from '../core/web-capture';
-import type { ToastState } from '../../../shared/toast';
-import { errorMessage } from '../../../shared/errors';
-import { type Result, ok, onTargetMessage } from '../../../shared/messaging';
 import {
   type DownloadPageResponse,
   type SendPageResponse,
@@ -25,9 +28,6 @@ import {
   type WebSendResult,
   type WebToastMessage,
 } from '../messages';
-import { outbox } from '../../devdy/background';
-import { openSettings } from '../../devdy/background/open-settings';
-import { startZipJob } from '../../../background/zip-export';
 
 const PAGE_MD = 'page.md';
 
@@ -151,7 +151,9 @@ onTargetMessage<WebRequest>(WEB_TARGET, (req, sender) => {
         { markdown: req.markdown, page: req.page, selection: true, title: firstLineTitle(req.selectionText) },
         (text) => toast(tabId, sender.frameId, { key, state: 'progress', text }),
       )
-        .then((r) => toast(tabId, sender.frameId, { key, ...toastState(r.delivery.kind), text: resultText(r, 'Selection') }))
+        .then((r) =>
+          toast(tabId, sender.frameId, { key, ...toastState(r.delivery.kind), text: resultText(r, 'Selection') }),
+        )
         .catch((e: unknown) =>
           toast(tabId, sender.frameId, { key, state: 'error', text: `Could not send: ${errorMessage(e)}` }),
         );

@@ -72,12 +72,7 @@ function collectTranslatableTextNodes(): Text[] {
 function needsTranslation(text: string): boolean {
   if (/^\d[\d\s.,:%/\-+()]*$/.test(text)) return false; // numbers only
   if (/^https?:\/\/\S+$/.test(text)) return false; // URLs
-  if (
-    /^[^a-zA-ZÀ-ɏЀ-ӿ؀-ۿऀ-ॿ฀-๿぀-ヿ一-鿿가-힯]+$/.test(
-      text,
-    )
-  )
-    return false; // no letters at all
+  if (/^[^a-zA-ZÀ-ɏЀ-ӿ؀-ۿऀ-ॿ฀-๿぀-ヿ一-鿿가-힯]+$/.test(text)) return false; // no letters at all
   return true;
 }
 

@@ -1,14 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  type FetchFn,
-  type SendOutcome,
   checkHealth,
   describeOutcome,
+  type FetchFn,
   findAllDevdy,
   isRetryable,
   listProjects,
   postCapture,
   resolveDevdy,
+  type SendOutcome,
 } from '../src/features/devdy/core/client';
 import { DevdyOutbox, type OutboxDeps, type OutboxEntry } from '../src/features/devdy/core/outbox';
 
@@ -91,7 +91,12 @@ describe('devdy-client: API calls', () => {
       },
     });
     const body = new Blob(['# hi'], { type: 'text/markdown' });
-    const out = await postCapture(47821, 'tok', { body, contentType: 'text/markdown; charset=utf-8', projectId: 'p1' }, f);
+    const out = await postCapture(
+      47821,
+      'tok',
+      { body, contentType: 'text/markdown; charset=utf-8', projectId: 'p1' },
+      f,
+    );
     expect(out).toEqual({ kind: 'created', id: 't1' });
     expect(seen).toEqual({ ct: 'text/markdown; charset=utf-8', project: 'p1' });
   });
@@ -115,7 +120,12 @@ describe('devdy-client: API calls', () => {
     );
     const big = { size: 51 * 1024 * 1024 } as Blob;
     const fetchSpy = vi.fn();
-    const out = await postCapture(47821, 't', { body: big, contentType: 'application/zip' }, fetchSpy as unknown as FetchFn);
+    const out = await postCapture(
+      47821,
+      't',
+      { body: big, contentType: 'application/zip' },
+      fetchSpy as unknown as FetchFn,
+    );
     expect(out).toMatchObject({ kind: 'rejected', status: 413 });
     expect(fetchSpy).not.toHaveBeenCalled();
   });
@@ -277,9 +287,7 @@ describe('DevdyOutbox', () => {
   it('serializes concurrent enqueues (no lost entries)', async () => {
     const m = memoryDeps({ resolveDevdy: async () => ({ kind: 'none' }) });
     const box = new DevdyOutbox(m.deps);
-    await Promise.all(
-      ['a', 'b', 'c', 'd'].map((id) => box.enqueue({ id, title: id, contentType: 'x' }, md(id))),
-    );
+    await Promise.all(['a', 'b', 'c', 'd'].map((id) => box.enqueue({ id, title: id, contentType: 'x' }, md(id))));
     expect(m.entries().map((e) => e.id)).toEqual(['a', 'b', 'c', 'd']);
   });
 });

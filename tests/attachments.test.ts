@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  type AttachmentOutcome,
   isAllowedFileUrl,
   isCompressiblePath,
   planAttachments,
-  type AttachmentOutcome,
 } from '../src/features/slack/core/attachments';
-import { safeFileName } from '../src/shared/filename';
 import { buildThreadMarkdown, type ThreadData } from '../src/features/slack/core/md-builder';
 import type { SlackFile, SlackMessage } from '../src/features/slack/core/types';
+import { safeFileName } from '../src/shared/filename';
 
 const MB = 1024 * 1024;
 

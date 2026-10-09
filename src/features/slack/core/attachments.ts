@@ -16,9 +16,7 @@ export const MAX_TOTAL_BYTES = 200 * 1024 * 1024;
 export const FILES_DIR = 'attachments';
 
 /** What happened to one file (keyed by Slack file id). */
-export type AttachmentOutcome =
-  | { kind: 'saved'; path: string; isImage: boolean }
-  | { kind: 'skipped'; reason: string };
+export type AttachmentOutcome = { kind: 'saved'; path: string; isImage: boolean } | { kind: 'skipped'; reason: string };
 
 export interface PlannedDownload {
   id: string;

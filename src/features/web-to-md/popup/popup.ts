@@ -6,12 +6,7 @@ import { filenamePart } from '../../../shared/filename';
 import { htmlToMarkdown } from '../core/converter';
 import { type ExtractMode, type ExtractResult, extractInPage } from '../core/extract';
 import { type PageMeta, webFrontMatter } from '../core/web-capture';
-import {
-  type DownloadPageResponse,
-  type SendPageResponse,
-  WEB_TARGET,
-  type WebRequest,
-} from '../messages';
+import { type DownloadPageResponse, type SendPageResponse, WEB_TARGET, type WebRequest } from '../messages';
 
 const $ = <T extends HTMLElement>(id: string): T => {
   const el = document.getElementById(id);
@@ -76,7 +71,9 @@ async function generate(): Promise<string | null> {
   }
 
   // Results of every frame (the page + its iframes, e.g. a Claude artifact)
-  const frames = (injection || []).map((r) => r?.result).filter((d): d is ExtractResult => typeof d?.textLen === 'number');
+  const frames = (injection || [])
+    .map((r) => r?.result)
+    .filter((d): d is ExtractResult => typeof d?.textLen === 'number');
 
   if (!frames.length) {
     setStatus('Could not extract any content.', true);
@@ -174,9 +171,7 @@ downloadBtn.addEventListener('click', async () => {
       const res = (await chrome.runtime.sendMessage(req)) as DownloadPageResponse | undefined;
       if (res?.ok && res.zipped) {
         const kept = res.images.failed ? `, ${res.images.failed} kept as links` : '';
-        setStatus(
-          `Saved ${res.filename} (${res.images.saved} image${res.images.saved === 1 ? '' : 's'}${kept})`,
-        );
+        setStatus(`Saved ${res.filename} (${res.images.saved} image${res.images.saved === 1 ? '' : 's'}${kept})`);
         return;
       }
       if (res?.ok && res.images.failed) note = ` (${res.images.failed} image(s) could not be downloaded; links kept)`;

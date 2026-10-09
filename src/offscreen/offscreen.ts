@@ -3,11 +3,11 @@
 // are allowed by host permissions and carry the user's Slack cookies.
 
 import { type Zippable, zipSync } from 'fflate';
-import { errorMessage } from '../shared/errors';
-import { type Result, onTargetMessage } from '../shared/messaging';
-import { isAllowedFileUrl, isCompressiblePath } from '../features/slack/core/attachments';
 import { putBlob } from '../features/devdy/core/blob-store';
+import { isAllowedFileUrl, isCompressiblePath } from '../features/slack/core/attachments';
 import { imageExtension, isFetchableImageUrl } from '../features/web-to-md/core/web-capture';
+import { errorMessage } from '../shared/errors';
+import { onTargetMessage, type Result } from '../shared/messaging';
 import {
   type BuildZipResponse,
   type FetchFileResponse,
@@ -108,7 +108,8 @@ async function fetchImage(req: Extract<OffscreenRequest, { type: 'fetch-image' }
   if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
   const type = res.headers.get('Content-Type') ?? '';
   const ext = imageExtension(type, req.url);
-  if (!type.toLowerCase().startsWith('image/') && ext === 'img') return { ok: false, error: `not an image (${type || 'unknown type'})` };
+  if (!type.toLowerCase().startsWith('image/') && ext === 'img')
+    return { ok: false, error: `not an image (${type || 'unknown type'})` };
   try {
     const bytes = await readCapped(res, req.maxBytes);
     const path = `${req.pathBase}.${ext}`;

@@ -53,9 +53,10 @@ function render(st: DevdyStatus): void {
     info = `${st.instances.length} Devdy apps are running — pick the one to send to below.`;
   } else if (!st.connected) {
     text = 'Devdy is not running';
-    info = st.pinned && st.port
-      ? `The selected app (port ${st.port}) is not answering. Exports are queued meanwhile.`
-      : 'Start Devdy to send. Exports are queued meanwhile.';
+    info =
+      st.pinned && st.port
+        ? `The selected app (port ${st.port}) is not answering. Exports are queued meanwhile.`
+        : 'Start Devdy to send. Exports are queued meanwhile.';
   } else if (!st.hasToken) {
     cls = 'warn';
     text = 'Token needed';

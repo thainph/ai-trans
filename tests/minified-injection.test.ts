@@ -6,10 +6,10 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { build, type Rolldown } from 'vite';
-import type { extractInPage as ExtractFn } from '../src/features/web-to-md/core/extract';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { pageSlackApi as PageSlackApiFn } from '../src/features/slack/core/slack-client';
+import type { extractInPage as ExtractFn } from '../src/features/web-to-md/core/extract';
 
 let dir: string;
 let minified: { pageSlackApi: typeof PageSlackApiFn; extractInPage: typeof ExtractFn };

@@ -168,7 +168,12 @@ function buildLangOptions(selectedLang: string): string {
 }
 
 // --- Popup (Shadow DOM) ---
-function createPopup(rect: DOMRect, sourceLang: string, targetLang: string, mode: 'translate' | 'grammar' = 'translate') {
+function createPopup(
+  rect: DOMRect,
+  sourceLang: string,
+  targetLang: string,
+  mode: 'translate' | 'grammar' = 'translate',
+) {
   if (!isExtensionAlive()) {
     cleanup();
     return;
@@ -715,7 +720,9 @@ document.addEventListener('mouseup', (e) => {
       selRange = range.cloneRange();
       selRect = rect;
       selAnchorEl =
-        sel.anchorNode?.nodeType === Node.ELEMENT_NODE ? (sel.anchorNode as Element) : (sel.anchorNode?.parentElement ?? null);
+        sel.anchorNode?.nodeType === Node.ELEMENT_NODE
+          ? (sel.anchorNode as Element)
+          : (sel.anchorNode?.parentElement ?? null);
       showTrigger(rect, selAnchorEl);
     } catch {
       // selection lost

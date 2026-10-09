@@ -3,11 +3,11 @@
 
 import { filenamePart } from '../../../shared/filename';
 import { frontMatter, yamlPlain, yamlRaw } from '../../../shared/yaml';
-import type { SlackAttachment, SlackMessage } from './types';
 import type { AttachmentOutcome } from './attachments';
 import { renderEmoji } from './emoji';
-import { type RenderContext, markdownLink, mrkdwnToMd } from './mrkdwn-to-md';
+import { markdownLink, mrkdwnToMd, type RenderContext } from './mrkdwn-to-md';
 import { layoutBlocksToMd, richTextBlocksToMd } from './rich-text-to-md';
+import type { SlackAttachment, SlackMessage } from './types';
 
 export interface ThreadData {
   workspace: { name?: string; domain?: string };
@@ -98,7 +98,13 @@ function renderAttachments(atts: SlackAttachment[] | undefined, ctx: RenderConte
       if (lines.length === 0 && a.fallback) lines.push(mrkdwnToMd(a.fallback, ctx));
     }
     const text = lines.join('\n').trim();
-    if (text) blocks.push(text.split('\n').map((l) => (l ? `> ${l}` : '>')).join('\n'));
+    if (text)
+      blocks.push(
+        text
+          .split('\n')
+          .map((l) => (l ? `> ${l}` : '>'))
+          .join('\n'),
+      );
   }
   return blocks.join('\n\n');
 }
@@ -124,7 +130,8 @@ function renderFiles(msg: SlackMessage, attachments?: ReadonlyMap<string, Attach
   if (!Array.isArray(msg.files) || msg.files.length === 0) return '';
   return msg.files
     .map((f) => {
-      const name = f.name || f.title || (f.mode === 'tombstone' || f.mode === 'hidden_by_limit' ? '(file unavailable)' : 'file');
+      const name =
+        f.name || f.title || (f.mode === 'tombstone' || f.mode === 'hidden_by_limit' ? '(file unavailable)' : 'file');
       const outcome = f.id ? attachments?.get(f.id) : undefined;
       if (outcome?.kind === 'saved') {
         return outcome.isImage ? `![${linkText(name)}](${outcome.path})` : `📎 [${linkText(name)}](${outcome.path})`;
@@ -156,7 +163,11 @@ export function makeTitle(body: string): string {
     .trim();
   if (!t) return '(no text)';
   const chars = Array.from(t);
-  if (chars.length > TITLE_MAX) t = `${chars.slice(0, TITLE_MAX - 1).join('').trimEnd()}…`;
+  if (chars.length > TITLE_MAX)
+    t = `${chars
+      .slice(0, TITLE_MAX - 1)
+      .join('')
+      .trimEnd()}…`;
   return t;
 }
 
@@ -167,7 +178,7 @@ export function sanitizeFilenamePart(s: string): string {
 function channelLabel(data: ThreadData): string {
   const { channel, users } = data;
   if (channel.isIm) {
-    const who = channel.imUserId ? users[channel.imUserId] ?? channel.imUserId : channel.name;
+    const who = channel.imUserId ? (users[channel.imUserId] ?? channel.imUserId) : channel.name;
     return `@${who ?? channel.id}`;
   }
   return `#${channel.name ?? channel.id}`;

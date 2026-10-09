@@ -28,7 +28,11 @@ describe('parseThreadLink', () => {
 
   it('accepts enterprise subdomains, private channels, DMs, whitespace and <> wrapping', () => {
     const r1 = parseThreadLink('  <https://acme.enterprise.slack.com/archives/G01PRIV/p1700000000123456>  ');
-    expect(r1.ok && r1.value).toEqual({ workspaceDomain: 'acme.enterprise', channelId: 'G01PRIV', threadTs: '1700000000.123456' });
+    expect(r1.ok && r1.value).toEqual({
+      workspaceDomain: 'acme.enterprise',
+      channelId: 'G01PRIV',
+      threadTs: '1700000000.123456',
+    });
     const r2 = parseThreadLink('https://papay.slack.com/archives/D01DM/p1700000000123456');
     expect(r2.ok && r2.value.channelId).toBe('D01DM');
   });

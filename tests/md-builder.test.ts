@@ -1,15 +1,15 @@
 import { describe, expect, it } from 'vitest';
+import { parse as parseYaml } from 'yaml';
 import {
-  type ThreadData,
   authorName,
   buildThreadMarkdown,
   formatLocalIso,
   makeTitle,
   sanitizeFilenamePart,
+  type ThreadData,
 } from '../src/features/slack/core/md-builder';
-import { yamlScalar } from '../src/shared/yaml';
 import type { SlackMessage, SlackRepliesResponse } from '../src/features/slack/core/types';
-import { parse as parseYaml } from 'yaml';
+import { yamlScalar } from '../src/shared/yaml';
 import fixture from './fixtures/replies.json';
 
 const replies = fixture as unknown as SlackRepliesResponse;
@@ -139,7 +139,9 @@ Shipped by @Bob ✨
 describe('truncation notice (finding #2)', () => {
   it('marks partial exports in frontmatter and body', () => {
     const { markdown } = buildThreadMarkdown(threadData({ truncated: true }), ALL, NOW);
-    expect(markdown).toContain('participants: [Alice, Bob, Deploy Bot, Carol Tanaka, Release App]\ntruncated: true\n---');
+    expect(markdown).toContain(
+      'participants: [Alice, Bob, Deploy Bot, Carol Tanaka, Release App]\ntruncated: true\n---',
+    );
     expect(markdown).toContain('# Thread: Deploy plan for v2.3 🚀\n\n> ⚠️ This export may be incomplete');
   });
 
@@ -158,7 +160,7 @@ describe('YAML frontmatter escaping (finding #9)', () => {
   };
 
   const tricky = [
-    'O\'Brien',
+    "O'Brien",
     'Say "hi"',
     'Team: Ops',
     '[bot]',

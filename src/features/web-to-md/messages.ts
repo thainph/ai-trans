@@ -4,10 +4,10 @@
 // Web → MD popup                     ─WEB_TARGET─▶ background  (send-page)
 // background ─WEB_TOAST_TARGET─▶ content script (progress / result toast)
 
-import type { PageMeta } from './core/web-capture';
-import type { DevdyDelivery } from '../slack/messages';
 import type { Result } from '../../shared/messaging';
 import type { ToastPayload } from '../../shared/toast';
+import type { DevdyDelivery } from '../slack/messages';
+import type { PageMeta } from './core/web-capture';
 
 export const WEB_TARGET = 'context-kit-web';
 /** Distinct from the Slack toast target so app.slack.com doesn't show two toasts. */
@@ -46,10 +46,11 @@ export interface WebSendResult {
 }
 
 export type DownloadPageResponse = Result<
-  { zipped: true; filename: string; images: { saved: number; failed: number } } | {
-    zipped: false;
-    images: { saved: number; failed: number };
-  }
+  | { zipped: true; filename: string; images: { saved: number; failed: number } }
+  | {
+      zipped: false;
+      images: { saved: number; failed: number };
+    }
 >;
 
 /** Response to `send-page`: the delivery plus the status line for the popup. */

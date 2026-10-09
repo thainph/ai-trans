@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import manifest from '../public/manifest.json';
 import { keepAliveSleep } from '../src/background/keepalive';
 import { makeDoneResponse } from '../src/features/slack/background/respond';
-import manifest from '../public/manifest.json';
 
 describe('keepAliveSleep (finding #3)', () => {
   afterEach(() => vi.useRealTimers());

@@ -34,14 +34,16 @@ export function firstLineTitle(text: string, max = TITLE_MAX): string | undefine
     .find(Boolean);
   if (!line) return undefined;
   const chars = Array.from(line);
-  return chars.length > max ? `${chars.slice(0, max - 1).join('').trimEnd()}…` : line;
+  return chars.length > max
+    ? `${chars
+        .slice(0, max - 1)
+        .join('')
+        .trimEnd()}…`
+    : line;
 }
 
 /** Devdy web-page front matter (also used by the Web → MD export), followed by a blank line. */
-export function webFrontMatter(
-  meta: PageMeta,
-  opts: { title?: string; selection: boolean; capturedAt: Date },
-): string {
+export function webFrontMatter(meta: PageMeta, opts: { title?: string; selection: boolean; capturedAt: Date }): string {
   const head = frontMatter({
     title: opts.title ?? meta.pageTitle,
     url: meta.url,

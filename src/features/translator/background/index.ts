@@ -263,7 +263,11 @@ async function handleGrammarCheck(text: string): Promise<string> {
 const TRUNCATED_NOTICE = '\n\n⚠️ The translation may be incomplete: the AI model stopped at its output limit.';
 
 async function handleTranslate(text: string, sourceLang: string, targetLang: string, style: string): Promise<string> {
-  const systemPrompt = buildTranslatePrompt(languageName(sourceLang), languageName(targetLang), styleInstruction(style));
+  const systemPrompt = buildTranslatePrompt(
+    languageName(sourceLang),
+    languageName(targetLang),
+    styleInstruction(style),
+  );
 
   // Long selections are translated in chunks so no request exceeds the
   // model's context/output limits; whitespace between chunks is kept as-is.

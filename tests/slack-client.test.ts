@@ -1,16 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  type PageCallResult,
-  type PageRequest,
-  type PageResponse,
-  SlackExportError,
-  MAX_RETRY_AFTER_MS,
   backoffMs,
-  formatWait,
   collectReferences,
   describeSlackError,
   fetchThread,
+  formatWait,
+  MAX_RETRY_AFTER_MS,
+  type PageCallResult,
+  type PageRequest,
+  type PageResponse,
   pageSlackApi,
+  SlackExportError,
 } from '../src/features/slack/core/slack-client';
 import type { SlackMessage, SlackRepliesResponse } from '../src/features/slack/core/types';
 import fixture from './fixtures/replies.json';
@@ -41,7 +41,8 @@ const noSleep = async () => {};
 /** Generic handler: replies come from `pages` (keyed by cursor), lookups always succeed. */
 function threadHandler(pages: Record<string, PageCallResult>): Handler {
   return (req) => {
-    if (req.method === 'conversations.replies') return pages[req.params.cursor ?? ''] ?? { ok: false, error: 'bad_cursor' };
+    if (req.method === 'conversations.replies')
+      return pages[req.params.cursor ?? ''] ?? { ok: false, error: 'bad_cursor' };
     if (req.method === 'conversations.info') return channelInfo(req.params.channel!, 'chan');
     if (req.method === 'users.info') return userInfo(req.params.user!, 'User');
     return { ok: false, error: 'unknown_method' };
@@ -73,7 +74,8 @@ describe('fetchThread', () => {
       }
       if (req.method === 'users.info') {
         const id = req.params.user!;
-        if (id === 'U03CAROL') return { ok: false, error: 'user_not_found', data: { ok: false, error: 'user_not_found' } };
+        if (id === 'U03CAROL')
+          return { ok: false, error: 'user_not_found', data: { ok: false, error: 'user_not_found' } };
         return userInfo(id, names[id] ?? id);
       }
       return { ok: false, error: 'unknown_method' };
@@ -101,7 +103,12 @@ describe('fetchThread', () => {
   });
 
   it('restarts from the parent when the link points at a reply', async () => {
-    const parent: SlackMessage = { ts: '1700000000.000001', thread_ts: '1700000000.000001', user: 'U1', text: 'parent' };
+    const parent: SlackMessage = {
+      ts: '1700000000.000001',
+      thread_ts: '1700000000.000001',
+      user: 'U1',
+      text: 'parent',
+    };
     const reply: SlackMessage = { ts: '1700000050.000002', thread_ts: '1700000000.000001', user: 'U1', text: 'reply' };
     const { run, requests } = fakeRunner((req) => {
       if (req.method === 'conversations.replies') {
@@ -119,7 +126,10 @@ describe('fetchThread', () => {
   describe('pagination (findings #2, #8)', () => {
     it('follows next_cursor even when has_more is false', async () => {
       const { run } = fakeRunner(
-        threadHandler({ '': repliesPage([msg('1700000000.000001')], 'C2', false), C2: repliesPage([msg('1700000001.000001')]) }),
+        threadHandler({
+          '': repliesPage([msg('1700000000.000001')], 'C2', false),
+          C2: repliesPage([msg('1700000001.000001')]),
+        }),
       );
       const { data, warning } = await fetchThread(run, { channelId: 'C1', threadTs: '1700000000.000001' });
       expect(data.messages).toHaveLength(2);
@@ -146,7 +156,11 @@ describe('fetchThread', () => {
           c2: repliesPage([msg('1700000002.000001')]),
         }),
       );
-      const { data, warning } = await fetchThread(run, { channelId: 'C1', threadTs: '1700000000.000001' }, { maxPages: 2 });
+      const { data, warning } = await fetchThread(
+        run,
+        { channelId: 'C1', threadTs: '1700000000.000001' },
+        { maxPages: 2 },
+      );
       expect(data.messages).toHaveLength(2);
       expect(data.truncated).toBe(true);
       expect(warning).toMatch(/Stopped after 2 pages \(2 messages\).*incomplete/);
@@ -161,7 +175,10 @@ describe('fetchThread', () => {
 
     it('stops (with a warning) on a repeated cursor instead of looping forever', async () => {
       const { run, requests } = fakeRunner(
-        threadHandler({ '': repliesPage([msg('1700000000.000001')], 'same'), same: repliesPage([msg('1700000001.000001')], 'same') }),
+        threadHandler({
+          '': repliesPage([msg('1700000000.000001')], 'same'),
+          same: repliesPage([msg('1700000001.000001')], 'same'),
+        }),
       );
       const { warning } = await fetchThread(run, { channelId: 'C1', threadTs: '1700000000.000001' });
       expect(requests.filter((r) => r.method === 'conversations.replies')).toHaveLength(2);
@@ -192,13 +209,19 @@ describe('fetchThread', () => {
       const base = threadHandler({ '': repliesPage([msg('1700000000.000001')]) });
       const { run } = fakeRunner((req) => {
         if (req.method === 'conversations.replies' && replyCalls++ < 2) {
-          return replyCalls === 1 ? { ok: false, error: 'ratelimited', httpStatus: 429, retryAfterSec: 7 } : { ok: false, error: 'ratelimited' };
+          return replyCalls === 1
+            ? { ok: false, error: 'ratelimited', httpStatus: 429, retryAfterSec: 7 }
+            : { ok: false, error: 'ratelimited' };
         }
         return base(req);
       });
       const clock = fakeClock();
       const progress: string[] = [];
-      const { data } = await fetchThread(run, LINK1, { ...clock, random: () => 0, onProgress: (t) => progress.push(t) });
+      const { data } = await fetchThread(run, LINK1, {
+        ...clock,
+        random: () => 0,
+        onProgress: (t) => progress.push(t),
+      });
       expect(data.messages).toHaveLength(1);
       expect(clock.waits).toEqual([7000, 1000]); // Retry-After (+0 jitter), then 2s step * 50% (random=0)
       expect(progress).toContain('Rate limited by Slack — retrying in 7s…');
@@ -207,7 +230,9 @@ describe('fetchThread', () => {
     it('gives up after maxRetries with a readable error', async () => {
       const { run } = fakeRunner(() => ({ ok: false, error: 'ratelimited' }));
       const clock = fakeClock();
-      await expect(fetchThread(run, { channelId: 'C1', threadTs: '1' }, { ...clock, maxRetries: 3 })).rejects.toMatchObject({
+      await expect(
+        fetchThread(run, { channelId: 'C1', threadTs: '1' }, { ...clock, maxRetries: 3 }),
+      ).rejects.toMatchObject({
         code: 'ratelimited',
         message: expect.stringContaining('rate limiting'),
       });
@@ -288,8 +313,14 @@ describe('fetchThread', () => {
   });
 
   it('maps Slack API errors to readable messages', async () => {
-    const { run } = fakeRunner(() => ({ ok: false, error: 'channel_not_found', data: { ok: false, error: 'channel_not_found' } }));
-    await expect(fetchThread(run, { channelId: 'C1', threadTs: '1700000000.000001' }, { sleep: noSleep })).rejects.toMatchObject({
+    const { run } = fakeRunner(() => ({
+      ok: false,
+      error: 'channel_not_found',
+      data: { ok: false, error: 'channel_not_found' },
+    }));
+    await expect(
+      fetchThread(run, { channelId: 'C1', threadTs: '1700000000.000001' }, { sleep: noSleep }),
+    ).rejects.toMatchObject({
       name: 'SlackExportError',
       code: 'channel_not_found',
       message: expect.stringContaining('Channel not found'),
@@ -348,7 +379,13 @@ describe('pageSlackApi (page context)', () => {
 
     expect(res.ok).toBe(true);
     if (!res.ok) return;
-    expect(res.team).toEqual({ id: 'T01', name: 'Papay', domain: 'papay', url: 'https://papay.slack.com/', guessed: false });
+    expect(res.team).toEqual({
+      id: 'T01',
+      name: 'Papay',
+      domain: 'papay',
+      url: 'https://papay.slack.com/',
+      guessed: false,
+    });
     expect(res.result).toMatchObject({ ok: true, data: { channel: { name: 'x' } } });
     expect(JSON.stringify(res)).not.toContain('xoxc');
 
@@ -441,15 +478,21 @@ describe('pageSlackApi (page context)', () => {
       expect(new URL(fetchedUrls()[0]!).hostname.endsWith('.slack.com')).toBe(true);
     });
 
-    it.each(['acme..enterprise', '.acme', 'acme.', 'acme.enterprise/x', 'acme.enterprise:443', 'evil.com#', 'a b', 'x@evil.com'])(
-      'still rejects malformed domain %j (falls back to app.slack.com)',
-      async (domain) => {
-        setTeams({ T1: { id: 'T1', domain, url: 'https://evil.tld/', token: 'xoxc-1' } });
-        fetchMock.mockResolvedValue(jsonResponse({ ok: true }));
-        await call();
-        expect(fetchedUrls()[0]).toBe('https://app.slack.com/api/auth.test');
-      },
-    );
+    it.each([
+      'acme..enterprise',
+      '.acme',
+      'acme.',
+      'acme.enterprise/x',
+      'acme.enterprise:443',
+      'evil.com#',
+      'a b',
+      'x@evil.com',
+    ])('still rejects malformed domain %j (falls back to app.slack.com)', async (domain) => {
+      setTeams({ T1: { id: 'T1', domain, url: 'https://evil.tld/', token: 'xoxc-1' } });
+      fetchMock.mockResolvedValue(jsonResponse({ ok: true }));
+      await call();
+      expect(fetchedUrls()[0]).toBe('https://app.slack.com/api/auth.test');
+    });
 
     it('url-encodes the method name', async () => {
       fetchMock.mockResolvedValue(jsonResponse({ ok: true }));

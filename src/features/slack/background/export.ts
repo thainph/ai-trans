@@ -13,13 +13,13 @@ import type { ThreadData } from '../core/md-builder';
 import { buildThreadMarkdown } from '../core/md-builder';
 import { parseThreadLink } from '../core/permalink';
 import {
+  fetchThread,
+  formatWait,
   type PageRequest,
   type PageResponse,
   type PageRunner,
-  SlackExportError,
-  fetchThread,
-  formatWait,
   pageSlackApi,
+  SlackExportError,
 } from '../core/slack-client';
 import { EXPORT_PORT_NAME, type ExportRequest, type ExportResponse } from '../messages';
 import { makeDoneResponse } from './respond';
@@ -66,7 +66,10 @@ function makeRunner(tabId: number): PageRunner {
     }
     const result = injection[0]?.result;
     if (!result) {
-      throw new SlackExportError('inject_failed', 'The Slack tab returned no result. Reload app.slack.com and try again.');
+      throw new SlackExportError(
+        'inject_failed',
+        'The Slack tab returned no result. Reload app.slack.com and try again.',
+      );
     }
     return result;
   };
@@ -107,7 +110,10 @@ export async function handleExport(
   const { data, warning: fetchWarning } = await fetchThread(run, parsed.value, {
     onProgress,
     // Rate-limit waits happen here (not in the page) with keepalive pings + progress messages.
-    sleep: (ms) => keepAliveSleep(ms, undefined, undefined, (left) => onProgress(`Rate limited by Slack — retrying in ${formatWait(left)}…`)),
+    sleep: (ms) =>
+      keepAliveSleep(ms, undefined, undefined, (left) =>
+        onProgress(`Rate limited by Slack — retrying in ${formatWait(left)}…`),
+      ),
   });
   if (req.action === 'devdy') {
     await handleDevdyExport(req, data, fetchWarning, post, onProgress);
@@ -223,13 +229,11 @@ async function handleDevdyExport(
   // No project: Devdy assigns it later.
   const delivery = await outbox.enqueue({ id, kind: 'slack-threads', title: result.filename, contentType }, blob);
   post(
-    makeDoneResponse(
-      'devdy',
-      result,
-      [fetchWarning, fileWarning].filter(Boolean).join(' ') || undefined,
-      files,
-      { kind: delivery.outcome.kind, message: delivery.message, pending: delivery.pending },
-    ),
+    makeDoneResponse('devdy', result, [fetchWarning, fileWarning].filter(Boolean).join(' ') || undefined, files, {
+      kind: delivery.outcome.kind,
+      message: delivery.message,
+      pending: delivery.pending,
+    }),
   );
 }
 

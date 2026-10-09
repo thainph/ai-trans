@@ -11,21 +11,14 @@ export interface ParsedThreadLink {
   threadTs: string;
 }
 
-export type PermalinkErrorCode =
-  | 'EMPTY'
-  | 'NOT_A_URL'
-  | 'NOT_SLACK'
-  | 'UNSUPPORTED_FORMAT'
-  | 'INVALID_TS';
+export type PermalinkErrorCode = 'EMPTY' | 'NOT_A_URL' | 'NOT_SLACK' | 'UNSUPPORTED_FORMAT' | 'INVALID_TS';
 
 export interface PermalinkError {
   code: PermalinkErrorCode;
   message: string;
 }
 
-export type ParseResult =
-  | { ok: true; value: ParsedThreadLink }
-  | { ok: false; error: PermalinkError };
+export type ParseResult = { ok: true; value: ParsedThreadLink } | { ok: false; error: PermalinkError };
 
 const CHANNEL_RE = /^[CGD][A-Z0-9]{2,}$/;
 const TEAM_RE = /^[TE][A-Z0-9]{2,}$/;
@@ -95,7 +88,10 @@ export function parseThreadLink(input: string): ParseResult {
 
   // 2) <sub>.slack.com/archives/<CHANNEL>/p<16 digits>[?thread_ts=…&cid=…]
   if (segments[0] !== 'archives') {
-    return fail('UNSUPPORTED_FORMAT', 'Expected a message link like https://<workspace>.slack.com/archives/<channel>/p<ts>.');
+    return fail(
+      'UNSUPPORTED_FORMAT',
+      'Expected a message link like https://<workspace>.slack.com/archives/<channel>/p<ts>.',
+    );
   }
   const channelId = segments[1] ?? '';
   if (!CHANNEL_RE.test(channelId)) {

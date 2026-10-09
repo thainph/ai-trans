@@ -26,20 +26,18 @@ export interface ExtractResult {
 
 export function extractInPage(mode: ExtractMode): ExtractResult {
   const meta = (name: string) => {
-    const el =
-      document.querySelector(`meta[property="${name}"]`) ||
-      document.querySelector(`meta[name="${name}"]`);
-    return el ? (el.getAttribute("content") || "").trim() : "";
+    const el = document.querySelector(`meta[property="${name}"]`) || document.querySelector(`meta[name="${name}"]`);
+    return el ? (el.getAttribute('content') || '').trim() : '';
   };
 
   const result: ExtractResult = {
-    title: (meta("og:title") || document.title || "").trim(),
+    title: (meta('og:title') || document.title || '').trim(),
     url: location.href,
-    description: meta("description") || meta("og:description") || "",
-    byline: meta("author") || meta("article:author") || "",
-    siteName: meta("og:site_name") || location.hostname,
-    published: meta("article:published_time") || "",
-    html: "",
+    description: meta('description') || meta('og:description') || '',
+    byline: meta('author') || meta('article:author') || '',
+    siteName: meta('og:site_name') || location.hostname,
+    published: meta('article:published_time') || '',
+    html: '',
     textLen: 0,
     isTop: window.top === window.self,
     host: location.hostname,
@@ -48,21 +46,21 @@ export function extractInPage(mode: ExtractMode): ExtractResult {
   };
 
   // Host of a Claude artifact's real content (claudeusercontent.com iframe)
-  const slot = document.querySelector("[data-frame-uchost]");
-  result.uchost = slot?.getAttribute("data-frame-uchost") || "";
+  const slot = document.querySelector('[data-frame-uchost]');
+  result.uchost = slot?.getAttribute('data-frame-uchost') || '';
 
   const finalize = () => {
-    const tmp = document.createElement("div");
-    tmp.innerHTML = result.html || "";
-    result.textLen = (tmp.textContent || "").replace(/\s+/g, " ").trim().length;
+    const tmp = document.createElement('div');
+    tmp.innerHTML = result.html || '';
+    result.textLen = (tmp.textContent || '').replace(/\s+/g, ' ').trim().length;
     return result;
   };
 
   // Selection mode
-  if (mode === "selection") {
+  if (mode === 'selection') {
     const sel = window.getSelection();
     if (sel && sel.rangeCount && !sel.isCollapsed) {
-      const div = document.createElement("div");
+      const div = document.createElement('div');
       for (let i = 0; i < sel.rangeCount; i++) {
         div.appendChild(sel.getRangeAt(i).cloneContents());
       }
@@ -73,21 +71,21 @@ export function extractInPage(mode: ExtractMode): ExtractResult {
   }
 
   // Full page
-  if (mode === "full") {
-    result.html = document.body ? document.body.innerHTML : "";
+  if (mode === 'full') {
+    result.html = document.body ? document.body.innerHTML : '';
     return finalize();
   }
 
   // Article mode: Readability-like heuristics
-  const NOISE = "nav,header,footer,aside,form,button,.nav,.menu,.sidebar,.advert,.ads,.ad,.social,.share,.comment,.comments,.related,.newsletter,.subscribe,.cookie,.popup,.modal,[role=navigation],[role=banner],[role=complementary],[aria-hidden=true]";
+  const NOISE =
+    'nav,header,footer,aside,form,button,.nav,.menu,.sidebar,.advert,.ads,.ad,.social,.share,.comment,.comments,.related,.newsletter,.subscribe,.cookie,.popup,.modal,[role=navigation],[role=banner],[role=complementary],[aria-hidden=true]';
   const textLen = (el: Element | null) =>
-    ((el && ((el as HTMLElement).innerText || el.textContent)) || "").replace(/\s+/g, " ").trim().length;
+    ((el && ((el as HTMLElement).innerText || el.textContent)) || '').replace(/\s+/g, ' ').trim().length;
 
-  const main = document.querySelector("main") || document.querySelector("[role=main]");
+  const main = document.querySelector('main') || document.querySelector('[role=main]');
   const scope: Element = main || document.body;
   // Top-level <article>s only (an <article> nested in another one is part of it).
-  const articles = Array.from(document.querySelectorAll("article"))
-    .filter((a) => !a.parentElement?.closest("article"));
+  const articles = Array.from(document.querySelectorAll('article')).filter((a) => !a.parentElement?.closest('article'));
 
   let candidate: Element | null = null;
   if (articles.length) {
@@ -114,13 +112,13 @@ export function extractInPage(mode: ExtractMode): ExtractResult {
   if (!candidate) {
     let best: Element | null = null;
     let bestScore = 0;
-    const nodes = document.querySelectorAll("div,section,article,main");
+    const nodes = document.querySelectorAll('div,section,article,main');
     for (const n of nodes) {
       // skip noise
       if (n.closest(NOISE)) continue;
       const len = textLen(n);
-      const pCount = n.querySelectorAll("p").length;
-      const linkLen = Array.from(n.querySelectorAll("a")).reduce((a, el) => a + textLen(el), 0);
+      const pCount = n.querySelectorAll('p').length;
+      const linkLen = Array.from(n.querySelectorAll('a')).reduce((a, el) => a + textLen(el), 0);
       const linkDensity = len ? linkLen / len : 1;
       // score: lots of text, many <p>, low link density
       const score = len * (1 - linkDensity) + pCount * 50;
@@ -137,12 +135,12 @@ export function extractInPage(mode: ExtractMode): ExtractResult {
   // card's header on a listing page).
   const clone = candidate.cloneNode(true) as Element;
   clone.querySelectorAll(NOISE).forEach((el) => {
-    const owner = el.parentElement?.closest("article");
+    const owner = el.parentElement?.closest('article');
     const ownedByArticle =
       owner && (owner === clone || clone.contains(owner)) && /^(HEADER|FOOTER|ASIDE)$/.test(el.tagName);
     if (!ownedByArticle) el.remove();
   });
-  clone.querySelectorAll("script,style,noscript,template,svg,iframe").forEach((el) => {
+  clone.querySelectorAll('script,style,noscript,template,svg,iframe').forEach((el) => {
     el.remove();
   });
 

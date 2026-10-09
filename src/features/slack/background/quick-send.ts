@@ -2,7 +2,7 @@
 // into Slack's own message menu. Progress and results are shown as a toast
 // inside the Slack tab.
 
-import { type Result, onTargetMessage } from '../../../shared/messaging';
+import { onTargetMessage, type Result } from '../../../shared/messaging';
 import { openSettings } from '../../devdy/background/open-settings';
 import { toastFor } from '../core/quick-send';
 import {

@@ -1,7 +1,7 @@
 // Pure helpers for quick sends (unit-tested).
 
-import type { ExportResponse } from '../messages';
 import type { ToastState } from '../../../shared/toast';
+import type { ExportResponse } from '../messages';
 import { TOAST_TARGET, type ToastMessage } from '../quick-send-messages';
 
 /** Map an export response to the toast shown inside Slack (null = no change). */

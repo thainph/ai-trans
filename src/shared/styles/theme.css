@@ -89,7 +89,9 @@ body {
   color: var(--text);
   background: var(--bg);
   outline: none;
-  transition: border-color var(--ease), box-shadow var(--ease);
+  transition:
+    border-color var(--ease),
+    box-shadow var(--ease);
 }
 
 .select-field {
@@ -137,7 +139,10 @@ body {
   border-radius: var(--radius-sm);
   cursor: pointer;
   user-select: none;
-  transition: background var(--ease), color var(--ease), border-color var(--ease);
+  transition:
+    background var(--ease),
+    color var(--ease),
+    border-color var(--ease);
 }
 
 .chip:hover {
@@ -157,7 +162,9 @@ body {
   flex-shrink: 0;
   opacity: 0;
   margin-left: -20px;
-  transition: opacity var(--ease), margin var(--ease);
+  transition:
+    opacity var(--ease),
+    margin var(--ease);
 }
 
 .chip:has(input:checked) {
@@ -201,7 +208,11 @@ body {
   font-weight: 600;
   font-family: inherit;
   cursor: pointer;
-  transition: background var(--ease), box-shadow var(--ease), transform var(--ease), border-color var(--ease);
+  transition:
+    background var(--ease),
+    box-shadow var(--ease),
+    transform var(--ease),
+    border-color var(--ease);
 }
 
 .btn svg {
@@ -352,7 +363,7 @@ body {
 }
 
 .collapsible summary::after {
-  content: '';
+  content: "";
   width: 8px;
   height: 8px;
   margin-left: 4px;

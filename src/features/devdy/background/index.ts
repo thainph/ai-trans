@@ -1,10 +1,10 @@
 // Devdy integration (service worker side): outbox wiring, retry alarm and the
 // small message API the Devdy tab uses for settings/status.
 
+import { fail, ok, onTargetMessage } from '../../../shared/messaging';
 import { deleteBlob, getBlob, putBlob } from '../core/blob-store';
 import { findAllDevdy, listProjects, postCapture, resolveDevdy } from '../core/client';
-import { type DevdySettings, DevdyOutbox, type OutboxEntry } from '../core/outbox';
-import { fail, ok, onTargetMessage } from '../../../shared/messaging';
+import { DevdyOutbox, type DevdySettings, type OutboxEntry } from '../core/outbox';
 import { DEVDY_TARGET, type DevdyFlushResult, type DevdyRequest, type DevdyStatus } from '../messages';
 
 const KEYS = {

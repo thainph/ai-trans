@@ -19,9 +19,9 @@
 // The token never leaves the page function: it is not returned, logged or stored,
 // and it is only ever sent to https://app.slack.com or https://<sub>.slack.com origins.
 
-import type { SlackConversation, SlackMessage, SlackRepliesResponse, SlackUser } from './types';
 import type { ThreadData } from './md-builder';
-import { type ParsedThreadLink, buildPermalink } from './permalink';
+import { buildPermalink, type ParsedThreadLink } from './permalink';
+import type { SlackConversation, SlackMessage, SlackRepliesResponse, SlackUser } from './types';
 
 // ---------------------------------------------------------------------------
 // Page-side contract
@@ -155,7 +155,11 @@ export async function pageSlackApi(req: PageRequest): Promise<PageResponse> {
       const retryAfter = Number(res.headers.get('Retry-After'));
       const retryAfterSec = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : undefined;
       if (res.status === 429) {
-        return { ok: true, team: teamInfo, result: { ok: false, error: 'ratelimited', httpStatus: 429, retryAfterSec } };
+        return {
+          ok: true,
+          team: teamInfo,
+          result: { ok: false, error: 'ratelimited', httpStatus: 429, retryAfterSec },
+        };
       }
       let data: any;
       try {
@@ -164,7 +168,12 @@ export async function pageSlackApi(req: PageRequest): Promise<PageResponse> {
         lastError = `http_${res.status}`;
         continue; // non-JSON (HTML error page etc.) -> try fallback base
       }
-      const result: PageCallResult = { ok: !!(data && data.ok), data, error: data && data.error, httpStatus: res.status };
+      const result: PageCallResult = {
+        ok: !!(data && data.ok),
+        data,
+        error: data && data.error,
+        httpStatus: res.status,
+      };
       if (result.error === 'ratelimited') result.retryAfterSec = retryAfterSec;
       return { ok: true, team: teamInfo, result };
     }
@@ -195,7 +204,8 @@ const ERROR_MESSAGES: Record<string, string> = {
   invalid_auth: 'Slack session is invalid or expired. Reload app.slack.com, log in again, and retry.',
   token_revoked: 'Slack session was revoked. Log in to app.slack.com again.',
   account_inactive: 'This Slack account is inactive.',
-  channel_not_found: 'Channel not found, or you do not have access to it. Check that the link belongs to a workspace you are logged into.',
+  channel_not_found:
+    'Channel not found, or you do not have access to it. Check that the link belongs to a workspace you are logged into.',
   thread_not_found: 'Thread not found. The message may have been deleted or the link is wrong.',
   message_not_found: 'Message not found. The message may have been deleted or the link is wrong.',
   missing_scope: 'Your Slack session is not allowed to read this conversation.',
@@ -324,7 +334,11 @@ export function formatWait(ms: number): string {
   return sec >= 120 ? `${Math.floor(sec / 60)}m ${sec % 60}s` : `${sec}s`;
 }
 
-export async function mapPool<T, R>(items: T[], concurrency: number, fn: (item: T, i: number) => Promise<R>): Promise<R[]> {
+export async function mapPool<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T, i: number) => Promise<R>,
+): Promise<R[]> {
   const out: R[] = new Array(items.length);
   let next = 0;
   const worker = async () => {
@@ -415,7 +429,14 @@ export async function fetchThread(
 
     // If the link points at a reply, restart from its thread parent once.
     const first = msgs[0];
-    if (page === 0 && !redirected && first && first.thread_ts && first.thread_ts !== threadTs && first.ts === threadTs) {
+    if (
+      page === 0 &&
+      !redirected &&
+      first &&
+      first.thread_ts &&
+      first.thread_ts !== threadTs &&
+      first.ts === threadTs
+    ) {
       threadTs = first.thread_ts;
       redirected = true;
       byTs.clear();
@@ -498,7 +519,8 @@ export async function fetchThread(
 
   onProgress(`Building Markdown for ${messages.length} messages…`);
 
-  const workspaceUrl = team.url ?? (link.workspaceDomain ? `https://${link.workspaceDomain}.slack.com/` : 'https://app.slack.com/');
+  const workspaceUrl =
+    team.url ?? (link.workspaceDomain ? `https://${link.workspaceDomain}.slack.com/` : 'https://app.slack.com/');
   const data: ThreadData = {
     workspace: { name: team.name, domain: team.domain },
     channel: {

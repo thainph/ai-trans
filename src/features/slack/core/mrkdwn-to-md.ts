@@ -36,7 +36,7 @@ export function inlineCode(text: string): string {
   const fence = '`'.repeat(longestBacktickRun(text) + 1);
   // CommonMark strips one leading/trailing space when both are present, and a
   // backtick touching the delimiter would merge with it: pad in those cases.
-  const needsPad = text.startsWith('`') || text.endsWith('`') || (/^ .*[^ ].* $/s.test(text));
+  const needsPad = text.startsWith('`') || text.endsWith('`') || /^ .*[^ ].* $/s.test(text);
   const pad = needsPad ? ' ' : '';
   return `${fence}${pad}${text}${pad}${fence}`;
 }
@@ -77,7 +77,7 @@ function renderAngleToken(inner: string, ctx: RenderContext): string {
   if (target.startsWith('@')) {
     const id = target.slice(1);
     const resolved = ctx.userName(id);
-    const name = resolved && resolved !== id ? resolved : (label?.replace(/^@/, '') || id);
+    const name = resolved && resolved !== id ? resolved : label?.replace(/^@/, '') || id;
     return `@${decodeEntities(name)}`;
   }
   if (target.startsWith('#')) {

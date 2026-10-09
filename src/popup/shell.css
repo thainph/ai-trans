@@ -40,7 +40,9 @@ body {
   font: inherit;
   font-weight: 500;
   cursor: pointer;
-  transition: color var(--ease), border-color var(--ease);
+  transition:
+    color var(--ease),
+    border-color var(--ease);
 }
 
 .tab svg {

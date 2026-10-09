@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { renderEmoji, replaceEmojiShortcodes } from '../src/features/slack/core/emoji';
-import { type RenderContext, fencedCode, inlineCode, mrkdwnToMd } from '../src/features/slack/core/mrkdwn-to-md';
+import { fencedCode, inlineCode, mrkdwnToMd, type RenderContext } from '../src/features/slack/core/mrkdwn-to-md';
 
 const ctx: RenderContext = {
   userName: (id) => ({ U123: 'Alice', U456: 'Bob' })[id] ?? id,

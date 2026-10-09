@@ -6,12 +6,7 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": [
-      "**",
-      "!!**/dist",
-      "!**/pnpm-lock.yaml",
-      "!**/tests/fixtures"
-    ]
+    "includes": ["**", "!!**/dist", "!**/pnpm-lock.yaml", "!**/tests/fixtures"]
   },
   "formatter": {
     "enabled": true,
@@ -55,9 +50,7 @@
   },
   "overrides": [
     {
-      "includes": [
-        "tests/**"
-      ],
+      "includes": ["tests/**"],
       "linter": {
         "rules": {
           "suspicious": {
