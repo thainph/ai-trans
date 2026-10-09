@@ -29,6 +29,7 @@ import {
   type WebSendResult,
   type WebToastMessage,
 } from '../messages';
+import { checkMarkdown } from './limits';
 
 const PAGE_MD = 'page.md';
 
@@ -130,7 +131,7 @@ async function downloadZip(
       () => {},
     );
     if (saved.size === 0) return { ok: true, zipped: false, images: { saved: 0, failed } };
-    const zipName = filename.replace(/\.md$/i, '') + '.zip';
+    const zipName = `${filename.replace(/\.md$/i, '')}.zip`;
     // Same "Save as" dialog as the plain .md download.
     await job.saveZip(filename, rewriteImageLinks(markdown, saved), zipName, { saveAs: true });
     return { ok: true, zipped: true, filename: zipName, images: { saved: saved.size, failed } };
@@ -180,6 +181,10 @@ onTargetMessage<WebRequest>(WEB_TARGET, (req, sender) => {
   if (!CONTENT_COMMANDS.has(req.type) && !fromExtension(sender)) {
     return { ok: false, error: 'Not allowed.' } satisfies Result;
   }
+  if (req.type !== 'open-settings') {
+    const invalid = checkMarkdown(req.markdown);
+    if (invalid) return { ok: false, error: invalid } satisfies Result;
+  }
   switch (req.type) {
     case 'send-selection': {
       const tabId = sender.tab?.id;
@@ -187,7 +192,12 @@ onTargetMessage<WebRequest>(WEB_TARGET, (req, sender) => {
       const key = crypto.randomUUID();
       toast(tabId, sender.frameId, { key, state: 'progress', text: 'Sending selection to Devdy…' });
       sendWebCapture(
-        { markdown: req.markdown, page: req.page, selection: true, title: firstLineTitle(req.selectionText) },
+        {
+          markdown: req.markdown,
+          page: req.page,
+          selection: true,
+          title: firstLineTitle(String(req.selectionText ?? '').slice(0, 10_000)),
+        },
         (text) => toast(tabId, sender.frameId, { key, state: 'progress', text }),
       )
         .then((r) =>
