@@ -167,7 +167,13 @@ downloadBtn.addEventListener('click', async () => {
     downloadBtn.disabled = true;
     setStatus('Downloading images…');
     try {
-      const req: WebRequest = { target: WEB_TARGET, type: 'download-page', markdown: doc, filename: lastFilename };
+      const req: WebRequest = {
+        target: WEB_TARGET,
+        type: 'download-page',
+        markdown: doc,
+        filename: lastFilename,
+        pageUrl: lastCapture?.page.url,
+      };
       const res = (await chrome.runtime.sendMessage(req)) as DownloadPageResponse | undefined;
       if (res?.ok && res.zipped) {
         const kept = res.images.failed ? `, ${res.images.failed} kept as links` : '';
