@@ -1,6 +1,5 @@
 // Page content script (all sites, all frames): "Send selection to Devdy" for the
-// translator's selection toolbar (the translator content script calls
-// `window.__contextKitDevdy.sendSelection(range, text)`), plus the result toast.
+// translator's selection toolbar (➤ button), plus the result toast.
 
 import { errorMessage } from '../../../shared/errors';
 import { isExtensionAlive } from '../../../shared/runtime';
@@ -40,7 +39,7 @@ async function inlineBlobImages(html: string): Promise<string> {
   return html;
 }
 
-async function sendSelection(range: Range, text: string): Promise<void> {
+export async function sendSelection(range: Range, text: string): Promise<void> {
   if (!isExtensionAlive()) {
     toaster.show({ key: 'reloaded', state: 'error', text: 'Context Kit was updated. Reload this page and try again.' });
     return;
@@ -63,10 +62,6 @@ async function sendSelection(range: Range, text: string): Promise<void> {
     toaster.show({ key, state: 'error', text: `Could not send: ${errorMessage(e)}` });
   }
 }
-
-window.__contextKitDevdy = {
-  sendSelection: (range, text) => void sendSelection(range, text),
-};
 
 if (isExtensionAlive()) {
   chrome.runtime.onMessage.addListener((msg: WebToastMessage) => {

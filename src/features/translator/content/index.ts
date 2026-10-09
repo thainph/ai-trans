@@ -6,6 +6,7 @@
 import { errorMessage } from '../../../shared/errors';
 import { onTargetMessage, type Result } from '../../../shared/messaging';
 import { isExtensionAlive } from '../../../shared/runtime';
+import { sendSelection } from '../../web-to-md/content/send-selection';
 import { isLanguageId, LANGUAGES, otherTarget } from '../shared/languages';
 import {
   callTranslator,
@@ -17,13 +18,7 @@ import { DEFAULT_SETTINGS, loadSettings, saveSettings, type TranslationStyle } f
 import { detectLanguage } from './detect-language';
 import { getPageTranslationState, revertPageTranslation, translatePage } from './page-translation';
 import { POPUP_CSS } from './styles';
-
-declare global {
-  interface Window {
-    /** "Send selection to Devdy", provided by the Web → MD content script (same isolated world). */
-    __contextKitDevdy?: { sendSelection(range: Range, text: string): void };
-  }
-}
+import './content.css';
 
 type TextControl = HTMLInputElement | HTMLTextAreaElement;
 
@@ -115,7 +110,7 @@ function showTrigger(rect: DOMRect, anchorEl: Element | null): void {
   }
 
   // Send the selection to Devdy — page text only (not what you are typing).
-  if (!isEditable && window.__contextKitDevdy) {
+  if (!isEditable) {
     const dBtn = triggerButton('ai-translator-trigger-devdy', 'Send selection to Devdy', onDevdyClick);
     dBtn.setAttribute('aria-label', 'Send selection to Devdy');
     dBtn.innerHTML =
@@ -640,9 +635,9 @@ function onDevdyClick(): void {
   }
   const text = currentSelection;
   const range = selRange;
-  if (!text || !range || !window.__contextKitDevdy) return;
+  if (!text || !range) return;
   removeTrigger();
-  window.__contextKitDevdy.sendSelection(range, text);
+  void sendSelection(range, text);
 }
 
 function onReverseTriggerClick(): void {

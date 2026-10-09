@@ -2,13 +2,11 @@ import { defineConfig } from 'vite';
 
 // Content scripts are classic scripts (no `import`), so each one is built as a
 // single IIFE into dist/ after the main build. IIFE allows one entry per build:
-//   vite build -c vite.content.config.ts --mode slack   → dist/slack-content.js
-//   vite build -c vite.content.config.ts --mode page    → dist/page-content.js
-//   vite build -c vite.content.config.ts --mode translator → dist/translator-content.js
+//   vite build -c vite.content.config.ts --mode all-frames → dist/content.js + dist/content.css
+//   vite build -c vite.content.config.ts --mode slack      → dist/slack-content.js
 const ENTRIES = {
-  slack: { entry: 'src/features/slack/content/index.ts', file: 'slack-content.js', name: 'ContextKitSlack' },
-  translator: { entry: 'src/features/translator/content/index.ts', file: 'translator-content.js', name: 'ContextKitTranslator' },
-  page: { entry: 'src/features/web-to-md/content/send-selection.ts', file: 'page-content.js', name: 'ContextKitPage' },
+  'all-frames': { entry: 'src/content/all-frames.ts', file: 'content', name: 'ContextKitContent' },
+  slack: { entry: 'src/features/slack/content/index.ts', file: 'slack-content', name: 'ContextKitSlack' },
 } as const;
 
 export default defineConfig(({ mode }) => {
@@ -20,8 +18,15 @@ export default defineConfig(({ mode }) => {
       outDir: 'dist',
       emptyOutDir: false,
       target: 'es2022',
-      minify: false,
-      lib: { entry: target.entry, formats: ['iife'], name: target.name, fileName: () => target.file },
+      // Watch scripts pass `--minify false` for readable output.
+      minify: true,
+      lib: {
+        entry: target.entry,
+        formats: ['iife'],
+        name: target.name,
+        fileName: () => `${target.file}.js`,
+        cssFileName: target.file,
+      },
     },
   };
 });

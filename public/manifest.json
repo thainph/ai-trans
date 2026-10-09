@@ -28,11 +28,10 @@
       ],
       "all_frames": true,
       "js": [
-        "page-content.js",
-        "translator-content.js"
+        "content.js"
       ],
       "css": [
-        "translator/content.css"
+        "content.css"
       ]
     },
     {
