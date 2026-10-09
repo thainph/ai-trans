@@ -5,7 +5,7 @@
   "description": "Chrome extension (MV3): AI Translator + Web to Markdown + Slack Thread Exporter",
   "type": "module",
   "scripts": {
-    "build": "pnpm typecheck && vite build && vite build -c vite.content.config.ts --mode all-frames && vite build -c vite.content.config.ts --mode slack",
+    "build": "pnpm typecheck && vite build && vite build -c vite.content.config.ts --mode all-frames && vite build -c vite.content.config.ts --mode slack && pnpm check:dist",
     "dev": "pnpm dev:all",
     "dev:all": "pnpm run \"/^dev:(main|content|slack)$/\"",
     "dev:main": "vite build --watch --minify false",
@@ -15,7 +15,8 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
-    "format": "biome check --write ."
+    "format": "biome check --write .",
+    "check:dist": "node scripts/check-dist.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.15",
