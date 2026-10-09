@@ -1,8 +1,9 @@
 import { unzipSync } from 'fflate';
 import { describe, expect, it } from 'vitest';
 import { ByteBudget, isPrecompressedPath } from '../src/features/slack/core/attachments';
-import { isPrivateHost, isPublicHttpUrl, isSameSite, siteOf } from '../src/offscreen/url-safety';
-import { buildZipBlob } from '../src/offscreen/zip-stream';
+import { fetchImage } from '../src/offscreen/image-fetch';
+import { isPrivateHost, isPublicHttpUrl, isSameOrigin } from '../src/offscreen/url-safety';
+import { ZipWriter } from '../src/offscreen/zip-stream';
 
 describe('image URL safety', () => {
   it.each([
@@ -52,14 +53,14 @@ describe('image URL safety', () => {
     expect(isPrivateHost('example.com')).toBe(false);
   });
 
-  it('sends cookies only to the same site as the page', () => {
-    expect(siteOf('a.b.example.com')).toBe('example.com');
-    expect(siteOf('www.example.co.jp')).toBe('example.co.jp');
-    expect(isSameSite('https://img.example.com/a.png', 'https://www.example.com/post')).toBe(true);
-    expect(isSameSite('https://cdn.other.com/a.png', 'https://www.example.com/post')).toBe(false);
-    expect(isSameSite('http://img.example.com/a.png', 'https://www.example.com/post')).toBe(false);
-    expect(isSameSite('https://a.foo.co.jp/x.png', 'https://b.bar.co.jp/')).toBe(false);
-    expect(isSameSite('https://img.example.com/a.png', undefined)).toBe(false);
+  it('sends cookies only to the exact origin of the page', () => {
+    expect(isSameOrigin('https://www.example.com/a.png', 'https://www.example.com/post')).toBe(true);
+    // Subdomains / shared hosting suffixes never share cookies here.
+    expect(isSameOrigin('https://img.example.com/a.png', 'https://www.example.com/post')).toBe(false);
+    expect(isSameOrigin('https://alice.github.io/a.png', 'https://bob.github.io/post')).toBe(false);
+    expect(isSameOrigin('http://www.example.com/a.png', 'https://www.example.com/post')).toBe(false);
+    expect(isSameOrigin('https://www.example.com:8443/a.png', 'https://www.example.com/post')).toBe(false);
+    expect(isSameOrigin('https://www.example.com/a.png', undefined)).toBe(false);
   });
 });
 
@@ -114,24 +115,106 @@ describe('ByteBudget', () => {
 });
 
 describe('streaming zip', () => {
-  it('stores precompressed files, deflates the rest, frees the inputs', async () => {
+  it('adds files as they arrive, stores precompressed ones, deflates the rest', async () => {
     expect(isPrecompressedPath('attachments/01-a.PNG')).toBe(true);
     expect(isPrecompressedPath('attachments/02-b.pdf')).toBe(true);
     expect(isPrecompressedPath('attachments/03-log.txt')).toBe(false);
 
     const text = 'hello '.repeat(1000);
-    const files = new Map<string, Uint8Array>([
-      ['attachments/01-a.png', new Uint8Array([1, 2, 3, 4])],
-      ['attachments/02-log.txt', new TextEncoder().encode(text)],
-    ]);
-    const blob = buildZipBlob(files, [{ path: 'thread.md', text: '# Thread' }]);
-    expect(files.size).toBe(0);
+    const zip = new ZipWriter();
+    zip.add('attachments/02-log.txt', new TextEncoder().encode(text)); // arrival order
+    zip.add('attachments/01-a.png', new Uint8Array([1, 2, 3, 4]));
+    expect(zip.count).toBe(2);
+    expect(() => zip.add('attachments/01-a.png', new Uint8Array([0]))).toThrow(/duplicate/);
+    const blob = zip.finish([{ path: 'thread.md', text: '# Thread' }]);
     expect(blob.type).toBe('application/zip');
     const out = unzipSync(new Uint8Array(await blob.arrayBuffer()));
-    expect(Object.keys(out)).toEqual(['thread.md', 'attachments/01-a.png', 'attachments/02-log.txt']);
+    expect(Object.keys(out)).toEqual(['attachments/02-log.txt', 'attachments/01-a.png', 'thread.md']);
     expect(new TextDecoder().decode(out['thread.md'])).toBe('# Thread');
     expect([...out['attachments/01-a.png']!]).toEqual([1, 2, 3, 4]);
     expect(new TextDecoder().decode(out['attachments/02-log.txt'])).toBe(text);
     expect(blob.size).toBeLessThan(text.length); // the text file was deflated
+    expect(() => zip.add('late.txt', new Uint8Array([1]))).toThrow(/finished/);
+  });
+});
+
+describe('image fetch policy (redirects / cookies)', () => {
+  type Call = { url: string; init?: RequestInit };
+  const png = (url: string) => {
+    const res = new Response(new Uint8Array([1]), { headers: { 'Content-Type': 'image/png' } });
+    Object.defineProperty(res, 'url', { value: url });
+    return res;
+  };
+
+  it('fetches cross-origin images without cookies, following redirects', async () => {
+    const calls: Call[] = [];
+    const fetchFn = (async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return png('https://cdn.example.net/final.png');
+    }) as typeof fetch;
+    const r = await fetchImage('https://cdn.example.net/a.png', {
+      pageUrl: 'https://blog.example.com/',
+      timeoutMs: 1000,
+      fetchFn,
+    });
+    expect(r).toMatchObject({ ok: true, credentials: 'omit' });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.init).toMatchObject({ credentials: 'omit', redirect: 'follow' });
+  });
+
+  it('same-origin images get cookies but never follow a redirect with them', async () => {
+    const calls: Call[] = [];
+    const fetchFn = (async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (init?.redirect === 'error') throw new TypeError('Failed to fetch'); // the server redirected
+      return png('https://other.example.org/img.png');
+    }) as typeof fetch;
+    const r = await fetchImage('https://www.example.com/a.png', {
+      pageUrl: 'https://www.example.com/post',
+      timeoutMs: 1000,
+      fetchFn,
+    });
+    expect(calls.map((c) => [c.init?.credentials, c.init?.redirect])).toEqual([
+      ['include', 'error'],
+      ['omit', 'follow'],
+    ]);
+    expect(r).toMatchObject({ ok: true, credentials: 'omit' });
+  });
+
+  it('same-origin image without redirect keeps its cookies (single request)', async () => {
+    let n = 0;
+    const fetchFn = (async () => {
+      n++;
+      return png('https://www.example.com/a.png');
+    }) as typeof fetch;
+    const r = await fetchImage('https://www.example.com/a.png', {
+      pageUrl: 'https://www.example.com/',
+      timeoutMs: 1000,
+      fetchFn,
+    });
+    expect(r).toMatchObject({ ok: true, credentials: 'include' });
+    expect(n).toBe(1);
+  });
+
+  it('refuses private hosts up front and discards a redirect that ended on one', async () => {
+    let n = 0;
+    const toPrivate = (async () => {
+      n++;
+      return png('http://192.168.0.1/admin.png');
+    }) as typeof fetch;
+    expect(await fetchImage('http://127.0.0.1/a.png', { timeoutMs: 1000, fetchFn: toPrivate })).toEqual({
+      ok: false,
+      error: 'URL not allowed',
+    });
+    expect(n).toBe(0);
+    expect(await fetchImage('https://evil.example/a.png', { timeoutMs: 1000, fetchFn: toPrivate })).toEqual({
+      ok: false,
+      error: 'URL not allowed',
+    });
+  });
+
+  it('data: images are read locally', async () => {
+    const r = await fetchImage('data:image/png;base64,AQ==', { timeoutMs: 1000 });
+    expect(r).toMatchObject({ ok: true });
   });
 });

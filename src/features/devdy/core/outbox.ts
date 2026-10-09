@@ -253,7 +253,11 @@ export class DevdyOutbox {
     return kept.length !== entries.length || tooMany.size ? kept.filter((e) => !tooMany.has(e)) : entries;
   }
 
-  /** Deliver queued entries oldest-first; stop at the first retryable failure. */
+  /**
+   * Deliver queued entries oldest-first. Devdy down / no instance / token
+   * problems stop the round (every entry would fail the same way); a server
+   * error only concerns that entry, so the next ones are still tried.
+   */
   private async deliverAll(auto: boolean): Promise<Map<string, SendOutcome>> {
     const results = new Map<string, SendOutcome>();
     const state = await this.deps.loadState();
@@ -321,8 +325,14 @@ export class DevdyOutbox {
         await this.deps.saveEntries(list);
         await this.deps.deleteBlob(entry.id);
       } else if (isRetryable(outcome)) {
-        update(entry.id, (e) => ({ ...e, attempts: e.attempts + 1, lastError: errorText(outcome) }));
-        stopWith = outcome; // Devdy down / bad token: no point trying the rest now
+        // A token problem says nothing about the payload: it doesn't count as an attempt.
+        const counts = outcome.kind !== 'unauthorized';
+        update(entry.id, (e) => ({
+          ...e,
+          attempts: counts ? e.attempts + 1 : e.attempts,
+          lastError: errorText(outcome),
+        }));
+        if (outcome.kind !== 'server_error') stopWith = outcome; // Devdy gone / bad token: stop here
       } else {
         const message = describeOutcome(outcome);
         const status = outcome.kind === 'rejected' ? outcome.status : 0;

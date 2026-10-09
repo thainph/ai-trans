@@ -29,6 +29,7 @@ import {
   type WebSendResult,
   type WebToastMessage,
 } from '../messages';
+import { checkMarkdown } from './limits';
 
 const PAGE_MD = 'page.md';
 
@@ -58,22 +59,29 @@ export async function sendWebCapture(
   let r: Awaited<ReturnType<typeof outbox.enqueue>>;
   try {
     if (images.length > 0) {
-      const job = await startZipJob();
       try {
-        const { saved, failed } = await job.fetchImages(
-          images,
-          { maxBytes: MAX_IMAGE_BYTES, maxTotalBytes: MAX_TOTAL_IMAGE_BYTES, pageUrl: input.page.url },
-          onProgress,
-        );
-        stats = { saved: saved.size, failed };
-        if (saved.size > 0) {
-          body = rewriteImageLinks(input.markdown, saved);
-          onProgress('Building zip…');
-          await job.storeZip(id, PAGE_MD, head + body); // written straight into the outbox
-          contentType = 'application/zip';
+        const job = await startZipJob();
+        try {
+          const { saved, failed } = await job.fetchImages(
+            images,
+            { maxBytes: MAX_IMAGE_BYTES, maxTotalBytes: MAX_TOTAL_IMAGE_BYTES, pageUrl: input.page.url },
+            onProgress,
+          );
+          stats = { saved: saved.size, failed };
+          if (saved.size > 0) {
+            body = rewriteImageLinks(input.markdown, saved);
+            onProgress('Building zip…');
+            await job.storeZip(id, PAGE_MD, head + body); // written straight into the outbox
+            contentType = 'application/zip';
+          }
+        } finally {
+          job.dispose();
         }
-      } finally {
-        job.dispose();
+      } catch {
+        // Offscreen / zip failure: still send the page, as plain Markdown with the original image links.
+        body = input.markdown;
+        contentType = 'text/markdown; charset=utf-8';
+        stats = { saved: 0, failed: images.length };
       }
     }
     if (contentType !== 'application/zip') {
@@ -101,6 +109,20 @@ export async function downloadPageZip(
 ): Promise<DownloadPageResponse> {
   const images = planImages(collectImageUrls(markdown));
   if (images.length === 0) return { ok: true, zipped: false, images: { saved: 0, failed: 0 } };
+  try {
+    return await downloadZip(images, markdown, filename, pageUrl);
+  } catch {
+    // Offscreen / zip failure: the popup saves the plain .md (original image links).
+    return { ok: true, zipped: false, images: { saved: 0, failed: images.length } };
+  }
+}
+
+async function downloadZip(
+  images: ReturnType<typeof planImages>,
+  markdown: string,
+  filename: string,
+  pageUrl?: string,
+): Promise<DownloadPageResponse> {
   const job = await startZipJob();
   try {
     const { saved, failed } = await job.fetchImages(
@@ -109,7 +131,7 @@ export async function downloadPageZip(
       () => {},
     );
     if (saved.size === 0) return { ok: true, zipped: false, images: { saved: 0, failed } };
-    const zipName = filename.replace(/\.md$/i, '') + '.zip';
+    const zipName = `${filename.replace(/\.md$/i, '')}.zip`;
     // Same "Save as" dialog as the plain .md download.
     await job.saveZip(filename, rewriteImageLinks(markdown, saved), zipName, { saveAs: true });
     return { ok: true, zipped: true, filename: zipName, images: { saved: saved.size, failed } };
@@ -159,6 +181,10 @@ onTargetMessage<WebRequest>(WEB_TARGET, (req, sender) => {
   if (!CONTENT_COMMANDS.has(req.type) && !fromExtension(sender)) {
     return { ok: false, error: 'Not allowed.' } satisfies Result;
   }
+  if (req.type !== 'open-settings') {
+    const invalid = checkMarkdown(req.markdown);
+    if (invalid) return { ok: false, error: invalid } satisfies Result;
+  }
   switch (req.type) {
     case 'send-selection': {
       const tabId = sender.tab?.id;
@@ -166,7 +192,12 @@ onTargetMessage<WebRequest>(WEB_TARGET, (req, sender) => {
       const key = crypto.randomUUID();
       toast(tabId, sender.frameId, { key, state: 'progress', text: 'Sending selection to Devdy…' });
       sendWebCapture(
-        { markdown: req.markdown, page: req.page, selection: true, title: firstLineTitle(req.selectionText) },
+        {
+          markdown: req.markdown,
+          page: req.page,
+          selection: true,
+          title: firstLineTitle(String(req.selectionText ?? '').slice(0, 10_000)),
+        },
         (text) => toast(tabId, sender.frameId, { key, state: 'progress', text }),
       )
         .then((r) =>

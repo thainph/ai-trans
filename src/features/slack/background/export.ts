@@ -209,25 +209,36 @@ async function handleDevdyExport(
   let delivery: Awaited<ReturnType<typeof outbox.enqueue>>;
   try {
     if (plan && plan.downloads.length > 0) {
-      const job = await startZipJob();
       try {
-        const fetched = await job.fetchFiles(plan, onProgress, {
-          maxFileBytes: MAX_FILE_BYTES,
-          maxTotalBytes: DEVDY_MAX_TOTAL_FILE_BYTES,
-        });
-        attachments = fetched.outcomes;
-        if (fetched.failed) {
-          fileWarning = `${fetched.failed} file(s) could not be downloaded; their Slack links are kept in the Markdown.`;
+        const job = await startZipJob();
+        try {
+          const fetched = await job.fetchFiles(plan, onProgress, {
+            maxFileBytes: MAX_FILE_BYTES,
+            maxTotalBytes: DEVDY_MAX_TOTAL_FILE_BYTES,
+          });
+          attachments = fetched.outcomes;
+          if (fetched.failed) {
+            fileWarning = `${fetched.failed} file(s) could not be downloaded; their Slack links are kept in the Markdown.`;
+          }
+          if (fetched.saved > 0) {
+            result = buildThreadMarkdown(data, { ...req.options, attachments });
+            post({ type: 'progress', text: 'Building zip…' });
+            await job.storeZip(id, result.filename, result.markdown); // stored straight into the outbox
+            contentType = 'application/zip';
+            files = { saved: fetched.saved, notIncluded: attachments.size - fetched.saved };
+          }
+        } finally {
+          job.dispose();
         }
-        if (fetched.saved > 0) {
-          result = buildThreadMarkdown(data, { ...req.options, attachments });
-          post({ type: 'progress', text: 'Building zip…' });
-          await job.storeZip(id, result.filename, result.markdown); // stored straight into the outbox
-          contentType = 'application/zip';
-          files = { saved: fetched.saved, notIncluded: attachments.size - fetched.saved };
-        }
-      } finally {
-        job.dispose();
+      } catch (e) {
+        // Offscreen / zip failure: still send the thread, as plain Markdown with Slack links.
+        const reason = `could not build the zip: ${errorMessage(e)}`;
+        attachments = new Map(plan.skipped);
+        for (const d of plan.downloads) attachments.set(d.id, { kind: 'skipped', reason });
+        result = undefined;
+        contentType = 'text/markdown; charset=utf-8';
+        files = undefined;
+        fileWarning = `Attachments could not be packed (${errorMessage(e)}); their Slack links are kept in the Markdown.`;
       }
     }
 

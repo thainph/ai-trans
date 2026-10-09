@@ -94,28 +94,17 @@ export function isPublicHttpUrl(u: string): boolean {
   return !isPrivateHost(url.hostname);
 }
 
-/** Second-level labels used under country TLDs (co.jp, com.au, org.uk…). */
-const SECOND_LEVEL = new Set(['co', 'com', 'net', 'org', 'gov', 'edu', 'ac', 'or', 'ne', 'go', 'gr', 'lg', 'ad']);
-
-/** Approximate registrable domain ("eTLD+1") without the Public Suffix List. */
-export function siteOf(hostname: string): string {
-  const host = hostname.toLowerCase().replace(/\.$/, '');
-  if (ipv4(host) || host.includes(':')) return host;
-  const labels = host.split('.');
-  if (labels.length <= 2) return host;
-  const tld = labels.at(-1)!;
-  const sld = labels.at(-2)!;
-  const take = tld.length === 2 && SECOND_LEVEL.has(sld) ? 3 : 2;
-  return labels.slice(-take).join('.');
-}
-
-/** Same scheme + registrable domain: cookies may be sent (the page itself would send them). */
-export function isSameSite(a: string, b: string | undefined): boolean {
+/**
+ * Image on exactly the page's origin (scheme + host + port): only then may the
+ * user's cookies be sent. Deliberately stricter than "same site": without the
+ * Public Suffix List, a.github.io and b.github.io would look like one site.
+ */
+export function isSameOrigin(a: string, b: string | undefined): boolean {
   if (!b) return false;
   try {
     const x = new URL(a);
     const y = new URL(b);
-    return x.protocol === y.protocol && siteOf(x.hostname) === siteOf(y.hostname);
+    return (x.protocol === 'https:' || x.protocol === 'http:') && x.origin === y.origin;
   } catch {
     return false;
   }
