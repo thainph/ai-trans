@@ -28,8 +28,17 @@ const OFFSCREEN_URL = 'src/offscreen/offscreen.html';
 const FILE_CONCURRENCY = 3;
 /** Give up waiting for the download to finish before revoking the blob URL. */
 const DOWNLOAD_WAIT_MS = 10 * 60_000;
-/** Close the offscreen document this long after the last job ended (frees its memory). */
-const OFFSCREEN_IDLE_MS = 30_000;
+/**
+ * Close the offscreen document this long after the last job ended (frees its
+ * memory). Well under the ~30 s MV3 idle shutdown, which is reset by a ping
+ * when the close is scheduled, so the timer normally fires; the alarm below is
+ * the fallback when the worker is stopped anyway, and a worker that starts
+ * with no job closes a leftover document right away.
+ */
+const OFFSCREEN_IDLE_MS = 10_000;
+const CLOSE_ALARM = 'offscreen-close';
+/** Alarm fallback (Chrome clamps it to ≥ 30 s; < 120: ≥ 1 min). */
+const CLOSE_ALARM_MIN = 0.5;
 
 let creating: Promise<void> | null = null;
 let closing: Promise<void> | null = null;
@@ -56,7 +65,8 @@ async function ensureOffscreen(): Promise<void> {
       .createDocument({
         url: OFFSCREEN_URL,
         reasons: [chrome.offscreen.Reason.BLOBS],
-        justification: 'Fetch Slack attachments and build a zip blob for chrome.downloads.',
+        justification:
+          'Fetch Slack attachments and web page images, build zip blobs for chrome.downloads and store them in IndexedDB for the Devdy outbox.',
       })
       .catch((e: unknown) => {
         // Already open (e.g. a previous export) is fine.
@@ -68,26 +78,43 @@ async function ensureOffscreen(): Promise<void> {
   return creating;
 }
 
+/** Close the offscreen document now unless a job is running (sets `closing` synchronously). */
+function closeIfIdle(): void {
+  clearTimeout(closeTimer);
+  if (activeJobs > 0 || creating || closing) return;
+  closing = (async () => {
+    if ((await hasOffscreen()) === false) return;
+    if (activeJobs > 0) return; // a job started meanwhile (it waits for `closing`)
+    await chrome.offscreen.closeDocument();
+  })()
+    .catch(() => {
+      // Not open: nothing to close.
+    })
+    .finally(() => {
+      closing = null;
+      void chrome.alarms.clear(CLOSE_ALARM);
+    });
+}
+
 /** Close the offscreen document after OFFSCREEN_IDLE_MS without jobs (debounced). */
 function scheduleClose(): void {
   clearTimeout(closeTimer);
-  closeTimer = setTimeout(() => {
-    if (activeJobs > 0 || creating || closing) return;
-    closing = (async () => {
-      if ((await hasOffscreen()) === false) return;
-      await chrome.offscreen.closeDocument();
-    })()
-      .catch(() => {
-        // Not open: nothing to close.
-      })
-      .finally(() => {
-        closing = null;
-      });
-  }, OFFSCREEN_IDLE_MS);
+  void chromePing(); // reset the worker's idle timer: the timeout below fits in it
+  closeTimer = setTimeout(closeIfIdle, OFFSCREEN_IDLE_MS);
+  void chrome.alarms.create(CLOSE_ALARM, { delayInMinutes: CLOSE_ALARM_MIN });
 }
 
-// A document left open by a previous service worker instance has no live jobs.
-scheduleClose();
+function cancelClose(): void {
+  clearTimeout(closeTimer);
+  void chrome.alarms.clear(CLOSE_ALARM);
+}
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === CLOSE_ALARM) closeIfIdle();
+});
+
+// A fresh worker has no job: a document left open by the previous instance is stale.
+closeIfIdle();
 
 function send<T>(msg: OffscreenRequest): Promise<T> {
   return chrome.runtime.sendMessage(msg) as Promise<T>;
@@ -147,7 +174,7 @@ export interface ZipJob {
 
 export async function startZipJob(): Promise<ZipJob> {
   activeJobs++;
-  clearTimeout(closeTimer);
+  cancelClose();
   try {
     await ensureOffscreen();
   } catch (e) {
