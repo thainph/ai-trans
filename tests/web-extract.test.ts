@@ -45,7 +45,7 @@ describe('extractInPage (main content)', () => {
   });
 
   it('picks the single big <article> on an article page', () => {
-    const para = '<p>' + 'Long paragraph of the story. '.repeat(30) + '</p>';
+    const para = `<p>${'Long paragraph of the story. '.repeat(30)}</p>`;
     document.body.innerHTML = `
       <main>
         <article id="story"><header><h1>Story title</h1></header>${para.repeat(5)}</article>
@@ -77,13 +77,44 @@ describe('extractInPage (main content)', () => {
   });
 });
 
+describe('extractInPage (depth)', () => {
+  it('"score" reports the text length without the HTML', () => {
+    document.body.innerHTML = '<main><h1>Docs</h1><p>Body text</p></main>';
+    const full = extractInPage('article', 'content');
+    const score = extractInPage('article', 'score');
+    expect(score.html).toBe('');
+    expect(score.textLen).toBe(full.textLen);
+    expect(score.textLen).toBeGreaterThan(0);
+    expect(score.meta).toEqual(full.meta);
+  });
+
+  it('"score" drops the selected text, "content" keeps it', () => {
+    document.body.innerHTML = '<p id="p">Selected words</p>';
+    const range = document.createRange();
+    range.selectNodeContents(document.getElementById('p')!);
+    window.getSelection()!.removeAllRanges();
+    window.getSelection()!.addRange(range);
+    const score = extractInPage('selection', 'score');
+    expect(score.text).toBeUndefined();
+    expect(score.textLen).toBe('Selected words'.length);
+    expect(extractInPage('selection', 'content').text).toBe('Selected words');
+  });
+
+  it('"meta" skips extraction', () => {
+    document.head.innerHTML = '<title>T</title><meta property="og:site_name" content="S">';
+    document.body.innerHTML = '<main><p>Body</p></main>';
+    const r = extractInPage('full', 'meta');
+    expect(r).toMatchObject({ html: '', textLen: 0, meta: { pageTitle: 'T', siteName: 'S' } });
+  });
+});
+
 describe('extractInPage (serialized)', () => {
   it('runs after toString() serialization like chrome.scripting does', () => {
     document.head.innerHTML = '<title>Doc</title><meta property="og:site_name" content="Site">';
     document.body.innerHTML = '<main><h1>Docs</h1><p>Body text</p></main>';
     const r = revived('article');
     expect(r.html).toContain('Body text');
-    expect(r.title).toBe('Doc');
-    expect(r.siteName).toBe('Site');
+    expect(r.meta.pageTitle).toBe('Doc');
+    expect(r.meta.siteName).toBe('Site');
   });
 });
