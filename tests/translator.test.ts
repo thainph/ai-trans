@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   buildRequestBody,
   buildTranslatePrompt,
-  mapLimit,
   ollamaContextSize,
   parseLLMResponse,
   splitForTranslation,
@@ -11,6 +10,7 @@ import {
   wrapText,
 } from '../src/features/translator/background/llm';
 import { detectLanguage } from '../src/features/translator/content/detect-language';
+import { mapLimit } from '../src/features/translator/core/map-limit';
 import { DEFAULT_SETTINGS } from '../src/features/translator/shared/settings';
 
 describe('splitForTranslation', () => {
@@ -82,6 +82,17 @@ describe('buildRequestBody', () => {
     expect(body.options!.num_predict).toBe(-1);
     expect(ollamaContextSize(10)).toBe(4096);
     expect(ollamaContextSize(1_000_000)).toBe(32768);
+  });
+
+  it('asks each provider for a JSON reply only when requested', () => {
+    expect(buildRequestBody('openai', 'm', 's', 'u', true).response_format).toEqual({ type: 'json_object' });
+    expect(buildRequestBody('openai', 'm', 's', 'u')).not.toHaveProperty('response_format');
+    expect(buildRequestBody('gemini', 'm', 's', 'u', true).generationConfig).toEqual({
+      temperature: 0.3,
+      responseMimeType: 'application/json',
+    });
+    expect(buildRequestBody('ollama', 'm', 's', 'u', true).format).toBe('json');
+    expect(buildRequestBody('ollama', 'm', 's', 'u')).not.toHaveProperty('format');
   });
 });
 

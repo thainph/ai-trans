@@ -2,6 +2,8 @@
 
 import { errorMessage } from '../../../shared/errors';
 import { fail, ok, onTargetMessage, type Result } from '../../../shared/messaging';
+import { buildBatchInput, buildBatchPrompt, parseBatchResponse } from '../core/batch-protocol';
+import { mapLimit } from '../core/map-limit';
 import { languageName } from '../shared/languages';
 import { TRANSLATOR_TARGET, type TranslatorRequest, type TranslatorResponses } from '../shared/messages';
 import {
@@ -15,14 +17,18 @@ import {
   buildRequestBody,
   buildTranslatePrompt,
   CHUNK_CHARS,
+  LLM_TIMEOUT_MS,
   type LLMReply,
-  mapLimit,
+  MODELS_TIMEOUT_MS,
+  OLLAMA_TIMEOUT_MS,
   parseLLMResponse,
   splitForTranslation,
   splitOuterWhitespace,
   stripTextTags,
   wrapText,
 } from './llm';
+import { syncOllamaCors } from './ollama-cors';
+import { rejectReason } from './sender';
 
 // Initialize defaults on first install, fill in missing ones on update.
 chrome.runtime.onInstalled.addListener((details) => {
@@ -42,26 +48,8 @@ chrome.runtime.onInstalled.addListener((details) => {
     });
   }
 
-  // Strip Origin header for localhost requests (Ollama CORS fix)
-  const stripOrigin = (id: number, host: string): chrome.declarativeNetRequest.Rule => ({
-    id,
-    priority: 1,
-    action: {
-      type: chrome.declarativeNetRequest.RuleActionType.MODIFY_HEADERS,
-      requestHeaders: [{ header: 'Origin', operation: chrome.declarativeNetRequest.HeaderOperation.REMOVE }],
-    },
-    condition: {
-      urlFilter: `||${host}`,
-      resourceTypes: [
-        chrome.declarativeNetRequest.ResourceType.XMLHTTPREQUEST,
-        chrome.declarativeNetRequest.ResourceType.OTHER,
-      ],
-    },
-  });
-  chrome.declarativeNetRequest.updateDynamicRules({
-    removeRuleIds: [1, 2],
-    addRules: [stripOrigin(1, 'localhost'), stripOrigin(2, '127.0.0.1')],
-  });
+  // Ollama CORS: (re)build the Origin-stripping rules (also replaces the old global ones).
+  void syncOllamaCors();
 });
 
 const STYLE_PROMPTS: Record<TranslationStyle, string> = {
@@ -72,7 +60,14 @@ const STYLE_PROMPTS: Record<TranslationStyle, string> = {
 
 const styleInstruction = (style: string) => STYLE_PROMPTS[style as TranslationStyle] || STYLE_PROMPTS.casual;
 
-onTargetMessage<TranslatorRequest>(TRANSLATOR_TARGET, (request) => {
+chrome.runtime.onStartup.addListener(() => void syncOllamaCors());
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'sync' && changes.ollamaUrl) void syncOllamaCors();
+});
+
+onTargetMessage<TranslatorRequest>(TRANSLATOR_TARGET, (request, sender) => {
+  const refused = rejectReason(request, sender, chrome.runtime.id);
+  if (refused) return fail(refused);
   switch (request.type) {
     case 'translate':
       return reply<'translate'>(
@@ -101,14 +96,22 @@ function reply<K extends keyof TranslatorResponses>(work: Promise<Payload<K>>): 
   return work.then(ok, fail);
 }
 
+/** fetch() that gives up after `timeoutMs`, with readable connection/timeout errors. */
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  try {
+    return await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'TimeoutError') {
+      throw new Error(`No response from ${url} after ${Math.round(timeoutMs / 1000)}s`);
+    }
+    throw new Error(`Cannot connect to ${url} — ${errorMessage(err)}`);
+  }
+}
+
 async function fetchOllamaModels(url: string): Promise<string[]> {
   const base = (url || DEFAULT_SETTINGS.ollamaUrl).replace(/\/+$/, '');
-  let response: Response;
-  try {
-    response = await fetch(`${base}/api/tags`);
-  } catch (err) {
-    throw new Error(`Cannot connect to ${base} — ${errorMessage(err)}`);
-  }
+  await syncOllamaCors(base);
+  const response = await fetchWithTimeout(`${base}/api/tags`, {}, MODELS_TIMEOUT_MS);
   if (!response.ok) {
     throw new Error(`Ollama error ${response.status}`);
   }
@@ -141,6 +144,7 @@ async function getProviderConfig(): Promise<ProviderConfig> {
       throw new Error('No Ollama model selected. Open extension settings and select a model.');
     }
     const base = (data.ollamaUrl || DEFAULT_SETTINGS.ollamaUrl).replace(/\/+$/, '');
+    await syncOllamaCors();
     return {
       provider: 'ollama',
       url: `${base}/api/chat`,
@@ -190,21 +194,16 @@ async function getCachedProviderConfig(): Promise<ProviderConfig> {
   return cachedConfig;
 }
 
-/** truncated = the model hit its output limit. */
-async function callLLM(systemPrompt: string, userContent: string): Promise<LLMReply> {
+/** truncated = the model hit its output limit. `json` = ask for a JSON reply. */
+async function callLLM(systemPrompt: string, userContent: string, json = false): Promise<LLMReply> {
   const config = await getCachedProviderConfig();
-  const body = buildRequestBody(config.provider, config.model, systemPrompt, userContent);
+  const body = buildRequestBody(config.provider, config.model, systemPrompt, userContent, json);
 
-  let response: Response;
-  try {
-    response = await fetch(config.url, {
-      method: 'POST',
-      headers: config.headers,
-      body: JSON.stringify(body),
-    });
-  } catch (err) {
-    throw new Error(`Cannot connect to ${config.url} — ${errorMessage(err)}`);
-  }
+  const response = await fetchWithTimeout(
+    config.url,
+    { method: 'POST', headers: config.headers, body: JSON.stringify(body) },
+    config.provider === 'ollama' ? OLLAMA_TIMEOUT_MS : LLM_TIMEOUT_MS,
+  );
 
   if (!response.ok) {
     const errBody = await response.text().catch(() => '');
@@ -220,33 +219,15 @@ async function handleTranslateBatch(
   targetLang: string,
   style: string,
 ): Promise<string[]> {
-  const source = languageName(sourceLang);
-  const target = languageName(targetLang);
-
-  // Numbered format — more reliable than separator for LLMs
-  const numbered = texts.map((t, i) => `[${i}] ${t}`).join('\n');
-
-  const systemPrompt = `You are a translator. Translate each numbered line from ${source} to ${target}.\n${styleInstruction(style)}.\nKeep the [N] prefix on each line. Return ONLY the translated lines, one per line, same order.`;
-
-  const { text: raw } = await callLLM(systemPrompt, numbered);
-
-  // Parse numbered response
-  const result = new Array<string>(texts.length);
-  for (const line of raw.split('\n')) {
-    const match = line.match(/^\[(\d+)\]\s*(.+)/);
-    if (match) {
-      const idx = parseInt(match[1]!, 10);
-      if (idx >= 0 && idx < texts.length) {
-        result[idx] = match[2]!.trim();
-      }
-    }
-  }
-
-  // Fill missing with original
-  for (let i = 0; i < texts.length; i++) {
-    if (!result[i]) result[i] = texts[i]!;
-  }
-  return result;
+  if (texts.length === 0) return [];
+  const systemPrompt = buildBatchPrompt(
+    languageName(sourceLang),
+    languageName(targetLang),
+    styleInstruction(style),
+    texts.length,
+  );
+  const { text: raw } = await callLLM(systemPrompt, buildBatchInput(texts), true);
+  return parseBatchResponse(raw, texts);
 }
 
 async function handleGrammarCheck(text: string): Promise<string> {
