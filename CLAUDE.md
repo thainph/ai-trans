@@ -15,6 +15,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This repo was previously the standalone AI Translator extension; its history is preserved. Everything is TypeScript (`allowJs: false`).
 
+Human-facing docs (Vietnamese): `README.md` (install, usage, limits), `docs/architecture.md` (internals: messaging, offscreen, image fetch policy, outbox), `CHANGELOG.md`. Keep them in sync when behaviour changes.
+
 ## Development
 
 ```bash
@@ -117,7 +119,7 @@ public/                 manifest.json + icons only (copied verbatim)
 - Zips are **streamed** (`zip-stream.ts`, fflate `Zip`): each fetched file goes straight into the job's `ZipWriter` (precompressed formats stored, others deflated), output folded into Blob parts every 8 MB, the Markdown written last. Result: a blob: URL for `chrome.downloads` (`build-zip`) or a Blob in IndexedDB for the outbox (`store-zip`). If a zip can't be built the export falls back to plain Markdown.
 - Downloads reserve their bytes from a shared `ByteBudget` before fetching, so parallel fetches never overshoot the total. Jobs idle for 15 min are freed.
 - Lifetime: the document is closed 10 s after the last job (timer after a keepalive ping), with a `offscreen-close` alarm as fallback; a fresh service worker closes a leftover document right away.
-- **Image fetch policy** (`image-fetch.ts`, `url-safety.ts`): only `http(s)` / `data:image` URLs; private, loopback, link-local, CGNAT and multicast hosts (IPv4/IPv6 literals, `localhost`, `.local`…) are refused. Cookies are sent only to images on the page's exact origin, with `redirect: 'error'` (a cookie-bearing request never follows a redirect; on failure the image is retried once without cookies). Cookie-less fetches use `redirect: 'follow'` and re-check the final URL. Limitations: Chrome hides `Location` for `redirect: 'manual'`, so intermediate hops can't be pre-checked (a cookie-less hop may reach a private host, its response is discarded); hosts are checked by name/literal only (no DNS resolution, so DNS rebinding isn't detected). Non-image responses are rejected.
+- **Image fetch policy** (`image-fetch.ts`, `url-safety.ts`): only `http(s)` / `data:image` URLs; private, loopback, link-local, CGNAT and multicast hosts (IPv4/IPv6 literals, `localhost`, `.local`…) are refused. Cookies are sent only to images on the page's exact origin, with `redirect: 'error'` (a cookie-bearing request never follows a redirect; on failure the image is retried once without cookies). Cookie-less fetches use `redirect: 'follow'` and re-check the final URL. Limitations: Chrome hides `Location` for `redirect: 'manual'`, so intermediate hops can't be pre-checked (a cookie-less hop may reach a private host, its response is discarded); hosts are checked by name/literal only (no DNS resolution, so DNS rebinding isn't detected). A response is rejected as non-image only when its `Content-Type` isn't `image/*` and the URL has no recognisable image extension.
 
 ## Devdy integration
 
@@ -127,7 +129,7 @@ public/                 manifest.json + icons only (copied verbatim)
   - Retryable outcomes (`unreachable`, `choose_instance`, `no_token`, `unauthorized`, `server_error`) stay queued. Retries use the one-shot `devdy-outbox-retry` alarm with backoff 1 → 2 → 5 → 15 → 60 min (last repeats; reset when something is sent).
   - `unauthorized` / `no_token` **pause** automatic retries until a token is saved (`unauthorized` doesn't count as an attempt). `unreachable` / `choose_instance` / token problems stop the current flush; a `server_error` only counts an attempt for that entry and the flush continues with the next one (one bad payload doesn't block the queue).
   - Payloads Devdy refuses (400/413/415…) become **failed records** (never retried) that the Devdy tab can download or remove; at most 20 are kept.
-  - Bounds: queued exports are dropped after 7 days or 20 attempts (a notice is shown); total payload ≤ 300 MB (oldest failed records are evicted first, queued exports never).
+  - Bounds: queued exports are dropped after 7 days or 20 attempts (a notice is shown); failed records also expire after 7 days; total payload ≤ 300 MB (oldest failed records are evicted first, queued exports never; if that is not enough the new export is refused with "queue is full").
   - Idempotency: posts carry `Idempotency-Key: <entry id>`, and the list is saved right after each delivery, so a worker killed mid-flush doesn't resend.
   - Orphan cleanup: blobs not referenced by the outbox are deleted on startup/install and before each flush; `outbox.hold(id)` protects a zip being written before `enqueue`.
 - Quick send inside Slack: `features/slack/content/` injects "Send to Devdy" into Slack's own message menu (`message-dom.ts`: selectors try `data-qa` → `c-*` classes → ARIA; when nothing matches it does nothing) and shows toasts. `features/slack/background/quick-send.ts` runs the export (always reactions + attachments, no project). No browser context menus anywhere.
@@ -143,7 +145,7 @@ public/                 manifest.json + icons only (copied verbatim)
 | Slack → Devdy | 45 MB total, 199 attachments | `slack/background/export.ts`, `devdy/core/client.ts` |
 | Web images | 10 MB each, 45 MB total, 199 images | `web-to-md/core/web-capture.ts` |
 | Inlined `blob:` images (selection) | 5 MB each, 10 MB total | `web-to-md/content/send-selection.ts` |
-| Captured Markdown | 30 MB | `web-to-md/background/limits.ts` |
+| Captured Markdown | 30 × 1024 × 1024 chars (≈ 30 MB) | `web-to-md/background/limits.ts` |
 | Devdy request body | 50 MB | `devdy/core/client.ts` |
 | Outbox | 300 MB, 7 days, 20 attempts, 20 failed records | `devdy/core/outbox.ts` |
 
