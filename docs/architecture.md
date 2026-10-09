@@ -1,189 +1,197 @@
-# Kiến trúc Context Kit
+# AI Trans architecture
 
-Tài liệu cho người phát triển: cách các phần của extension nói chuyện với nhau và các quyết định kỹ thuật
-quan trọng. Hướng dẫn sử dụng nằm ở [README](../README.md); quy ước cho agent viết code nằm ở [CLAUDE.md](../CLAUDE.md).
+For developers: how the parts of the extension talk to each other and the main technical decisions. Usage is in the
+[README](../README.md); conventions for coding agents are in [CLAUDE.md](../CLAUDE.md).
 
-## Tổng quan
+## Overview
 
 ```
-popup vỏ (src/popup) ── iframe ──► trang của từng tab (features/*/popup)
+popup shell (src/popup) ── iframe ──► each tab's page (features/*/popup)
         │                                   │ chrome.runtime.sendMessage / port
         ▼                                   ▼
-service worker (src/background) ──► offscreen document (src/offscreen): tải file/ảnh, nén zip
+service worker (src/background) ──► offscreen document (src/offscreen): fetch files/images, build zips
         ▲                                   │
-        │ message                           └──► IndexedDB (outbox Devdy) / blob: URL cho chrome.downloads
-content script (content.js mọi frame, slack-content.js trên app.slack.com)
+        │ messages                          └──► IndexedDB (Devdy outbox) / blob: URL for chrome.downloads
+content scripts (content.js in every frame, slack-content.js on app.slack.com)
 ```
 
-- **Service worker** (`src/background/index.ts`) chỉ import module background của từng feature. Đây là nơi duy nhất gọi
-  LLM và Devdy (cùng với offscreen document) — không bao giờ gọi từ content script (CORS và
-  `Private Network Access` — cơ chế Chrome chặn trang web gọi vào mạng nội bộ).
-- **Offscreen document** tồn tại vì service worker MV3 không tạo được `blob:` URL, còn `data:` URL bị giới hạn khoảng 2 MB.
-- **Content script** được build thành IIFE (`vite.content.config.ts`) vì content script không dùng được `import`:
-  `dist/content.js` (Translator + gửi đoạn chọn, chạy ở mọi frame) và `dist/slack-content.js` (app.slack.com).
+- The **service worker** (`src/background/index.ts`) only imports each feature's background module. It is the only place
+  that calls LLMs and Devdy (together with the offscreen document) — never content scripts (CORS and Chrome's Private
+  Network Access rules).
+- The **offscreen document** exists because MV3 service workers can't create `blob:` URLs and `data:` URLs cap at about
+  2 MB.
+- **Content scripts** are built as IIFEs (`vite.content.config.ts`) because content scripts can't `import`:
+  `dist/content.js` (Translator + selection capture, every frame) and `dist/slack-content.js` (app.slack.com).
 
-## Popup vỏ
+## Popup shell
 
-`src/popup/shell.ts` nạp trang của từng tool trong một iframe cùng origin với extension, nên `chrome.*` vẫn dùng được
-mà CSS/ID của các tool không đụng nhau. Iframe được tạo lười (khi mở tab lần đầu) và tự co giãn theo nội dung.
+`src/popup/shell.ts` loads each tool page in an iframe on the extension's own origin, so `chrome.*` APIs still work while
+the tools' CSS and IDs stay isolated. Iframes are created lazily (first time a tab is opened) and auto-sized.
 
-- Tab mở đầu tiên: tab được yêu cầu mở một lần (`contextKitOpenTab`, vd từ nút "Open Devdy settings"), nếu không thì
-  **Slack** khi tab trình duyệt đang ở `https://app.slack.com/`, nếu không thì tab dùng lần trước (`contextKitLastTab`).
-- Code trong iframe muốn đóng popup gọi `window.top.close()`; muốn chuyển tab gọi `requestOpenTab(tool)`
+- First tab: the one-shot requested tab (`contextKitOpenTab`, e.g. from "Open Devdy settings"), else **Slack** when the
+  active browser tab is on `https://app.slack.com/`, else the last used tab (`contextKitLastTab`).
+- Code inside an iframe closes the popup with `window.top.close()` and switches tabs with `requestOpenTab(tool)`
   (`src/shared/popup-tabs.ts`).
 
-## Message và kiểm tra người gửi
+## Messages and sender checks
 
-### Kênh message
+### Channels
 
-Mỗi kênh request/response là một listener `chrome.runtime.onMessage` lọc theo chuỗi `target`
-(`onTargetMessage()` trong `src/shared/messaging.ts`). Phản hồi luôn có dạng `Result<T>`:
-`{ ok: true, ... }` hoặc `{ ok: false, error }`. Bên gửi dựng request bằng kiểu `Command<R>` (request chưa có `target`).
+Each request/response channel is a `chrome.runtime.onMessage` listener filtered by a `target` string
+(`onTargetMessage()` in `src/shared/messaging.ts`). Responses are always a `Result<T>`: `{ ok: true, ... }` or
+`{ ok: false, error }`. Callers build requests as `Command<R>` (the request without its `target`).
 
-| Target | Hướng | Dùng cho |
+| Target | Direction | Used for |
 |---|---|---|
-| `context-kit-translator` | content script / popup → SW | dịch, kiểm tra ngữ pháp, batch dịch trang, huỷ, lấy danh sách model Ollama |
-| `context-kit-translator-page` | popup Translate → tab (frame 0) | dịch / hoàn tác cả trang |
-| `context-kit-devdy` | tab Devdy → SW | trạng thái, lưu token, chọn app, gửi lại, xoá/tải bản ghi lỗi |
-| `context-kit-quick-send` | content script Slack → SW | "Send to Devdy" trong menu Slack |
-| `context-kit-web` | content script / tab Web → MD → SW | gửi đoạn chọn, gửi/tải cả trang, mở cài đặt Devdy |
+| `context-kit-translator` | content script / popup → SW | translate, grammar check, page batches, cancel, list Ollama models |
+| `context-kit-translator-page` | Translate tab → tab (frame 0) | translate / revert the whole page |
+| `context-kit-devdy` | Devdy tab → SW | status, save token, pick app, retry, remove/download failed records |
+| `context-kit-quick-send` | Slack content script → SW | "Send to Devdy" in Slack's menu |
+| `context-kit-web` | content script / Web → MD tab → SW | send selection, send/download page, open Devdy settings |
 | `context-kit-offscreen` | SW → offscreen | `fetch-file`, `fetch-image`, `build-zip`, `store-zip`, `release` |
-| `context-kit-toast`, `context-kit-web-toast` | SW → tab (`sendToTab()`) | toast tiến trình/kết quả trong trang |
+| `context-kit-toast`, `context-kit-web-toast` | SW → tab (`sendToTab()`) | in-page progress/result toasts |
 
-Export Slack từ tab Slack dùng **port** `slack-thread-export` (`chrome.runtime.onConnect`) để đẩy tiến trình liên tục.
+The Slack export started from the Slack tab streams progress over the **port** `slack-thread-export`
+(`chrome.runtime.onConnect`).
 
-### Phân loại người gửi
+### Sender kinds
 
-Định nghĩa duy nhất ở `src/shared/sender.ts`:
+Defined once in `src/shared/sender.ts`:
 
-- **extension sender**: `sender.id` là ID của extension này (mọi context, kể cả content script).
-- **extension page**: extension sender có `sender.url` bắt đầu bằng `chrome-extension://<id>/` (popup, offscreen,
-  service worker). Content script luôn báo URL của trang web nên không bao giờ thuộc loại này.
-- **content script từ origin X**: extension sender chạy trong frame có đúng origin X.
+- **extension sender** — `sender.id` is this extension's ID (any context, content scripts included).
+- **extension page** — an extension sender whose `sender.url` starts with `chrome-extension://<id>/` (popup, offscreen
+  document, service worker). Content scripts report the web page's URL, so they never qualify.
+- **content script from origin X** — an extension sender running in a frame whose origin is exactly X.
 
-### Danh sách được phép (nằm trong từng feature)
+### Allow-lists (kept in each feature)
 
-| Kênh | Được phép |
+| Channel | Allowed |
 |---|---|
-| Translator (`translator/background/sender.ts`) | mọi extension sender; riêng `fetch-ollama-models` chỉ từ extension page. Kích thước được kiểm tra (văn bản ≤ 100 000 ký tự, batch ≤ 200 phần tử, tổng ≤ 100 000 ký tự). `cancel` chỉ huỷ được request của chính frame gửi (`requestKey`). |
-| Devdy, offscreen | chỉ extension page |
-| Web → MD | `send-selection` / `open-settings` từ content script; `send-page` / `download-page` chỉ từ extension page. Markdown nhận vào ≤ 30 × 1024 × 1024 ký tự (`background/limits.ts`). |
-| Slack | port export chỉ từ extension page; gửi nhanh chỉ từ content script trên `https://app.slack.com` |
+| Translator (`translator/background/sender.ts`) | any extension sender; `fetch-ollama-models` from extension pages only. Sizes are validated (text ≤ 100 000 chars, batch ≤ 200 items and ≤ 100 000 chars in total). `cancel` only reaches requests of the sending frame (`requestKey`). |
+| Devdy, offscreen | extension pages only |
+| Web → MD | `send-selection` / `open-settings` from content scripts; `send-page` / `download-page` from extension pages only. Incoming Markdown ≤ 30 × 1024 × 1024 chars (`background/limits.ts`). |
+| Slack | the export port from extension pages only; quick send only from the content script on `https://app.slack.com` |
 
 ## Translator
 
-- **Cài đặt**: kiểu + giá trị mặc định duy nhất ở `features/translator/shared/settings.ts` (`loadSettings()` /
-  `saveSettings()`). Khi cài/cập nhật, chỉ ghi `SEEDED_SETTINGS` (không bao giờ ghi API key).
-- **Gọi LLM** chỉ ở `background/index.ts`: OpenAI chat completions, Gemini `generateContent`, Ollama `/api/chat`.
-  Timeout: 120 s (Ollama 300 s, danh sách model 10 s). Đoạn chọn dài được chia khúc ≤ 4 000 ký tự.
-- **UI trong trang** (thanh nút nổi và popup kết quả) dùng Shadow DOM **closed** — script của trang không đọc/sửa được.
-  Mọi handler bỏ qua event giả (`e.isTrusted`), nên trang web không "bấm hộ" được. Đóng popup hoặc mở request mới sẽ
-  gửi `cancel` để huỷ lời gọi LLM đang chạy.
-- **Dịch cả trang** (`content/page-translation.ts`):
-  - Chỉ chạy ở frame trên cùng (popup gửi với `frameId: 0`), iframe không tự dịch.
-  - Phần đang hiển thị dịch trước; phần còn lại dịch khi cuộn tới (`IntersectionObserver`, lề 50 %).
-  - Văn bản giống nhau chỉ dịch một lần (`TranslationCache`); đoạn > 4 000 ký tự bị bỏ qua.
-  - Batch tối đa 60 đoạn / ~3 000 ký tự. Nội dung tải thêm được gom (debounce 400 ms), không chạy chồng và tối đa
-    20 request/phút (`RateLimiter`).
-  - Văn bản gốc giữ trong `WeakOriginals` để hoàn tác.
-- **Giao thức batch** (`core/batch-protocol.ts`): gửi một mảng JSON các chuỗi, yêu cầu trả về
-  `{"translations": [...]}` đúng số phần tử (bật JSON mode theo từng provider). `parseBatchResponse()` trả một bản dịch
-  hoặc `null` cho mỗi phần tử: sai số lượng → tất cả `null`; JSON bị cắt → lấy các phần tử đầu còn nguyên; vẫn đọc được
-  định dạng cũ `[N] text`. Phần tử `null` giữ văn bản gốc, không cache, và được thử lại sau 2 s, tối đa 2 lần mỗi
-  đoạn (`RetryBudget`).
-- **CORS của Ollama** (`background/ollama-cors.ts`): Ollama từ chối request có header `Origin` lạ. Extension cài các
-  rule `declarativeNetRequest` động (id 1–3) chỉ xoá `Origin` trên request **do chính extension gửi**
-  (`initiatorDomains: [id extension]`) tới origin Ollama đã cấu hình — `ollamaUrl` đã lưu và URL vừa thử trong popup.
-  Request của trang web tới localhost không bị đụng tới. Rule được đồng bộ lại khi `ollamaUrl` đổi.
+- **Settings:** types + defaults live only in `features/translator/shared/settings.ts` (`loadSettings()` /
+  `saveSettings()`). On install/update only `SEEDED_SETTINGS` are written (never API keys).
+- **LLM calls** happen only in `background/index.ts`: OpenAI chat completions, Gemini `generateContent`, Ollama
+  `/api/chat`. Timeouts: 120 s (Ollama 300 s, model list 10 s). Long selections are split into ≤ 4 000-char chunks.
+- **In-page UI** (floating toolbar and result popup) uses **closed** Shadow DOM — page scripts can't read or change it.
+  Every handler ignores synthetic events (`e.isTrusted`), so a page can't click for the user. Closing the popup or
+  starting a new request sends `cancel`, which aborts the LLM fetch in flight.
+- **Page translation** (`content/page-translation.ts`):
+  - Runs in the top frame only (the popup sends with `frameId: 0`); iframes don't translate themselves.
+  - Visible content first; the rest when scrolled near (`IntersectionObserver`, 50 % margin).
+  - Identical texts are translated once (`TranslationCache`); segments over 4 000 chars are skipped.
+  - Batches hold at most 60 segments / ~3 000 chars. Lazy and dynamic content is debounced (400 ms), flushes never
+    overlap and are capped at 20 requests/minute (`RateLimiter`).
+  - Originals are kept in `WeakOriginals` for revert.
+- **Batch protocol** (`core/batch-protocol.ts`): a batch is sent as a JSON array of strings and must come back as
+  `{"translations": [...]}` with exactly as many strings (JSON mode per provider). `parseBatchResponse()` returns one
+  translation or `null` per item: wrong length → all `null`; truncated JSON → the complete leading items; the legacy
+  `[N] text` format is still parsed. `null` items keep their original text, are never cached and are retried after 2 s,
+  at most 2 times per text (`RetryBudget`).
+- **Ollama CORS** (`background/ollama-cors.ts`): Ollama rejects requests with an unknown `Origin` header. The extension
+  installs dynamic `declarativeNetRequest` rules (ids 1–3) that remove `Origin` only on requests **made by this
+  extension** (`initiatorDomains: [extension id]`) to the configured Ollama origin(s) — the saved `ollamaUrl` and the URL
+  last probed from the popup. Web pages' requests to localhost are never touched. Rules are re-synced when `ollamaUrl`
+  changes.
 
 ## Web → MD
 
-- Luồng: `core/extract.ts` (chạy trong mọi frame) → `core/converter.ts` (`htmlToMarkdown`) → front matter
-  `webFrontMatter()` (`core/web-capture.ts`) sinh bằng `src/shared/yaml.ts`.
-- Trích xuất 2 lượt: lượt 1 mọi frame chỉ báo metadata + độ dài văn bản (đếm trên bản sao trơ, không chạy script);
-  lượt 2 chỉ lấy HTML của frame nhiều chữ nhất (vd iframe artifact thắng trang vỏ). Metadata ưu tiên frame trên cùng.
-- Artifact của Claude nằm trong iframe không đọc được: popup đưa nút mở trang nội dung (URL lấy từ tab).
-- Gửi đoạn chọn (`content/send-selection.ts`): ảnh `blob:` được nhúng thành data URL (≤ 5 MB/ảnh, ≤ 10 MB/lần).
+- Pipeline: `core/extract.ts` (runs in every frame) → `core/converter.ts` (`htmlToMarkdown`) → front matter
+  `webFrontMatter()` (`core/web-capture.ts`) emitted with `src/shared/yaml.ts`.
+- Two-pass extraction: pass 1 asks every frame for metadata + text length only (counted on an inert copy, no scripts
+  run); pass 2 fetches the HTML of the frame with the most text (e.g. an artifact iframe beats its shell page). Metadata
+  prefers the top frame.
+- Claude artifacts living in an unreadable iframe: the popup offers to open the content page (URL taken from the tab).
+- Selection capture (`content/send-selection.ts`): `blob:` images are inlined as data URLs (≤ 5 MB each, ≤ 10 MB per
+  selection).
 
 ## Slack
 
-- `pageSlackApi` (`core/slack-client.ts`) chạy trong trang app.slack.com (world `MAIN`) bằng session của người dùng;
-  token Slack không bao giờ rời khỏi trang. Khi bị rate limit, service worker chờ theo `Retry-After` (≤ 10 phút) và
-  ping giữ cho worker sống.
-- File đính kèm: `core/attachments.ts` lập kế hoạch tải (chỉ `https://*.slack.com`, 25 MB/file, tổng 200 MB; file
-  external như Google Drive bị bỏ qua). `md-builder` viết file đã tải thành link tương đối, file bị bỏ kèm ghi chú
-  `_(not included: …)_`. Gửi Devdy giới hạn 45 MB / 199 file.
-- Gửi nhanh trong Slack (`content/`): `message-dom.ts` tìm menu tin nhắn theo thứ tự `data-qa` → class `c-*` → ARIA;
-  không khớp thì không làm gì. Mục "Send to Devdy" được chèn ngay sau "Copy link" (hoặc cuối menu).
+- `pageSlackApi` (`core/slack-client.ts`) runs in the app.slack.com page (`MAIN` world) with the user's session; the
+  Slack token never leaves the page. Rate limits are waited out in the service worker following `Retry-After`
+  (≤ 10 minutes) with keepalive pings.
+- Attachments: `core/attachments.ts` plans downloads (only `https://*.slack.com`, 25 MB per file, 200 MB total; external
+  files such as Google Drive are skipped). `md-builder` renders saved files as relative links and skipped ones with a
+  `_(not included: …)_` note. Sends to Devdy are capped at 45 MB / 199 files.
+- Quick send inside Slack (`content/`): `message-dom.ts` finds the message menu via `data-qa` → `c-*` classes → ARIA;
+  when nothing matches it does nothing. "Send to Devdy" is inserted right after "Copy link" (or at the end of the menu).
 
 ## Offscreen document
 
-- **Zip dạng stream** (`zip-stream.ts`, `Zip` của fflate): mỗi file tải xong được đưa thẳng vào `ZipWriter` của job
-  (định dạng đã nén như png/jpg/pdf/zip được lưu nguyên, còn lại nén deflate); dữ liệu gom thành phần Blob mỗi 8 MB;
-  file Markdown được ghi **cuối cùng**. Kết quả là `blob:` URL cho `chrome.downloads` (`build-zip`) hoặc Blob lưu vào
-  IndexedDB cho outbox (`store-zip`). Không tạo được zip → export lùi về Markdown thường.
-- Các lượt tải song song giữ chỗ dung lượng trong một `ByteBudget` chung trước khi tải, nên tổng không bao giờ vượt
-  giới hạn. Mỗi lượt tải có timeout 120 s. Job không hoạt động 15 phút bị giải phóng.
-- **Vòng đời**: document đóng 10 s sau job cuối (hẹn giờ sau một ping keepalive), có alarm `offscreen-close` dự phòng;
-  service worker mới khởi động mà không có job sẽ đóng ngay document còn sót.
+- **Streamed zips** (`zip-stream.ts`, fflate `Zip`): each fetched file goes straight into the job's `ZipWriter`
+  (precompressed formats such as png/jpg/pdf/zip are stored, others deflated); output is folded into Blob parts every
+  8 MB; the Markdown file is written **last**. The result is a `blob:` URL for `chrome.downloads` (`build-zip`) or a Blob
+  stored in IndexedDB for the outbox (`store-zip`). If a zip can't be built, the export falls back to plain Markdown.
+- Parallel downloads reserve their bytes from a shared `ByteBudget` before fetching, so the total limit is never
+  exceeded. Each fetch times out after 120 s. Jobs idle for 15 minutes are freed.
+- **Lifetime:** the document is closed 10 s after the last job (a timer started after a keepalive ping), with an
+  `offscreen-close` alarm as fallback; a fresh service worker with no job closes a leftover document right away.
 
-### Chính sách tải ảnh web (`image-fetch.ts`, `url-safety.ts`)
+### Web image fetch policy (`image-fetch.ts`, `url-safety.ts`)
 
-- Chỉ nhận URL `http(s)` hoặc `data:image/…`; URL chứa thông tin đăng nhập bị từ chối.
-- Từ chối host nội bộ: loopback, mạng riêng, link-local, CGNAT (100.64/10), multicast (IPv4/IPv6 viết sẵn),
+- Only `http(s)` or `data:image/…` URLs; URLs carrying credentials are refused.
+- Private hosts are refused: loopback, private ranges, link-local, CGNAT (100.64/10), multicast (IPv4/IPv6 literals),
   `localhost`, `*.localhost`, `*.local`.
-- **Cookie** chỉ gửi cho ảnh cùng origin với trang, kèm `redirect: 'error'` — request có cookie không bao giờ đi theo
-  redirect; lỗi thì thử lại một lần không cookie.
-- Request không cookie dùng `redirect: 'follow'`, rồi kiểm tra lại URL cuối; URL cuối là host nội bộ → bỏ phản hồi.
-- Phản hồi bị từ chối khi `Content-Type` không phải `image/*` **và** URL không có đuôi ảnh nhận biết được.
-- Hạn chế đã biết:
-  - Chrome giấu `Location` với `redirect: 'manual'` (trả về `opaqueredirect`), nên không kiểm tra trước được từng bước
-    redirect: bước trung gian (không cookie) có thể chạm host nội bộ, nhưng phản hồi bị bỏ.
-  - Host chỉ được kiểm tra theo tên/IP viết sẵn, không phân giải DNS (extension không có API DNS), nên không phát hiện
-    tên public trỏ về IP nội bộ hay `DNS rebinding` (đổi bản ghi DNS sau khi đã kiểm tra).
+- **Cookies** are sent only for images on the page's exact origin, with `redirect: 'error'` — a cookie-bearing request
+  never follows a redirect; on failure the image is fetched once more without cookies.
+- Cookie-less requests use `redirect: 'follow'` and the final URL is checked again; a private final host discards the
+  response.
+- A response is rejected as non-image only when its `Content-Type` isn't `image/*` **and** the URL has no recognisable
+  image extension.
+- Known limitations:
+  - Chrome hides `Location` for `redirect: 'manual'` (an `opaqueredirect` response), so intermediate hops can't be
+    checked beforehand: a cookie-less hop may reach a private host, but its response is discarded.
+  - Hosts are checked by name/literal only, without DNS resolution (extensions have no DNS API), so a public name
+    resolving to a private IP, or DNS rebinding, is not detected.
 
 ## Devdy
 
-- Gửi qua Inbox API cục bộ: `POST http://127.0.0.1:{47821..47830}/v1/{slack-threads|web-pages}`, header
-  `Authorization: Bearer <token>`, body ≤ 50 MB. Tìm app bằng `GET /health` (timeout 800 ms) trên dải cổng đó.
-  Hợp đồng API: `devdy/docs/inbox-api.md` (repo Devdy).
-- Chọn app (`resolveDevdy()`): đã ghim cổng (`devdyPortPinned`) thì chỉ dùng cổng đó; nếu không, dùng app duy nhất đang
-  chạy; nhiều app mà chưa ghim → giữ trong hàng đợi (`choose_instance`), không bao giờ đoán.
-- Feature khác chỉ dùng `features/devdy/api.ts`.
+- Sends go to the local Inbox API: `POST http://127.0.0.1:{47821..47830}/v1/{slack-threads|web-pages}`,
+  `Authorization: Bearer <token>`, body ≤ 50 MB. Apps are discovered with `GET /health` (800 ms timeout) on that port
+  range. API contract: `devdy/docs/inbox-api.md` (Devdy repo).
+- App choice (`resolveDevdy()`): a pinned port (`devdyPortPinned`) is used exclusively; otherwise the single running app;
+  several apps and no pin → sends stay queued (`choose_instance`), never guessed.
+- Other features only use `features/devdy/api.ts`.
 
 ### Outbox (`features/devdy/core/outbox.ts`)
 
-Mọi export được lưu trước rồi mới gửi: payload trong IndexedDB `context-kit` / store `devdy-outbox`
-(`core/blob-store.ts`, offscreen `store-zip` cũng ghi vào đây), danh sách trong `chrome.storage.local.devdyOutbox`,
-trạng thái thử lại trong `devdyOutboxState` (`paused`, `backoff`, `notice`).
+Every export is stored before it is sent: payload in IndexedDB `context-kit` / store `devdy-outbox`
+(`core/blob-store.ts`; the offscreen `store-zip` writes there too), metadata in `chrome.storage.local.devdyOutbox`,
+retry state in `devdyOutboxState` (`paused`, `backoff`, `notice`).
 
-- Mọi thao tác đọc-sửa-ghi danh sách và mọi lượt gửi chạy tuần tự (một chuỗi Promise).
-- Gửi theo thứ tự cũ → mới. Trước khi gửi: tìm app; không có app (`unreachable`) / nhiều app (`choose_instance`) /
-  thiếu token (`no_token`) → dừng lượt, không tính lần thử.
-- Kết quả từng export:
-  - `created` / `updated` → xoá khỏi danh sách và **lưu ngay** (worker bị dừng giữa chừng không gửi trùng), rồi xoá blob.
-  - `server_error` (5xx) → tính một lần thử cho export đó, **gửi tiếp** export sau.
-  - `unauthorized` (401) → không tính lần thử, dừng lượt.
-  - `rejected` (400/403/413/415…) → thành **bản ghi lỗi** (không gửi lại).
-- Sau lượt gửi: `unauthorized` / `no_token` → **tạm dừng** tự gửi lại cho tới khi lưu token mới. Còn hàng chờ thì hẹn
-  alarm một lần `devdy-outbox-retry` theo bậc 1 → 2 → 5 → 15 → 60 phút (bậc cuối lặp lại; về bậc đầu khi gửi được).
-  Lưu token, chọn app hoặc bấm *Retry now* thì gửi ngay.
-- Header `Idempotency-Key: <id export>` cho phép Devdy loại bản gửi trùng sau sự cố.
-- Giới hạn:
-  - export trong hàng chờ quá 7 ngày hoặc 20 lần thử bị bỏ (kèm thông báo ở tab Devdy); bản ghi lỗi cũng hết hạn sau
-    7 ngày;
-  - giữ tối đa 20 bản ghi lỗi (mới nhất);
-  - tổng dung lượng ≤ 300 MB: cần chỗ thì xoá bản ghi lỗi cũ nhất trước, không bao giờ xoá export đang chờ; vẫn không đủ
-    chỗ → export mới **không được nhận** (báo hàng đợi đầy).
-- Dọn rác: blob không thuộc export nào bị xoá khi khởi động/cài đặt và trước mỗi lượt gửi; `outbox.hold(id)` bảo vệ zip
-  đang được ghi trước khi `enqueue`.
+- Every read-modify-write of the list and every delivery round runs serially (one promise chain).
+- Entries are sent oldest first. Before sending, the app is resolved: none (`unreachable`), several (`choose_instance`)
+  or no token (`no_token`) → the round stops without counting an attempt.
+- Per-export outcome:
+  - `created` / `updated` → removed from the list and **saved immediately** (a worker killed mid-round doesn't resend),
+    then the blob is deleted;
+  - `server_error` (5xx) → counts one attempt for that export, the round **continues** with the next one;
+  - `unauthorized` (401) → no attempt counted, the round stops;
+  - `rejected` (400/403/413/415…) → becomes a **failed record** (never retried).
+- After a round: `unauthorized` / `no_token` **pause** automatic retries until a token is saved. With entries still
+  queued, the one-shot alarm `devdy-outbox-retry` is scheduled with backoff 1 → 2 → 5 → 15 → 60 minutes (the last step
+  repeats; back to the first step once something is sent). Saving a token, picking an app or *Retry now* sends at once.
+- `Idempotency-Key: <export id>` lets Devdy drop duplicates after a crash.
+- Bounds:
+  - queued exports older than 7 days or with 20 attempts are dropped (with a notice in the Devdy tab); failed records
+    also expire after 7 days;
+  - at most 20 failed records are kept (newest);
+  - total size ≤ 300 MB: to make room the oldest failed records are evicted first, queued exports never; if that is not
+    enough the new export is **refused** ("queue is full").
+- Cleanup: blobs not referenced by any entry are deleted on startup/install and before each round; `outbox.hold(id)`
+  protects a zip being written before `enqueue`.
 
 ## Build
 
-- `vite.config.ts` build các trang (`src/popup/index.html`, `src/features/*/popup/popup.html`,
-  `src/offscreen/offscreen.html`) và service worker. `vite.content.config.ts --mode all-frames|slack` build từng content
-  script thành IIFE. Bản build được minify; script watch truyền `--minify false` và không xoá `dist/`.
-- Hàm chạy trong trang qua `chrome.scripting.executeScript({ func })` (`pageSlackApi`, `extractInPage`) bị serialize
-  thành chuỗi: phải **tự chứa** (không import/closure; import kiểu thì được). `tests/minified-injection.test.ts` kiểm tra
-  bản minify vẫn chạy độc lập.
-- `scripts/check-dist.mjs` kiểm tra mọi file mà `dist/manifest.json`, HTML và code tham chiếu đều tồn tại.
+- `vite.config.ts` builds the pages (`src/popup/index.html`, `src/features/*/popup/popup.html`,
+  `src/offscreen/offscreen.html`) and the service worker. `vite.content.config.ts --mode all-frames|slack` builds each
+  content script as an IIFE. Builds are minified; watch scripts pass `--minify false` and don't wipe `dist/`.
+- Functions injected with `chrome.scripting.executeScript({ func })` (`pageSlackApi`, `extractInPage`) are serialized
+  to a string: keep them **self-contained** (no imports/closures; type-only imports are fine).
+  `tests/minified-injection.test.ts` checks that the minified versions still run standalone.
+- `scripts/check-dist.mjs` checks that every file referenced by `dist/manifest.json`, the HTML and the code exists.

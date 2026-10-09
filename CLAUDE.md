@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-**Context Kit** — a Chrome Manifest V3 extension that bundles four tabs behind one toolbar popup:
+**AI Trans** (formerly Context Kit) — a Chrome Manifest V3 extension that bundles four tabs behind one toolbar popup:
 
 | Tab | Code | What it does |
 |---|---|---|
@@ -15,7 +15,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This repo was previously the standalone AI Translator extension; its history is preserved. Everything is TypeScript (`allowJs: false`).
 
-Human-facing docs (Vietnamese): `README.md` (install, usage, limits), `docs/architecture.md` (internals: messaging, offscreen, image fetch policy, outbox), `CHANGELOG.md`. Keep them in sync when behaviour changes.
+Human-facing docs: `README.md` (install, usage, limits), `docs/architecture.md` (internals: messaging, offscreen, image fetch policy, outbox), `CHANGELOG.md`. Keep them in sync when behaviour changes.
+
+Naming: only user-visible text says "AI Trans". Internal ids keep the `context-kit` prefix (storage keys `contextKit*`, message targets `context-kit-*`, IndexedDB `context-kit`, the `context-kit-debug` flag, `[context-kit]` logs, IIFE globals, package name) — renaming them would lose users' saved data.
 
 ## Development
 
