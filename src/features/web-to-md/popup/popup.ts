@@ -91,7 +91,14 @@ async function generate(): Promise<string | null> {
   // Claude artifact: only the (nearly empty) shell was readable, but the content host is known
   const looksEmpty = bestFrame.data.textLen < 40;
   if (looksEmpty && uchost) {
-    const contentUrl = `https://${uchost}${location.search}`;
+    // The artifact's query string lives on the tab's URL (not on this popup page's).
+    let search = '';
+    try {
+      search = new URL(tab.url || '').search;
+    } catch {
+      // no readable tab URL → open the content host without a query
+    }
+    const contentUrl = `https://${uchost}${search}`;
     offerOpenContent(contentUrl);
     setStatus(
       "The artifact content is inside an iframe that can't be read. Click the button below to open the content page, then convert it.",
