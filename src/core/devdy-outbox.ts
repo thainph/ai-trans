@@ -15,7 +15,6 @@ export interface OutboxEntry {
   id: string;
   title: string;
   contentType: string;
-  projectId?: string;
   createdAt: string;
   attempts: number;
   lastError?: string;
@@ -24,7 +23,6 @@ export interface OutboxEntry {
 export interface DevdySettings {
   token?: string;
   port?: number;
-  projectId?: string;
 }
 
 export interface OutboxDeps {
@@ -137,7 +135,6 @@ export class DevdyOutbox {
       const outcome = await this.deps.postThread(port!, settings.token!, {
         body: blob,
         contentType: entry.contentType,
-        projectId: entry.projectId,
       });
       results.set(entry.id, outcome);
       if (isRetryable(outcome)) {

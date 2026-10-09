@@ -9,17 +9,15 @@ import { DEVDY_TARGET, type DevdyRequest, type DevdyStatus } from '../types/devd
 const KEYS = {
   token: 'devdyToken',
   port: 'devdyPort',
-  projectId: 'devdyProjectId',
   outbox: 'devdyOutbox',
 } as const;
 const RETRY_ALARM = 'devdy-outbox-retry';
 
 async function loadSettings(): Promise<DevdySettings> {
-  const s = await chrome.storage.local.get([KEYS.token, KEYS.port, KEYS.projectId]);
+  const s = await chrome.storage.local.get([KEYS.token, KEYS.port]);
   return {
     token: typeof s[KEYS.token] === 'string' && s[KEYS.token] ? (s[KEYS.token] as string) : undefined,
     port: typeof s[KEYS.port] === 'number' ? (s[KEYS.port] as number) : undefined,
-    projectId: typeof s[KEYS.projectId] === 'string' && s[KEYS.projectId] ? (s[KEYS.projectId] as string) : undefined,
   };
 }
 
@@ -45,14 +43,13 @@ export const outbox = new DevdyOutbox({
   },
 });
 
-export { loadSettings as loadDevdySettings };
 
 async function status(): Promise<DevdyStatus> {
   const settings = await loadSettings();
   const pending = (await outbox.pending()).length;
   const found = await findDevdy(settings.port);
   if (!found) {
-    return { connected: false, hasToken: !!settings.token, projectId: settings.projectId, pending, projects: [] };
+    return { connected: false, hasToken: !!settings.token, pending, projects: [] };
   }
   if (found.port !== settings.port) await chrome.storage.local.set({ [KEYS.port]: found.port });
   const base = {
@@ -60,7 +57,6 @@ async function status(): Promise<DevdyStatus> {
     port: found.port,
     version: found.health.version,
     hasToken: !!settings.token,
-    projectId: settings.projectId,
     pending,
   };
   if (!settings.token) return { ...base, projects: [] };
@@ -85,9 +81,6 @@ async function handle(msg: DevdyRequest): Promise<unknown> {
       const flushed = token ? (await outbox.flush()).sent : 0;
       return { ...(await status()), flushed };
     }
-    case 'set-project':
-      await chrome.storage.local.set({ [KEYS.projectId]: msg.projectId ?? '' });
-      return { ok: true };
     case 'flush': {
       const r = await outbox.flush();
       return { ...r, status: await status() };

@@ -7,7 +7,6 @@ export const DEVDY_TARGET = 'context-kit-devdy';
 export type DevdyRequest =
   | { target: typeof DEVDY_TARGET; type: 'status' }
   | { target: typeof DEVDY_TARGET; type: 'save-token'; token: string }
-  | { target: typeof DEVDY_TARGET; type: 'set-project'; projectId: string | null }
   | { target: typeof DEVDY_TARGET; type: 'flush' };
 
 export interface DevdyStatus {
@@ -18,7 +17,6 @@ export interface DevdyStatus {
   hasToken: boolean;
   /** true/false once checked against /v1/projects; undefined when unknown. */
   tokenValid?: boolean;
-  projectId?: string;
   projects: DevdyProject[];
   /** Exports waiting in the outbox. */
   pending: number;

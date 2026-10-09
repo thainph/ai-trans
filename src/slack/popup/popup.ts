@@ -28,7 +28,6 @@ const devdySummary = $<HTMLSpanElement>('devdy-summary');
 const devdyPending = $<HTMLSpanElement>('devdy-pending');
 const devdyToken = $<HTMLInputElement>('devdy-token');
 const devdyTokenSave = $<HTMLButtonElement>('devdy-token-save');
-const devdyProject = $<HTMLSelectElement>('devdy-project');
 const devdyDetail = $<HTMLSpanElement>('devdy-detail');
 const devdyRetry = $<HTMLButtonElement>('devdy-retry');
 const statusEl = $<HTMLParagraphElement>('status');
@@ -140,14 +139,6 @@ function renderDevdy(st: DevdyStatus): void {
   devdyRetry.hidden = st.pending === 0;
   devdyToken.placeholder = st.hasToken ? 'Saved — paste a new one to replace' : 'Devdy → Settings → Inbox API';
 
-  // Keep the saved choice even when the list can't be loaded right now.
-  const selected = st.projectId ?? '';
-  devdyProject.replaceChildren(new Option('No project', ''));
-  for (const p of st.projects) devdyProject.add(new Option(p.name, p.id));
-  if (selected && !st.projects.some((p) => p.id === selected)) devdyProject.add(new Option('(saved project)', selected));
-  devdyProject.value = selected;
-  devdyProject.disabled = st.projects.length === 0;
-
   devdyDetail.textContent = st.error
     ? st.error
     : st.connected
@@ -207,9 +198,6 @@ devdyTokenSave.addEventListener('click', async () => {
 });
 devdyToken.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') devdyTokenSave.click();
-});
-devdyProject.addEventListener('change', () => {
-  void devdyCall({ type: 'set-project', projectId: devdyProject.value || null });
 });
 devdyRetry.addEventListener('click', async () => {
   devdyRetry.disabled = true;

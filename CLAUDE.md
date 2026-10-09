@@ -20,7 +20,8 @@ This repo was previously the standalone AI Translator extension; its history is 
 pnpm install
 pnpm build       # tsc --noEmit + vite build → dist/
 pnpm test        # vitest (Slack export + attachments)
-pnpm dev         # vite build --watch
+pnpm dev         # vite build --watch (popup/background/offscreen)
+pnpm dev:content # rebuild the Slack content script on change
 ```
 
 Load `dist/` unpacked at `chrome://extensions/` (Developer mode). Reload the extension after rebuilding.
@@ -49,9 +50,10 @@ Load `dist/` unpacked at `chrome://extensions/` (Developer mode). Reload the ext
 
 - "Send to Devdy" posts the thread to Devdy's local Inbox API (`POST http://127.0.0.1:{47821..47830}/v1/slack-threads`, Bearer token). Contract: `devdy/docs/slack-thread-inbox-api.md`.
 - All sends go through `DevdyOutbox` (`src/core/devdy-outbox.ts`): payload stored in IndexedDB (`src/core/blob-store.ts`, shared with the offscreen document which writes zips there via `store-zip`), metadata in `chrome.storage.local.devdyOutbox`. Retryable outcomes (`unreachable`, `no_token`, `unauthorized`, `server_error`) stay queued and are retried by the `devdy-outbox-retry` alarm; others are dropped.
+- Quick send inside Slack: `src/slack/content/` is a content script on app.slack.com (built separately as an IIFE via `vite.content.config.ts` — content scripts can't use `import`). It injects "Send to Devdy" into Slack's own message menu (`message-dom.ts`: selectors try `data-qa` → `c-*` classes → ARIA; when nothing matches it does nothing) and shows toasts. `src/background/quick-send.ts` runs the export (always reactions + attachments, no project) and also registers the browser context-menu fallback (`contextMenus`).
 - Fetches to Devdy must run in extension contexts (service worker / offscreen), never in content scripts (CORS + Private Network Access).
 
 ## Storage keys
 
 - `chrome.storage.sync` — translator: `provider, apiKey, openaiModel, geminiApiKey, geminiModel, ollamaUrl, ollamaModel, style, targetLang, popupWidth` (defaults in `DEFAULT_SETTINGS` in `src/translator/background.js`, re-declared in `public/translator/popup.js` — keep aligned). Slack: `includeReactions, includeFiles, zipFiles`.
-- `chrome.storage.local` — `contextKitLastTab`; Devdy: `devdyToken, devdyPort, devdyProjectId, devdyOutbox`.
+- `chrome.storage.local` — `contextKitLastTab`; Devdy: `devdyToken, devdyPort, devdyOutbox`.

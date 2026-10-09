@@ -74,8 +74,8 @@ slack-thread-dev-20231115-0513.zip
 
 Gửi thread vào app Devdy qua Inbox API cục bộ (hợp đồng API: `devdy/docs/slack-thread-inbox-api.md`).
 
-- Thiết lập một lần ở mục **Devdy** cuối tab Slack: dán token lấy từ *Devdy → Settings → Inbox API*,
-  chọn project (không bắt buộc).
+- Thiết lập một lần ở mục **Devdy** cuối tab Slack: dán token lấy từ *Devdy → Settings → Inbox API*.
+  Không gửi project — Devdy tự gán project sau.
 - Có file đính kèm (bật **Files**) → gửi `.zip` (`<thread>.md` + `attachments/…`); không có → gửi `.md`.
   Devdy tự nối link `attachments/x.png` trong Markdown với file đã lưu.
 - Front matter có `title`, `thread_url`, `thread_ts` → gửi lại cùng thread thì Devdy **cập nhật**, không tạo bản trùng.
@@ -86,6 +86,15 @@ Gửi thread vào app Devdy qua Inbox API cục bộ (hợp đồng API: `devdy/
   Lỗi không thể thử lại (400/413/415) → bỏ khỏi hàng đợi và báo lỗi.
 - Giới hạn của Devdy: body ≤ 50 MB, ≤ 200 file → extension chỉ đóng gói tối đa 45 MB / 199 file đính kèm,
   phần còn lại giữ link Slack kèm ghi chú.
+- **Gửi nhanh ngay trong Slack:** chuột phải vào một tin nhắn (hoặc bấm ⋮ *More actions*) → menu của Slack có thêm
+  **Send to Devdy** (ngay sau *Copy link*). Gửi cả thread chứa tin nhắn đó, luôn kèm reactions + file đính kèm;
+  tiến trình/kết quả hiện bằng toast góc dưới phải. Content script `src/slack/content/` (build riêng thành
+  `dist/slack-content.js` dạng IIFE bằng `vite.content.config.ts`).
+- **Dự phòng:** nếu Slack đổi giao diện khiến không chèn được vào menu, menu chuột phải của trình duyệt trên
+  `app.slack.com` vẫn có **Send Slack thread to Devdy** (lấy link từ timestamp được chuột phải, tin nhắn vừa chuột
+  phải, hoặc thread đang mở).
+- Gỡ lỗi việc nhận diện tin nhắn/menu: trên app.slack.com chạy `localStorage.setItem('context-kit-debug', '1')`
+  rồi reload, xem log `[context-kit]` trong Console.
 - Code: `core/devdy-client.ts` (gọi API), `core/devdy-outbox.ts` (hàng đợi, có test),
   `core/blob-store.ts` (IndexedDB), `background/devdy.ts` (alarm + message cho popup).
 
@@ -99,7 +108,7 @@ mới thì tạo module riêng và import trong `src/background/index.ts`.
 
 - Translator: `provider, apiKey, openaiModel, geminiApiKey, geminiModel, ollamaUrl, ollamaModel, style, targetLang, popupWidth`
 - Slack: `includeReactions, includeFiles, zipFiles`
-- `chrome.storage.local` — Devdy: `devdyToken, devdyPort, devdyProjectId, devdyOutbox`; popup: `contextKitLastTab`
+- `chrome.storage.local` — Devdy: `devdyToken, devdyPort, devdyOutbox`; popup: `contextKitLastTab`
 
 ## Lưu ý khi chuyển từ extension cũ
 

@@ -18,7 +18,7 @@ import {
   pageSlackApi,
 } from '../core/slack-client';
 import { EXPORT_PORT_NAME, type ExportRequest, type ExportResponse } from '../types/messages';
-import { loadDevdySettings, outbox } from './devdy';
+import { outbox } from './devdy';
 import { keepAliveSleep } from './keepalive';
 import { makeDoneResponse } from './respond';
 import { startZipJob } from './zip-export';
@@ -27,8 +27,11 @@ const SLACK_TAB_PATTERN = 'https://app.slack.com/*';
 /** Stay under Devdy's 50 MB body limit (attachments are stored uncompressed in the zip). */
 const DEVDY_MAX_TOTAL_FILE_BYTES = 45 * 1024 * 1024;
 
-async function findSlackTab(teamId?: string): Promise<chrome.tabs.Tab> {
+async function findSlackTab(teamId?: string, preferredTabId?: number): Promise<chrome.tabs.Tab> {
   const tabs = (await chrome.tabs.query({ url: SLACK_TAB_PATTERN })).filter((t) => t.id !== undefined);
+  // Quick send from a Slack page: use that very tab.
+  const preferred = preferredTabId !== undefined ? tabs.find((t) => t.id === preferredTabId) : undefined;
+  if (preferred) return preferred;
   if (tabs.length === 0) {
     throw new SlackExportError('no_slack_tab', 'Please open app.slack.com and log in, then try again.');
   }
@@ -79,7 +82,11 @@ function toDataUrl(markdown: string): string {
   return `data:text/markdown;charset=utf-8;base64,${btoa(binary)}`;
 }
 
-async function handleExport(req: ExportRequest, post: (msg: ExportResponse) => void): Promise<void> {
+export async function handleExport(
+  req: ExportRequest,
+  post: (msg: ExportResponse) => void,
+  preferredTabId?: number,
+): Promise<void> {
   const parsed = parseThreadLink(req.link);
   if (!parsed.ok) {
     post({ type: 'error', message: parsed.error.message });
@@ -87,7 +94,7 @@ async function handleExport(req: ExportRequest, post: (msg: ExportResponse) => v
   }
 
   post({ type: 'progress', text: 'Looking for an app.slack.com tab…' });
-  const tab = await findSlackTab(parsed.value.teamId);
+  const tab = await findSlackTab(parsed.value.teamId, preferredTabId);
   const run = makeRunner(tab.id!);
 
   const onProgress = (text: string) => post({ type: 'progress', text });
@@ -207,8 +214,8 @@ async function handleDevdyExport(
   }
 
   post({ type: 'progress', text: 'Sending to Devdy…' });
-  const { projectId } = await loadDevdySettings();
-  const delivery = await outbox.enqueue({ id, title: result.filename, contentType, projectId }, blob);
+  // No project: Devdy assigns it later.
+  const delivery = await outbox.enqueue({ id, title: result.filename, contentType }, blob);
   post(
     makeDoneResponse(
       'devdy',
