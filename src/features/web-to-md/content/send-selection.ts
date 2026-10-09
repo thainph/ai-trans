@@ -97,7 +97,7 @@ export async function inlineBlobImages(html: string, opts: InlineOptions = {}): 
 
 export async function sendSelection(range: Range, text: string): Promise<void> {
   if (!isExtensionAlive()) {
-    toaster.show({ key: 'reloaded', state: 'error', text: 'Context Kit was updated. Reload this page and try again.' });
+    toaster.show({ key: 'reloaded', state: 'error', text: 'AI Trans was updated. Reload this page and try again.' });
     return;
   }
   const key = `local-${Date.now()}`;

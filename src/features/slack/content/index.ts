@@ -97,13 +97,13 @@ function send(link: string): void {
     toaster.show({
       key: 'ext-reloaded',
       state: 'error',
-      text: 'Context Kit was updated or reloaded. Reload this Slack tab and try again.',
+      text: 'AI Trans was updated or reloaded. Reload this Slack tab and try again.',
     });
     return;
   }
   const req: QuickSendRequest = { target: QUICK_SEND_TARGET, type: 'devdy-send', link };
   chrome.runtime.sendMessage(req).catch((err: unknown) => {
-    toaster.show({ key: `err-${link}`, state: 'error', text: `Could not reach Context Kit: ${String(err)}` });
+    toaster.show({ key: `err-${link}`, state: 'error', text: `Could not reach AI Trans: ${String(err)}` });
   });
 }
 

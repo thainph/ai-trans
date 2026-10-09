@@ -82,10 +82,10 @@ describe('devdy-client: API calls', () => {
     const f = fakeDevdy(47821, {
       'GET /v1/projects': (init) => {
         auth = new Headers(init?.headers).get('Authorization') ?? '';
-        return json(200, [{ id: 'p1', name: 'Context Kit' }, { bogus: true }]);
+        return json(200, [{ id: 'p1', name: 'AI Trans' }, { bogus: true }]);
       },
     });
-    expect(await listProjects(47821, 'tok', f)).toEqual({ ok: true, projects: [{ id: 'p1', name: 'Context Kit' }] });
+    expect(await listProjects(47821, 'tok', f)).toEqual({ ok: true, projects: [{ id: 'p1', name: 'AI Trans' }] });
     expect(auth).toBe('Bearer tok');
     const denied = fakeDevdy(47821, { 'GET /v1/projects': () => json(401, { error: 'invalid token' }) });
     expect(await listProjects(47821, 'bad', denied)).toMatchObject({ ok: false, kind: 'unauthorized' });
@@ -310,7 +310,7 @@ describe('DevdyOutbox', () => {
     const box = new DevdyOutbox(m.deps);
     const r = await box.enqueue({ id: 'a', title: 'A', contentType: 'application/zip' }, md('A'));
     expect(r.outcome).toMatchObject({ kind: 'rejected', status: 413 });
-    expect(r.message).toMatch(/kept in Context Kit → Devdy/);
+    expect(r.message).toMatch(/kept in AI Trans → Devdy/);
     expect(r.pending).toBe(0);
     expect(m.blobs.has('a')).toBe(true);
     expect(m.entries()[0]!.failed).toMatchObject({ status: 413 });

@@ -234,7 +234,7 @@ translatePageBtn.addEventListener('click', () => {
       }
       if (type === 'translate-page') {
         updateTranslatePageBtn('translating');
-        // Embedded in the Context Kit popup's iframe → close the top-level popup.
+        // Embedded in the AI Trans popup's iframe → close the top-level popup.
         (window.top || window).close();
       } else {
         updateTranslatePageBtn('idle');

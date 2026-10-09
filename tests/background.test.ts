@@ -65,7 +65,7 @@ describe('makeDoneResponse (finding #4)', () => {
 });
 
 describe('manifest (finding #7)', () => {
-  // Context Kit: <all_urls> is needed by the translator content script and
+  // AI Trans: <all_urls> is needed by the translator content script and
   // Web → Markdown; Slack export still only targets app.slack.com tabs.
   it('requests exactly the permissions the three tools need', () => {
     expect(manifest.manifest_version).toBe(3);

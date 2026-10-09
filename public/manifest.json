@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Context Kit",
+  "name": "AI Trans",
   "version": "1.0.0",
   "description": "Gather context for AI: translate any text, turn web pages and Slack threads into clean Markdown.",
   "minimum_chrome_version": "111",
@@ -32,7 +32,7 @@
     }
   ],
   "action": {
-    "default_title": "Context Kit",
+    "default_title": "AI Trans",
     "default_popup": "src/popup/index.html",
     "default_icon": {
       "16": "icons/icon16.png",

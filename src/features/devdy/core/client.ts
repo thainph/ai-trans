@@ -221,7 +221,7 @@ export function describeOutcome(o: SendOutcome): string {
     case 'updated':
       return 'Updated the existing item in Devdy.';
     case 'choose_instance':
-      return 'Several Devdy apps are running — pick one in Context Kit → Devdy. The export is queued.';
+      return 'Several Devdy apps are running — pick one in AI Trans → Devdy. The export is queued.';
     case 'unreachable':
       return 'Devdy is not running — queued, it will be sent automatically when Devdy is available.';
     case 'no_token':
@@ -234,7 +234,7 @@ export function describeOutcome(o: SendOutcome): string {
       // status 0: refused locally (queue full, data missing…) — the message says why.
       if (o.status === 0) return o.message;
       return o.status === 413
-        ? 'The export is too large for Devdy (max 50 MB zipped / 200 MB unzipped). It is kept in Context Kit → Devdy, where you can download it.'
-        : `Devdy rejected the export (${o.message}). It is kept in Context Kit → Devdy.`;
+        ? 'The export is too large for Devdy (max 50 MB zipped / 200 MB unzipped). It is kept in AI Trans → Devdy, where you can download it.'
+        : `Devdy rejected the export (${o.message}). It is kept in AI Trans → Devdy.`;
   }
 }

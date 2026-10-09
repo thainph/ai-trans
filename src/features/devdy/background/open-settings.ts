@@ -1,4 +1,4 @@
-// Open the Context Kit popup on the Devdy tab (token / instance settings).
+// Open the AI Trans popup on the Devdy tab (token / instance settings).
 
 import { OPEN_TAB_KEY, type ToolId } from '../../../shared/popup-tabs';
 
