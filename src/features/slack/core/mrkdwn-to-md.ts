@@ -129,7 +129,7 @@ export function mrkdwnToMd(text: string | undefined, ctx: RenderContext): string
   for (let m = codeRe.exec(text); m !== null; m = codeRe.exec(text)) {
     out += convertInlineSegment(text.slice(last, m.index), ctx);
     const whole = m[0];
-    if (m[1] !== undefined && m[1].includes('\n')) {
+    if (m[1]?.includes('\n')) {
       const body = decodeEntities(m[1]).replace(/^\n+|\n+$/g, '');
       const needsLeadingNl = out.length > 0 && !out.endsWith('\n');
       const next = text.charAt(m.index + whole.length);

@@ -160,8 +160,10 @@ body {
   width: 14px;
   height: 14px;
   flex-shrink: 0;
-  opacity: 0;
-  margin-left: -20px;
+  /* Set by .chip:has(input:checked) (custom properties instead of a
+     ".chip:has(...) svg" rule keep selector specificity ascending). */
+  opacity: var(--chip-icon-opacity, 0);
+  margin-left: var(--chip-icon-offset, -20px);
   transition:
     opacity var(--ease),
     margin var(--ease);
@@ -172,11 +174,8 @@ body {
   border-color: var(--primary);
   color: var(--primary);
   font-weight: 600;
-}
-
-.chip:has(input:checked) svg {
-  opacity: 1;
-  margin-left: 0;
+  --chip-icon-opacity: 1;
+  --chip-icon-offset: 0px;
 }
 
 .chip.disabled {
