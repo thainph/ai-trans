@@ -2,7 +2,7 @@
 // iframe. The pages are same-origin extension pages, so chrome.* APIs work
 // inside them, and their CSS/IDs stay isolated from each other.
 
-type ToolId = 'translator' | 'web-to-md' | 'slack' | 'devdy';
+import { LAST_TAB_KEY, OPEN_TAB_KEY, OPEN_TAB_MESSAGE, type ToolId } from '../shared/popup-tabs';
 
 const TOOL_PAGES: Record<ToolId, string> = {
   translator: '/src/features/translator/popup/popup.html',
@@ -10,10 +10,6 @@ const TOOL_PAGES: Record<ToolId, string> = {
   slack: '/src/features/slack/popup/popup.html',
   devdy: '/src/features/devdy/popup/popup.html',
 };
-
-const LAST_TAB_KEY = 'contextKitLastTab';
-/** One-shot request to open a given tab (set by the background's openSettings). */
-const OPEN_TAB_KEY = 'contextKitOpenTab';
 
 // Sub-pages were designed as standalone popups with a fixed body width.
 const EMBED_CSS = 'html, body { width: auto !important; min-width: 0 !important; overflow: hidden !important; }';
@@ -98,7 +94,7 @@ for (const tab of tabs) {
 window.addEventListener('message', (e) => {
   if (e.origin !== location.origin) return;
   const data = e.data as { type?: string; tool?: unknown } | null;
-  if (data?.type === 'context-kit-open-tab' && isToolId(data.tool)) show(data.tool);
+  if (data?.type === OPEN_TAB_MESSAGE && isToolId(data.tool)) show(data.tool);
 });
 
 void initialTool().then(show);

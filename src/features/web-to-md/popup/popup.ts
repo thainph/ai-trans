@@ -3,6 +3,7 @@
 
 import { errorMessage } from '../../../shared/errors';
 import { filenamePart } from '../../../shared/filename';
+import { requestOpenTab } from '../../../shared/popup-tabs';
 import { htmlToMarkdown } from '../core/converter';
 import { type ExtractMode, type ExtractResult, extractInPage } from '../core/extract';
 import { type PageMeta, webFrontMatter } from '../core/web-capture';
@@ -258,7 +259,7 @@ devdyBtn.addEventListener('click', async () => {
 });
 // Switch the popup shell to the Devdy tab (token / instance settings).
 openDevdyBtn.addEventListener('click', () => {
-  window.parent.postMessage({ type: 'context-kit-open-tab', tool: 'devdy' }, location.origin);
+  requestOpenTab('devdy');
 });
 
 // Build the preview as soon as the tab opens.

@@ -1,10 +1,9 @@
 // Open the Context Kit popup on the Devdy tab (token / instance settings).
 
-/** One-shot hint read (and cleared) by the popup shell to pick its first tab. */
-export const OPEN_TAB_KEY = 'contextKitOpenTab';
+import { OPEN_TAB_KEY, type ToolId } from '../../../shared/popup-tabs';
 
 export async function openSettings(): Promise<void> {
-  await chrome.storage.local.set({ [OPEN_TAB_KEY]: 'devdy' });
+  await chrome.storage.local.set({ [OPEN_TAB_KEY]: 'devdy' satisfies ToolId });
   try {
     await chrome.action.openPopup();
   } catch {

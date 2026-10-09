@@ -1,4 +1,5 @@
 import { errorMessage } from '../../../shared/errors';
+import { requestOpenTab } from '../../../shared/popup-tabs';
 import { parseThreadLink } from '../core/permalink';
 import {
   DEFAULT_OPTIONS,
@@ -126,7 +127,7 @@ function showDevdyResult(
 
 // The popup shell hosts this page in an iframe: ask it to switch to the Devdy tab.
 openDevdyBtn.addEventListener('click', () => {
-  window.parent.postMessage({ type: 'context-kit-open-tab', tool: 'devdy' }, location.origin);
+  requestOpenTab('devdy');
 });
 
 function startExport(action: ExportAction): void {
