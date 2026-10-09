@@ -34,9 +34,16 @@ export interface PageRequest {
   params: Record<string, string>;
 }
 
+/** Body of a Slack Web API response: `ok`/`error` plus method-specific fields. */
+export interface SlackApiData {
+  ok?: boolean;
+  error?: string;
+  [key: string]: unknown;
+}
+
 export interface PageCallResult {
   ok: boolean;
-  data?: any;
+  data?: SlackApiData;
   error?: string;
   httpStatus?: number;
   /** Seconds to wait before retrying, when rate limited (if Slack told us). */
@@ -61,6 +68,23 @@ export type PageResponse =
 
 export type PageRunner = (req: PageRequest) => Promise<PageResponse>;
 
+// Shapes of Slack's localStorage "localConfig_v2" as read by pageSlackApi.
+// Every field is untrusted (unknown) until checked. Type-only: erased from the
+// serialized function.
+interface LocalConfigTeam {
+  id?: unknown;
+  enterprise_id?: unknown;
+  token?: unknown;
+  url?: unknown;
+  domain?: unknown;
+  name?: unknown;
+}
+interface LocalConfig {
+  teams?: Record<string, LocalConfigTeam | null>;
+  lastActiveTeamId?: unknown;
+}
+type TokenTeam = LocalConfigTeam & { token: string };
+
 /**
  * Runs inside https://app.slack.com (MAIN world). SELF-CONTAINED: keep every
  * helper inside this function body. Performs a single API call, no sleeping.
@@ -70,9 +94,9 @@ export async function pageSlackApi(req: PageRequest): Promise<PageResponse> {
     const raw = window.localStorage.getItem('localConfig_v2');
     if (!raw) return { ok: false, error: 'no_local_config' };
 
-    const cfg: any = JSON.parse(raw);
-    const teams: any[] = Object.values(cfg && cfg.teams ? cfg.teams : {}).filter(
-      (t: any) => t && typeof t.token === 'string' && t.token,
+    const cfg = (JSON.parse(raw) ?? {}) as LocalConfig;
+    const teams = Object.values(cfg.teams ?? {}).filter(
+      (t): t is TokenTeam => !!t && typeof t.token === 'string' && !!t.token,
     );
     if (teams.length === 0) return { ok: false, error: 'no_teams' };
 
@@ -161,7 +185,7 @@ export async function pageSlackApi(req: PageRequest): Promise<PageResponse> {
           result: { ok: false, error: 'ratelimited', httpStatus: 429, retryAfterSec },
         };
       }
-      let data: any;
+      let data: SlackApiData | null;
       try {
         data = await res.json();
       } catch {
@@ -169,9 +193,9 @@ export async function pageSlackApi(req: PageRequest): Promise<PageResponse> {
         continue; // non-JSON (HTML error page etc.) -> try fallback base
       }
       const result: PageCallResult = {
-        ok: !!(data && data.ok),
-        data,
-        error: data && data.error,
+        ok: !!data?.ok,
+        data: data ?? undefined,
+        error: data?.error,
         httpStatus: res.status,
       };
       if (result.error === 'ratelimited') result.retryAfterSec = retryAfterSec;
@@ -429,14 +453,7 @@ export async function fetchThread(
 
     // If the link points at a reply, restart from its thread parent once.
     const first = msgs[0];
-    if (
-      page === 0 &&
-      !redirected &&
-      first &&
-      first.thread_ts &&
-      first.thread_ts !== threadTs &&
-      first.ts === threadTs
-    ) {
+    if (page === 0 && !redirected && first?.thread_ts && first.thread_ts !== threadTs && first.ts === threadTs) {
       threadTs = first.thread_ts;
       redirected = true;
       byTs.clear();
@@ -513,7 +530,7 @@ export async function fetchThread(
   // IM: resolve the other participant for the channel label.
   if (mainChannel?.is_im && mainChannel.user && !users[mainChannel.user]) {
     const { result } = await callApi('users.info', { user: mainChannel.user });
-    const n = result.ok ? userDisplayName(result.data?.user) : undefined;
+    const n = result.ok ? userDisplayName(result.data?.user as SlackUser | undefined) : undefined;
     if (n) users[mainChannel.user] = n;
   }
 
