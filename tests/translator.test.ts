@@ -9,16 +9,9 @@ import {
   splitOuterWhitespace,
   stripTextTags,
   wrapText,
-} from '../src/translator/llm-utils.js';
-import contentScript from '../public/translator/content.js?raw';
-
-// detectLanguage lives in the classic content script; load just that function.
-function loadDetectLanguage(): (text: string) => string {
-  const src = contentScript;
-  const start = src.indexOf('function detectLanguage(text) {');
-  const end = src.indexOf('\n  }\n', start) + 4;
-  return new Function(`${src.slice(start, end)}; return detectLanguage;`)();
-}
+} from '../src/features/translator/background/llm';
+import { detectLanguage } from '../src/features/translator/content/detect-language';
+import { DEFAULT_SETTINGS } from '../src/features/translator/shared/settings';
 
 describe('splitForTranslation', () => {
   it('returns short text unchanged', () => {
@@ -144,7 +137,7 @@ describe('mapLimit', () => {
 });
 
 describe('detectLanguage (content script)', () => {
-  const detect = loadDetectLanguage();
+  const detect = detectLanguage;
 
   it.each([
     ['Xin chào, đây là một đoạn văn bản tiếng Việt.', 'vietnamese'],
@@ -158,5 +151,18 @@ describe('detectLanguage (content script)', () => {
     ['Привет, как дела?', 'russian'],
   ])('%s → %s', (text, lang) => {
     expect(detect(text)).toBe(lang);
+  });
+});
+
+describe('DEFAULT_SETTINGS', () => {
+  it('is the single source of the translator defaults', () => {
+    expect(DEFAULT_SETTINGS).toMatchObject({
+      provider: 'openai',
+      openaiModel: 'gpt-4o-mini',
+      geminiModel: 'gemini-2.5-flash',
+      ollamaUrl: 'http://localhost:11434',
+      popupWidth: 340,
+      popupHeight: 0,
+    });
   });
 });

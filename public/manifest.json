@@ -30,7 +30,7 @@
       "js": [
         "web-to-md/converter.js",
         "page-content.js",
-        "translator/content.js"
+        "translator-content.js"
       ],
       "css": [
         "translator/content.css"

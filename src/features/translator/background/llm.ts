@@ -1,5 +1,7 @@
 // Pure helpers for the translator's LLM calls (no chrome.* APIs → unit-testable).
 
+import type { Provider } from '../shared/settings';
+
 /** Max characters sent to the model in one request when translating a selection. */
 export const CHUNK_CHARS = 4000;
 
@@ -8,11 +10,11 @@ export const CHUNK_CHARS = 4000;
  * exactly `text`. Prefers line boundaries, then sentence boundaries, and only
  * hard-cuts when a single sentence is longer than `max`.
  */
-export function splitForTranslation(text, max = CHUNK_CHARS) {
+export function splitForTranslation(text: string, max = CHUNK_CHARS): string[] {
   if (text.length <= max) return [text];
 
   // Lines, each keeping its trailing "\n".
-  const pieces = [];
+  const pieces: string[] = [];
   for (const line of text.split(/(?<=\n)/)) {
     if (line.length <= max) {
       pieces.push(line);
@@ -25,7 +27,7 @@ export function splitForTranslation(text, max = CHUNK_CHARS) {
   }
 
   // Greedily pack pieces into segments.
-  const segments = [];
+  const segments: string[] = [];
   let current = "";
   for (const p of pieces) {
     if (current && current.length + p.length > max) {
@@ -39,22 +41,22 @@ export function splitForTranslation(text, max = CHUNK_CHARS) {
 }
 
 /** Split a segment into leading whitespace, content and trailing whitespace. */
-export function splitOuterWhitespace(s) {
-  const m = s.match(/^(\s*)([\s\S]*?)(\s*)$/);
-  return { lead: m[1], core: m[2], trail: m[3] };
+export function splitOuterWhitespace(s: string): { lead: string; core: string; trail: string } {
+  const m = s.match(/^(\s*)([\s\S]*?)(\s*)$/)!;
+  return { lead: m[1]!, core: m[2]!, trail: m[3]! };
 }
 
 /** Wrap user text so the model treats it as content, not instructions. */
-export function wrapText(text) {
+export function wrapText(text: string): string {
   return `<text>\n${text}\n</text>`;
 }
 
 /** Remove <text> tags if the model echoes them back. */
-export function stripTextTags(s) {
+export function stripTextTags(s: string): string {
   return s.trim().replace(/^<text>\s*/i, "").replace(/\s*<\/text>$/i, "");
 }
 
-export function buildTranslatePrompt(source, target, styleInstruction) {
+export function buildTranslatePrompt(source: string, target: string, styleInstruction: string): string {
   return [
     `You are a professional translator. Translate the text inside <text></text> into ${target}.`,
     `The source language is most likely ${source}, but the text may mix languages: translate every part that is not already in ${target}, and keep parts already in ${target} unchanged.`,
@@ -72,9 +74,29 @@ export function buildTranslatePrompt(source, target, styleInstruction) {
  * 2048–4096 tokens). Size it for input + output, assuming the worst case of
  * ~1 token per character (CJK).
  */
-export function ollamaContextSize(inputChars) {
+export function ollamaContextSize(inputChars: number): number {
   const needed = inputChars * 2 + 1536;
   return Math.min(32768, Math.max(4096, Math.ceil(needed / 1024) * 1024));
+}
+
+export interface LLMReply {
+  text: string;
+  /** The model stopped at its output limit. */
+  truncated: boolean;
+}
+
+type ChatMessage = { role: 'system' | 'user'; content: string };
+
+/** Request body for OpenAI chat completions, Gemini generateContent or Ollama /api/chat. */
+export interface LLMRequestBody {
+  model?: string;
+  messages?: ChatMessage[];
+  stream?: boolean;
+  temperature?: number;
+  options?: { temperature: number; num_ctx: number; num_predict: number };
+  systemInstruction?: { parts: { text: string }[] };
+  contents?: { role: 'user'; parts: { text: string }[] }[];
+  generationConfig?: { temperature: number };
 }
 
 /**
@@ -82,7 +104,7 @@ export function ollamaContextSize(inputChars) {
  * the model's own maximum applies (a small cap truncated long translations,
  * and Gemini's thinking tokens count against it).
  */
-export function buildRequestBody(provider, model, systemPrompt, userContent) {
+export function buildRequestBody(provider: Provider, model: string, systemPrompt: string, userContent: string): LLMRequestBody {
   if (provider === "ollama") {
     return {
       model,
@@ -119,7 +141,8 @@ export function buildRequestBody(provider, model, systemPrompt, userContent) {
  * Extract the reply text and whether the model stopped because of its output
  * limit. Throws when there is no usable text.
  */
-export function parseLLMResponse(provider, result) {
+// biome-ignore lint/suspicious/noExplicitAny: provider JSON is validated field by field
+export function parseLLMResponse(provider: Provider, result: any): LLMReply {
   if (provider === "ollama") {
     const text = result?.message?.content;
     if (typeof text !== "string") throw new Error("Ollama returned no text");
@@ -129,8 +152,8 @@ export function parseLLMResponse(provider, result) {
     const cand = result?.candidates?.[0];
     // The reply can be split across several parts; skip thought summaries.
     const text = (cand?.content?.parts || [])
-      .filter((p) => !p.thought && typeof p.text === "string")
-      .map((p) => p.text)
+      .filter((p: { thought?: boolean; text?: unknown }) => !p.thought && typeof p.text === "string")
+      .map((p: { text: string }) => p.text)
       .join("");
     if (!text) {
       const reason = cand?.finishReason || result?.promptFeedback?.blockReason || "unknown";
@@ -145,13 +168,13 @@ export function parseLLMResponse(provider, result) {
 }
 
 /** Run `fn` over items with at most `limit` in flight; results keep input order. */
-export async function mapLimit(items, limit, fn) {
-  const out = new Array(items.length);
+export async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T, index: number) => Promise<R>): Promise<R[]> {
+  const out = new Array<R>(items.length);
   let next = 0;
   const worker = async () => {
     while (next < items.length) {
       const i = next++;
-      out[i] = await fn(items[i], i);
+      out[i] = await fn(items[i]!, i);
     }
   };
   await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker));

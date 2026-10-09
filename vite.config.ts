@@ -15,6 +15,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         popup: 'src/popup/index.html',
+        'translator-popup': 'src/features/translator/popup/popup.html',
         'slack-popup': 'src/features/slack/popup/popup.html',
         offscreen: 'src/offscreen/offscreen.html',
         'devdy-popup': 'src/features/devdy/popup/popup.html',

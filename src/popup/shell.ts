@@ -5,7 +5,7 @@
 type ToolId = 'translator' | 'web-to-md' | 'slack' | 'devdy';
 
 const TOOL_PAGES: Record<ToolId, string> = {
-  translator: '/translator/popup.html',
+  translator: '/src/features/translator/popup/popup.html',
   'web-to-md': '/web-to-md/popup.html',
   slack: '/src/features/slack/popup/popup.html',
   devdy: '/src/features/devdy/popup/popup.html',
