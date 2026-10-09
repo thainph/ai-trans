@@ -1,22 +1,14 @@
 // Page content script (all sites, all frames): "Send selection to Devdy" for the
-// translator's selection toolbar (public/translator/content.js calls
+// translator's selection toolbar (the translator content script calls
 // `window.__contextKitDevdy.sendSelection(range, text)`), plus the result toast.
-//
-// Loaded after web-to-md/converter.js (provides window.htmlToMarkdown) and
-// before translator/content.js — all three share the extension's isolated world.
 
 import { errorMessage } from '../../../shared/errors';
 import { isExtensionAlive } from '../../../shared/runtime';
 import { Toaster } from '../../../shared/toast';
 import { WEB_TARGET, WEB_TOAST_TARGET, type WebRequest, type WebToastMessage } from '../messages';
+import { htmlToMarkdown } from '../core/converter';
 import { pageMeta, selectionHtml } from './selection';
 
-declare global {
-  interface Window {
-    htmlToMarkdown?: (html: string, opts: { keepImages: boolean; keepLinks: boolean; baseUrl: string }) => string;
-    __contextKitDevdy?: { sendSelection(range: Range, text: string): void };
-  }
-}
 
 /** blob: images only exist in this page; inline small ones so Devdy gets them. */
 const MAX_INLINE_BLOB_BYTES = 5 * 1024 * 1024;
@@ -57,7 +49,7 @@ async function sendSelection(range: Range, text: string): Promise<void> {
   toaster.show({ key, state: 'progress', text: 'Preparing selection…' });
   try {
     const html = await inlineBlobImages(selectionHtml(range, location.href));
-    const md = window.htmlToMarkdown?.(html, { keepImages: true, keepLinks: true, baseUrl: location.href }) ?? '';
+    const md = htmlToMarkdown(html, { keepImages: true, keepLinks: true, baseUrl: location.href });
     const req: WebRequest = {
       target: WEB_TARGET,
       type: 'send-selection',

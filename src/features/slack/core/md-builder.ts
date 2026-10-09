@@ -2,6 +2,7 @@
 // (uses the runtime's local timezone for date formatting).
 
 import { filenamePart } from '../../../shared/filename';
+import { frontMatter, yamlPlain, yamlRaw } from '../../../shared/yaml';
 import type { SlackAttachment, SlackMessage } from './types';
 import type { AttachmentOutcome } from './attachments';
 import { renderEmoji } from './emoji';
@@ -67,23 +68,6 @@ export function formatLocalIso(d: Date): string {
 
 function compactStamp(d: Date): string {
   return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
-}
-
-// ---------- YAML helpers ----------
-
-// YAML 1.1 + 1.2 words that would be parsed as booleans/null if left unquoted.
-const YAML_RESERVED = /^(true|false|yes|no|y|n|on|off|null|~)$/i;
-
-/**
- * Emit a string as a YAML scalar that is safe both as a block value and as a
- * flow-sequence item. Plain only when it starts with a letter and contains
- * letters, digits, spaces and ". _ ( ) / -"; otherwise a JSON string, which is
- * a valid YAML double-quoted scalar (handles quotes, colons, brackets, #, etc.).
- */
-export function yamlScalar(value: string): string {
-  const plainSafe = /^\p{L}[\p{L}\p{N} ._()/-]*$/u.test(value) && !/\s$/.test(value);
-  if (plainSafe && !YAML_RESERVED.test(value)) return value;
-  return JSON.stringify(value);
 }
 
 // ---------- message helpers ----------
@@ -226,20 +210,18 @@ export function buildThreadMarkdown(data: ThreadData, options: BuildOptions, now
 
   const label = channelLabel(data);
   const threadTs = messages[0]?.thread_ts ?? messages[0]?.ts;
-  const frontmatter = [
-    '---',
+  const frontmatter = frontMatter({
     // title / thread_url / thread_ts let Devdy name and de-duplicate the thread.
-    `title: ${JSON.stringify(title)}`,
-    `workspace: ${yamlScalar(data.workspace.name ?? data.workspace.domain ?? 'unknown')}`,
-    `channel: ${JSON.stringify(label)}`,
-    `thread_url: ${/^https:\/\/[^\s#,[\]{}"']+$/.test(data.threadUrl) ? data.threadUrl : JSON.stringify(data.threadUrl)}`,
-    ...(threadTs ? [`thread_ts: ${JSON.stringify(threadTs)}`] : []),
-    `exported_at: ${formatLocalIso(now)}`,
-    `messages: ${messages.length}`,
-    `participants: [${participants.map(yamlScalar).join(', ')}]`,
-    ...(data.truncated ? ['truncated: true'] : []),
-    '---',
-  ].join('\n');
+    title,
+    workspace: yamlPlain(data.workspace.name ?? data.workspace.domain ?? 'unknown'),
+    channel: label,
+    thread_url: /^https:\/\/[^\s#,[\]{}"']+$/.test(data.threadUrl) ? yamlRaw(data.threadUrl) : data.threadUrl,
+    thread_ts: threadTs,
+    exported_at: yamlRaw(formatLocalIso(now)),
+    messages: messages.length,
+    participants,
+    truncated: data.truncated ? true : undefined,
+  });
 
   const notice = data.truncated
     ? '> ⚠️ This export may be incomplete: fetching stopped before the end of the thread.\n\n'

@@ -1,9 +1,9 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it } from 'vitest';
-import extractSource from '../public/web-to-md/extract.js?raw';
+import { extractInPage } from '../src/features/web-to-md/core/extract';
 
-type Extracted = { html: string; textLen: number; title: string };
-const extractInPage = new Function(`${extractSource}; return extractInPage;`)() as (mode: string) => Extracted;
+// chrome.scripting.executeScript serializes `func`: it must work standalone.
+const revived = new Function(`return (${extractInPage.toString()});`)() as typeof extractInPage;
 
 const card = (i: number) => `
   <article class="list-article">
@@ -74,5 +74,16 @@ describe('extractInPage (main content)', () => {
     const r = extractInPage('full');
     expect(r.html).toContain('menu');
     expect(r.html).toContain('Press release 2 title');
+  });
+});
+
+describe('extractInPage (serialized)', () => {
+  it('runs after toString() serialization like chrome.scripting does', () => {
+    document.head.innerHTML = '<title>Doc</title><meta property="og:site_name" content="Site">';
+    document.body.innerHTML = '<main><h1>Docs</h1><p>Body text</p></main>';
+    const r = revived('article');
+    expect(r.html).toContain('Body text');
+    expect(r.title).toBe('Doc');
+    expect(r.siteName).toBe('Site');
   });
 });

@@ -6,6 +6,7 @@
 // rewritten to those relative paths so Devdy renders them inline.
 
 import { safeFileName } from '../../../shared/filename';
+import { frontMatter } from '../../../shared/yaml';
 
 export interface PageMeta {
   url: string;
@@ -36,24 +37,22 @@ export function firstLineTitle(text: string, max = TITLE_MAX): string | undefine
   return chars.length > max ? `${chars.slice(0, max - 1).join('').trimEnd()}…` : line;
 }
 
-const yamlString = (v: string) => JSON.stringify(v);
-
+/** Devdy web-page front matter (also used by the Web → MD export), followed by a blank line. */
 export function webFrontMatter(
   meta: PageMeta,
   opts: { title?: string; selection: boolean; capturedAt: Date },
 ): string {
-  const lines = ['---'];
-  const title = opts.title ?? meta.pageTitle;
-  if (title) lines.push(`title: ${yamlString(title)}`);
-  lines.push(`url: ${yamlString(meta.url)}`);
-  if (meta.siteName) lines.push(`site_name: ${yamlString(meta.siteName)}`);
-  if (meta.author) lines.push(`author: ${yamlString(meta.author)}`);
-  if (meta.publishedAt) lines.push(`published_at: ${yamlString(meta.publishedAt)}`);
-  lines.push(`captured_at: ${yamlString(opts.capturedAt.toISOString())}`);
-  if (meta.description) lines.push(`description: ${yamlString(meta.description)}`);
-  lines.push(`selection: ${opts.selection}`);
-  lines.push('---');
-  return `${lines.join('\n')}\n\n`;
+  const head = frontMatter({
+    title: opts.title ?? meta.pageTitle,
+    url: meta.url,
+    site_name: meta.siteName,
+    author: meta.author,
+    published_at: meta.publishedAt,
+    captured_at: opts.capturedAt.toISOString(),
+    description: meta.description,
+    selection: opts.selection,
+  });
+  return `${head}\n\n`;
 }
 
 // ---------------------------------------------------------------------------

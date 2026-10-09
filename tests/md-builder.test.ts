@@ -6,8 +6,8 @@ import {
   formatLocalIso,
   makeTitle,
   sanitizeFilenamePart,
-  yamlScalar,
 } from '../src/features/slack/core/md-builder';
+import { yamlScalar } from '../src/shared/yaml';
 import type { SlackMessage, SlackRepliesResponse } from '../src/features/slack/core/types';
 import { parse as parseYaml } from 'yaml';
 import fixture from './fixtures/replies.json';
