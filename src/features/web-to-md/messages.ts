@@ -6,7 +6,8 @@
 
 import type { PageMeta } from './core/web-capture';
 import type { DevdyDelivery } from '../slack/messages';
-import type { ToastState } from '../slack/quick-send-messages';
+import type { Result } from '../../shared/messaging';
+import type { ToastPayload } from '../../shared/toast';
 
 export const WEB_TARGET = 'context-kit-web';
 /** Distinct from the Slack toast target so app.slack.com doesn't show two toasts. */
@@ -44,15 +45,16 @@ export interface WebSendResult {
   images: { saved: number; failed: number };
 }
 
-export type DownloadPageResponse =
-  | { ok: true; zipped: true; filename: string; images: { saved: number; failed: number } }
-  | { ok: true; zipped: false; images: { saved: number; failed: number } }
-  | { ok: false; error: string };
+export type DownloadPageResponse = Result<
+  { zipped: true; filename: string; images: { saved: number; failed: number } } | {
+    zipped: false;
+    images: { saved: number; failed: number };
+  }
+>;
 
-export interface WebToastMessage {
+/** Response to `send-page`: the delivery plus the status line for the popup. */
+export type SendPageResponse = Result<{ result: WebSendResult; text: string }>;
+
+export interface WebToastMessage extends ToastPayload {
   target: typeof WEB_TOAST_TARGET;
-  key: string;
-  state: ToastState;
-  text: string;
-  action?: 'open-settings';
 }

@@ -13,6 +13,8 @@ import {
   type OffscreenRequest,
   type StoreZipResponse,
 } from '../offscreen/messages';
+import { errorMessage } from '../shared/errors';
+import { fail } from '../shared/messaging';
 import { chromePing, KEEPALIVE_CHUNK_MS } from './keepalive';
 
 const OFFSCREEN_URL = 'src/offscreen/offscreen.html';
@@ -32,7 +34,7 @@ async function ensureOffscreen(): Promise<void> {
     })
     .catch((e: unknown) => {
       // Already open (e.g. a previous export) is fine.
-      if (!String(e instanceof Error ? e.message : e).includes('single offscreen')) throw e;
+      if (!errorMessage(e).includes('single offscreen')) throw e;
     })
     .finally(() => {
       creating = null;
@@ -120,7 +122,7 @@ export async function startZipJob(): Promise<ZipJob> {
             maxBytes: MAX_FILE_BYTES,
           });
         } catch (e) {
-          res = { ok: false, error: e instanceof Error ? e.message : String(e) };
+          res = fail(e);
         }
         if (res?.ok) {
           outcomes.set(d.id, { kind: 'saved', path: d.path, isImage: d.isImage });
@@ -156,7 +158,7 @@ export async function startZipJob(): Promise<ZipJob> {
               maxBytes: Math.min(opts.maxBytes, opts.maxTotalBytes - total),
             });
           } catch (e) {
-            res = { ok: false, error: e instanceof Error ? e.message : String(e) };
+            res = fail(e);
           }
           if (res?.ok) {
             total += res.size;

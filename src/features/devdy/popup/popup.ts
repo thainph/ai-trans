@@ -1,6 +1,8 @@
 // Devdy tab: connection status, app (port) choice, token and outbox queue.
 
-import { DEVDY_TARGET, type DevdyCommand, type DevdyStatus } from '../messages';
+import { errorMessage } from '../../../shared/errors';
+import type { Result } from '../../../shared/messaging';
+import { DEVDY_TARGET, type DevdyCommand, type DevdyFlushResult, type DevdyStatus } from '../messages';
 
 const $ = <T extends HTMLElement>(id: string): T => {
   const el = document.getElementById(id);
@@ -25,8 +27,11 @@ const errorEl = $<HTMLParagraphElement>('error');
 
 const AUTO = 'auto';
 
-function call<T>(req: DevdyCommand): Promise<T> {
-  return chrome.runtime.sendMessage({ target: DEVDY_TARGET, ...req }) as Promise<T>;
+async function call<T extends object>(req: DevdyCommand): Promise<T> {
+  const res = (await chrome.runtime.sendMessage({ target: DEVDY_TARGET, ...req })) as Result<T> | undefined;
+  if (!res) throw new Error('No response from the extension background.');
+  if (!res.ok) throw new Error(res.error);
+  return res;
 }
 
 function setStatus(text: string): void {
@@ -99,7 +104,7 @@ async function refresh(): Promise<void> {
     render(await call<DevdyStatus>({ type: 'status' }));
   } catch (e) {
     summary.textContent = 'Status unavailable';
-    detail.textContent = e instanceof Error ? e.message : String(e);
+    detail.textContent = errorMessage(e);
   } finally {
     refreshBtn.disabled = false;
   }
@@ -142,7 +147,7 @@ instanceSelect.addEventListener('change', async () => {
 retryBtn.addEventListener('click', async () => {
   retryBtn.disabled = true;
   try {
-    const r = await call<{ sent: number; pending: number; status: DevdyStatus }>({ type: 'flush' });
+    const r = await call<DevdyFlushResult>({ type: 'flush' });
     render(r.status);
     setStatus(r.sent ? `Sent ${r.sent} queued export${r.sent === 1 ? '' : 's'} to Devdy.` : 'Still waiting for Devdy.');
   } finally {

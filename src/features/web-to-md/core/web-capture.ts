@@ -5,7 +5,7 @@
 // Markdown are downloaded into `images/…` inside the zip and the links are
 // rewritten to those relative paths so Devdy renders them inline.
 
-import { safeFileName } from '../../slack/core/attachments';
+import { safeFileName } from '../../../shared/filename';
 
 export interface PageMeta {
   url: string;

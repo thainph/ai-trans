@@ -1,3 +1,4 @@
+import { errorMessage } from '../../../shared/errors';
 import { parseThreadLink } from '../core/permalink';
 import {
   DEFAULT_OPTIONS,
@@ -162,7 +163,7 @@ function startExport(action: ExportAction): void {
       if (msg.action === 'copy') {
         copyToClipboard(msg.markdown)
           .then(() => setStatus(`Copied ${msg.messageCount} messages to the clipboard.`))
-          .catch((e: unknown) => setError(`Could not copy: ${e instanceof Error ? e.message : String(e)}`))
+          .catch((e: unknown) => setError(`Could not copy: ${errorMessage(e)}`))
           .finally(finish);
       } else if (msg.action === 'devdy') {
         showDevdyResult(msg.devdy, msg.files, msg.messageCount);

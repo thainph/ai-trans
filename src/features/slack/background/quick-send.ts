@@ -2,8 +2,9 @@
 // into Slack's own message menu. Progress and results are shown as a toast
 // inside the Slack tab.
 
+import { type Result, onTargetMessage } from '../../../shared/messaging';
+import { openSettings } from '../../devdy/background/open-settings';
 import { toastFor } from '../core/quick-send';
-import { SlackExportError } from '../core/slack-client';
 import {
   QUICK_SEND_OPTIONS,
   QUICK_SEND_TARGET,
@@ -11,8 +12,7 @@ import {
   TOAST_TARGET,
   type ToastMessage,
 } from '../quick-send-messages';
-import { openSettings } from '../../devdy/background/open-settings';
-import { handleExport } from './export';
+import { exportErrorMessage, handleExport } from './export';
 
 /** Threads currently being sent (avoid double sends from repeated clicks). */
 const inFlight = new Set<string>();
@@ -42,23 +42,22 @@ export async function quickSend(link: string, tabId: number, frameId?: number): 
       tabId,
     );
   } catch (e) {
-    const text =
-      e instanceof SlackExportError ? e.message : `Unexpected error: ${e instanceof Error ? e.message : String(e)}`;
-    toast(tabId, frameId, { target: TOAST_TARGET, key, state: 'error', text });
+    toast(tabId, frameId, { target: TOAST_TARGET, key, state: 'error', text: exportErrorMessage(e) });
   } finally {
     inFlight.delete(link);
   }
 }
 
-chrome.runtime.onMessage.addListener((msg: QuickSendRequest, sender, sendResponse) => {
-  if (msg?.target !== QUICK_SEND_TARGET) return;
-  if (msg.type === 'devdy-send') {
-    const tabId = sender.tab?.id;
-    if (tabId === undefined) return;
-    void quickSend(msg.link, tabId, sender.frameId);
-    sendResponse({ accepted: true });
-  } else if (msg.type === 'open-settings') {
-    void openSettings();
-    sendResponse({ ok: true });
+onTargetMessage<QuickSendRequest>(QUICK_SEND_TARGET, (msg, sender): Result | undefined => {
+  switch (msg.type) {
+    case 'devdy-send': {
+      const tabId = sender.tab?.id;
+      if (tabId === undefined) return;
+      void quickSend(msg.link, tabId, sender.frameId);
+      return { ok: true }; // accepted; progress/result arrive as toasts
+    }
+    case 'open-settings':
+      void openSettings();
+      return { ok: true };
   }
 });

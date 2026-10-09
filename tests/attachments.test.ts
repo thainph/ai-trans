@@ -3,9 +3,9 @@ import {
   isAllowedFileUrl,
   isCompressiblePath,
   planAttachments,
-  safeFileName,
   type AttachmentOutcome,
 } from '../src/features/slack/core/attachments';
+import { safeFileName } from '../src/shared/filename';
 import { buildThreadMarkdown, type ThreadData } from '../src/features/slack/core/md-builder';
 import type { SlackFile, SlackMessage } from '../src/features/slack/core/types';
 

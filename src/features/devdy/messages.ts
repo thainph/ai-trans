@@ -33,5 +33,12 @@ export interface DevdyStatus {
   flushed?: number;
 }
 
+/** Response to `flush`. */
+export interface DevdyFlushResult {
+  sent: number;
+  pending: number;
+  status: DevdyStatus;
+}
+
 /** A request without its `target` (distributes over the union). */
 export type DevdyCommand = DevdyRequest extends infer R ? (R extends DevdyRequest ? Omit<R, 'target'> : never) : never;

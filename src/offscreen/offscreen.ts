@@ -3,6 +3,8 @@
 // are allowed by host permissions and carry the user's Slack cookies.
 
 import { type Zippable, zipSync } from 'fflate';
+import { errorMessage } from '../shared/errors';
+import { type Result, onTargetMessage } from '../shared/messaging';
 import { isAllowedFileUrl, isCompressiblePath } from '../features/slack/core/attachments';
 import { putBlob } from '../features/devdy/core/blob-store';
 import { imageExtension, isFetchableImageUrl } from '../features/web-to-md/core/web-capture';
@@ -85,7 +87,7 @@ async function fetchFile(req: Extract<OffscreenRequest, { type: 'fetch-file' }>)
     job(req.jobId).files.set(req.path, bytes);
     return { ok: true, size: bytes.byteLength };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    return { ok: false, error: errorMessage(e) };
   }
 }
 
@@ -113,7 +115,7 @@ async function fetchImage(req: Extract<OffscreenRequest, { type: 'fetch-image' }
     job(req.jobId).files.set(path, bytes);
     return { ok: true, path, size: bytes.byteLength };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    return { ok: false, error: errorMessage(e) };
   }
 }
 
@@ -138,7 +140,7 @@ function buildZip(req: Extract<OffscreenRequest, { type: 'build-zip' }>): BuildZ
     j.blobUrl = URL.createObjectURL(zipBlob(zipped));
     return { ok: true, url: j.blobUrl, size: zipped.byteLength };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    return { ok: false, error: errorMessage(e) };
   }
 }
 
@@ -148,7 +150,7 @@ async function storeZip(req: Extract<OffscreenRequest, { type: 'store-zip' }>): 
     await putBlob(req.blobId, zipBlob(zipped));
     return { ok: true, size: zipped.byteLength };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    return { ok: false, error: errorMessage(e) };
   }
 }
 
@@ -158,24 +160,18 @@ function release(jobId: string): void {
   jobs.delete(jobId);
 }
 
-chrome.runtime.onMessage.addListener((msg: OffscreenRequest, _sender, sendResponse) => {
-  if (msg?.target !== OFFSCREEN_TARGET) return;
+onTargetMessage<OffscreenRequest>(OFFSCREEN_TARGET, (msg) => {
   switch (msg.type) {
     case 'fetch-file':
-      fetchFile(msg).then(sendResponse);
-      return true; // async response
+      return fetchFile(msg);
     case 'fetch-image':
-      fetchImage(msg).then(sendResponse);
-      return true; // async response
+      return fetchImage(msg);
     case 'build-zip':
-      sendResponse(buildZip(msg));
-      return;
+      return buildZip(msg);
     case 'store-zip':
-      storeZip(msg).then(sendResponse);
-      return true; // async response
+      return storeZip(msg);
     case 'release':
       release(msg.jobId);
-      sendResponse({ ok: true });
-      return;
+      return { ok: true } satisfies Result;
   }
 });

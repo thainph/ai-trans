@@ -2,6 +2,8 @@
 // (src/offscreen). The offscreen page exists because MV3 service workers can't
 // create blob: URLs, and data: URLs are capped at ~2 MB for downloads.
 
+import type { Result } from '../shared/messaging';
+
 export const OFFSCREEN_TARGET = 'context-kit-offscreen';
 
 export type OffscreenRequest =
@@ -19,7 +21,7 @@ export type OffscreenRequest =
   /** Free the job's memory and revoke its blob: URL. */
   | { target: typeof OFFSCREEN_TARGET; type: 'release'; jobId: string };
 
-export type FetchFileResponse = { ok: true; size: number } | { ok: false; error: string };
-export type FetchImageResponse = { ok: true; path: string; size: number } | { ok: false; error: string };
-export type BuildZipResponse = { ok: true; url: string; size: number } | { ok: false; error: string };
-export type StoreZipResponse = { ok: true; size: number } | { ok: false; error: string };
+export type FetchFileResponse = Result<{ size: number }>;
+export type FetchImageResponse = Result<{ path: string; size: number }>;
+export type BuildZipResponse = Result<{ url: string; size: number }>;
+export type StoreZipResponse = Result<{ size: number }>;

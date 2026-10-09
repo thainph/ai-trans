@@ -1,6 +1,7 @@
 // Assemble the final Markdown document for a thread. Pure module
 // (uses the runtime's local timezone for date formatting).
 
+import { filenamePart } from '../../../shared/filename';
 import type { SlackAttachment, SlackMessage } from './types';
 import type { AttachmentOutcome } from './attachments';
 import { renderEmoji } from './emoji';
@@ -176,14 +177,7 @@ export function makeTitle(body: string): string {
 }
 
 export function sanitizeFilenamePart(s: string): string {
-  return (
-    s
-      .replace(/^[#@]+/, '')
-      .replace(/[^\p{L}\p{N}._-]+/gu, '-')
-      .replace(/-{2,}/g, '-')
-      .replace(/^[-.]+|[-.]+$/g, '')
-      .slice(0, 60) || 'channel'
-  );
+  return filenamePart(s.replace(/^[#@]+/, ''), 'channel');
 }
 
 function channelLabel(data: ThreadData): string {

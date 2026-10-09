@@ -5,6 +5,8 @@
 // Debug: run `localStorage.setItem('context-kit-debug', '1')` on app.slack.com
 // and reload to log what the script detects.
 
+import { isExtensionAlive } from '../../../shared/runtime';
+import { Toaster } from '../../../shared/toast';
 import {
   QUICK_SEND_TARGET,
   type QuickSendRequest,
@@ -12,7 +14,6 @@ import {
   type ToastMessage,
 } from '../quick-send-messages';
 import { findMenu, findMessageElement, injectMenuItem, messageLink } from './message-dom';
-import { Toaster } from '../../../shared/toast';
 
 const MENU_LABEL = 'Send to Devdy';
 /** A menu that appears this soon after a click/right-click on a message belongs to it. */
@@ -35,16 +36,8 @@ let trigger: { link: string; at: number } | null = null;
 let hoveredMessage: Element | null = null;
 const recentSends = new Map<string, number>();
 
-function extensionAlive(): boolean {
-  try {
-    return !!chrome.runtime?.id;
-  } catch {
-    return false;
-  }
-}
-
 const toaster = new Toaster((action) => {
-  if (action === 'open-settings' && extensionAlive()) {
+  if (action === 'open-settings' && isExtensionAlive()) {
     const req: QuickSendRequest = { target: QUICK_SEND_TARGET, type: 'open-settings' };
     void chrome.runtime.sendMessage(req).catch(() => {});
   }
@@ -104,7 +97,7 @@ function send(link: string): void {
   const last = recentSends.get(link) ?? 0;
   if (Date.now() - last < RESEND_GUARD_MS) return;
   recentSends.set(link, Date.now());
-  if (!extensionAlive()) {
+  if (!isExtensionAlive()) {
     toaster.show({
       key: 'ext-reloaded',
       state: 'error',
@@ -143,7 +136,7 @@ new MutationObserver((mutations) => {
   }
 }).observe(document.documentElement, { childList: true, subtree: true });
 
-if (extensionAlive()) {
+if (isExtensionAlive()) {
   chrome.runtime.onMessage.addListener((msg: ToastMessage) => {
     if (msg?.target === TOAST_TARGET) toaster.show(msg);
   });

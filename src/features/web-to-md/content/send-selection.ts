@@ -5,6 +5,8 @@
 // Loaded after web-to-md/converter.js (provides window.htmlToMarkdown) and
 // before translator/content.js — all three share the extension's isolated world.
 
+import { errorMessage } from '../../../shared/errors';
+import { isExtensionAlive } from '../../../shared/runtime';
 import { Toaster } from '../../../shared/toast';
 import { WEB_TARGET, WEB_TOAST_TARGET, type WebRequest, type WebToastMessage } from '../messages';
 import { pageMeta, selectionHtml } from './selection';
@@ -19,16 +21,8 @@ declare global {
 /** blob: images only exist in this page; inline small ones so Devdy gets them. */
 const MAX_INLINE_BLOB_BYTES = 5 * 1024 * 1024;
 
-function alive(): boolean {
-  try {
-    return !!chrome.runtime?.id;
-  } catch {
-    return false;
-  }
-}
-
 const toaster = new Toaster((action) => {
-  if (action === 'open-settings' && alive()) {
+  if (action === 'open-settings' && isExtensionAlive()) {
     const req: WebRequest = { target: WEB_TARGET, type: 'open-settings' };
     void chrome.runtime.sendMessage(req).catch(() => {});
   }
@@ -55,7 +49,7 @@ async function inlineBlobImages(html: string): Promise<string> {
 }
 
 async function sendSelection(range: Range, text: string): Promise<void> {
-  if (!alive()) {
+  if (!isExtensionAlive()) {
     toaster.show({ key: 'reloaded', state: 'error', text: 'Context Kit was updated. Reload this page and try again.' });
     return;
   }
@@ -74,7 +68,7 @@ async function sendSelection(range: Range, text: string): Promise<void> {
     await chrome.runtime.sendMessage(req);
     toaster.dismiss(key); // the background's toast (same position) takes over
   } catch (e) {
-    toaster.show({ key, state: 'error', text: `Could not send: ${e instanceof Error ? e.message : String(e)}` });
+    toaster.show({ key, state: 'error', text: `Could not send: ${errorMessage(e)}` });
   }
 }
 
@@ -82,7 +76,7 @@ window.__contextKitDevdy = {
   sendSelection: (range, text) => void sendSelection(range, text),
 };
 
-if (alive()) {
+if (isExtensionAlive()) {
   chrome.runtime.onMessage.addListener((msg: WebToastMessage) => {
     if (msg?.target === WEB_TOAST_TARGET) toaster.show(msg);
   });

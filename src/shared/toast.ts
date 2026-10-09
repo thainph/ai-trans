@@ -2,9 +2,19 @@
 // Rendered in a Shadow DOM so the page's CSS can't affect them (and ours
 // can't leak into the page).
 
-import type { ToastMessage } from '../features/slack/quick-send-messages';
+export type ToastState = 'progress' | 'success' | 'queued' | 'error';
 
-const AUTO_HIDE_MS: Record<ToastMessage['state'], number | null> = {
+/** What a toast shows; channels wrap it with their own `target`. */
+export interface ToastPayload {
+  /** One toast per send; later messages with the same key update it. */
+  key: string;
+  state: ToastState;
+  text: string;
+  /** Show an "Open settings" button (missing/invalid Devdy token). */
+  action?: 'open-settings';
+}
+
+const AUTO_HIDE_MS: Record<ToastState, number | null> = {
   progress: null,
   success: 4000,
   queued: 7000,
@@ -54,7 +64,7 @@ const CSS = `
   @keyframes in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 `;
 
-const ICONS: Record<Exclude<ToastMessage['state'], 'progress'>, string> = {
+const ICONS: Record<Exclude<ToastState, 'progress'>, string> = {
   success:
     '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>',
   queued:
@@ -63,7 +73,7 @@ const ICONS: Record<Exclude<ToastMessage['state'], 'progress'>, string> = {
     '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>',
 };
 
-const TITLES: Record<ToastMessage['state'], string> = {
+const TITLES: Record<ToastState, string> = {
   progress: 'Sending to Devdy',
   success: 'Devdy',
   queued: 'Queued for Devdy',
@@ -75,7 +85,7 @@ export class Toaster {
   private readonly toasts = new Map<string, { el: HTMLElement; timer?: number }>();
 
   constructor(
-    private readonly onAction: (action: NonNullable<ToastMessage['action']>) => void,
+    private readonly onAction: (action: NonNullable<ToastPayload['action']>) => void,
     /** Distinct per content script (Slack + page scripts both run on app.slack.com). */
     private readonly hostId = 'context-kit-toast-host',
   ) {}
@@ -91,7 +101,7 @@ export class Toaster {
     return this.stack;
   }
 
-  show(msg: Pick<ToastMessage, 'key' | 'state' | 'text' | 'action'>): void {
+  show(msg: ToastPayload): void {
     const stack = this.ensureStack();
     let entry = this.toasts.get(msg.key);
     if (!entry) {

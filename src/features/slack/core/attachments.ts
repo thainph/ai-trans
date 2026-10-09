@@ -4,6 +4,7 @@
 // they go inside the zip; the offscreen document does the actual fetching;
 // md-builder then renders local links (or a "not included" note) per file id.
 
+import { safeFileName } from '../../../shared/filename';
 import type { SlackFile, SlackMessage } from './types';
 
 /** Per-file cap. Bigger files are skipped and linked instead. */
@@ -68,21 +69,6 @@ export function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-/** Filesystem/zip-safe name that keeps the extension, e.g. "Ảnh màn hình (2).png" -> "Ảnh-màn-hình-2.png". */
-export function safeFileName(name: string, maxLen = 80): string {
-  const clean = (s: string) =>
-    s
-      .replace(/[^\p{L}\p{N}._-]+/gu, '-')
-      .replace(/-{2,}/g, '-')
-      .replace(/^[-.]+|[-.]+$/g, '');
-  const dot = name.lastIndexOf('.');
-  const hasExt = dot > 0 && dot >= name.length - 11;
-  const ext = hasExt ? clean(name.slice(dot + 1)).toLowerCase() : '';
-  const base = clean(hasExt ? name.slice(0, dot) : name) || 'file';
-  const room = Math.max(1, maxLen - (ext ? ext.length + 1 : 0));
-  return ext ? `${Array.from(base).slice(0, room).join('')}.${ext}` : Array.from(base).slice(0, room).join('');
 }
 
 export function isImageFile(f: SlackFile): boolean {

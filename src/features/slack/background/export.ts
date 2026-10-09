@@ -3,8 +3,12 @@
 // and (for "download") saves the file via chrome.downloads or (for "devdy")
 // sends it to the local Devdy inbox API.
 
-import { MAX_FILE_BYTES, planAttachments } from '../core/attachments';
+import { keepAliveSleep } from '../../../background/keepalive';
+import { startZipJob } from '../../../background/zip-export';
+import { errorMessage } from '../../../shared/errors';
+import { outbox } from '../../devdy/background';
 import { DEVDY_MAX_ATTACHMENTS } from '../../devdy/core/client';
+import { MAX_FILE_BYTES, planAttachments } from '../core/attachments';
 import type { ThreadData } from '../core/md-builder';
 import { buildThreadMarkdown } from '../core/md-builder';
 import { parseThreadLink } from '../core/permalink';
@@ -18,10 +22,7 @@ import {
   pageSlackApi,
 } from '../core/slack-client';
 import { EXPORT_PORT_NAME, type ExportRequest, type ExportResponse } from '../messages';
-import { outbox } from '../../devdy/background';
-import { keepAliveSleep } from '../../../background/keepalive';
 import { makeDoneResponse } from './respond';
-import { startZipJob } from '../../../background/zip-export';
 
 const SLACK_TAB_PATTERN = 'https://app.slack.com/*';
 /** Stay under Devdy's 50 MB body limit (attachments are stored uncompressed in the zip). */
@@ -57,7 +58,7 @@ function makeRunner(tabId: number): PageRunner {
         args: [req],
       });
     } catch (e) {
-      const detail = e instanceof Error ? e.message : String(e);
+      const detail = errorMessage(e);
       throw new SlackExportError(
         'inject_failed',
         `Could not access the Slack tab. Reload app.slack.com and try again. (${detail})`,
@@ -69,6 +70,11 @@ function makeRunner(tabId: number): PageRunner {
     }
     return result;
   };
+}
+
+/** Error text for the user: Slack errors as-is, anything else flagged as unexpected. */
+export function exportErrorMessage(e: unknown): string {
+  return e instanceof SlackExportError ? e.message : `Unexpected error: ${errorMessage(e)}`;
 }
 
 function toDataUrl(markdown: string): string {
@@ -246,9 +252,7 @@ chrome.runtime.onConnect.addListener((port) => {
   port.onMessage.addListener((msg: ExportRequest) => {
     if (msg?.type !== 'export') return;
     handleExport(msg, post).catch((e: unknown) => {
-      const message =
-        e instanceof SlackExportError ? e.message : `Unexpected error: ${e instanceof Error ? e.message : String(e)}`;
-      post({ type: 'error', message });
+      post({ type: 'error', message: exportErrorMessage(e) });
     });
   });
 });

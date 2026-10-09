@@ -4,7 +4,8 @@
 import { deleteBlob, getBlob, putBlob } from '../core/blob-store';
 import { findAllDevdy, listProjects, postCapture, resolveDevdy } from '../core/client';
 import { type DevdySettings, DevdyOutbox, type OutboxEntry } from '../core/outbox';
-import { DEVDY_TARGET, type DevdyRequest, type DevdyStatus } from '../messages';
+import { fail, ok, onTargetMessage } from '../../../shared/messaging';
+import { DEVDY_TARGET, type DevdyFlushResult, type DevdyRequest, type DevdyStatus } from '../messages';
 
 const KEYS = {
   token: 'devdyToken',
@@ -73,7 +74,7 @@ async function status(): Promise<DevdyStatus> {
   };
 }
 
-async function handle(msg: DevdyRequest): Promise<unknown> {
+async function handle(msg: DevdyRequest): Promise<DevdyStatus | DevdyFlushResult> {
   switch (msg.type) {
     case 'status':
       return status();
@@ -93,16 +94,12 @@ async function handle(msg: DevdyRequest): Promise<unknown> {
     }
     case 'flush': {
       const r = await outbox.flush();
-      return { ...r, status: await status() };
+      return { sent: r.sent, pending: r.pending, status: await status() };
     }
   }
 }
 
-chrome.runtime.onMessage.addListener((msg: DevdyRequest, _sender, sendResponse) => {
-  if (msg?.target !== DEVDY_TARGET) return;
-  handle(msg).then(sendResponse, (e: unknown) => sendResponse({ error: e instanceof Error ? e.message : String(e) }));
-  return true; // async response
-});
+onTargetMessage<DevdyRequest>(DEVDY_TARGET, (msg) => handle(msg).then(ok, fail));
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === RETRY_ALARM) void outbox.flush();

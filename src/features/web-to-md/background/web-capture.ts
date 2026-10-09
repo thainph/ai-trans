@@ -13,9 +13,12 @@ import {
   rewriteImageLinks,
   webFrontMatter,
 } from '../core/web-capture';
-import type { ToastState } from '../../slack/quick-send-messages';
+import type { ToastState } from '../../../shared/toast';
+import { errorMessage } from '../../../shared/errors';
+import { type Result, ok, onTargetMessage } from '../../../shared/messaging';
 import {
   type DownloadPageResponse,
+  type SendPageResponse,
   WEB_TARGET,
   WEB_TOAST_TARGET,
   type WebRequest,
@@ -137,43 +140,33 @@ function toast(tabId: number, frameId: number | undefined, msg: Omit<WebToastMes
   chrome.tabs.sendMessage(tabId, full, frameId !== undefined ? { frameId } : undefined).catch(() => {});
 }
 
-chrome.runtime.onMessage.addListener((req: WebRequest, sender, sendResponse) => {
-  if (req?.target !== WEB_TARGET) return;
-
-  if (req.type === 'send-selection') {
-    const tabId = sender.tab?.id;
-    if (tabId === undefined) return;
-    const key = crypto.randomUUID();
-    sendResponse({ accepted: true });
-    toast(tabId, sender.frameId, { key, state: 'progress', text: 'Sending selection to Devdy…' });
-    sendWebCapture(
-      { markdown: req.markdown, page: req.page, selection: true, title: firstLineTitle(req.selectionText) },
-      (text) => toast(tabId, sender.frameId, { key, state: 'progress', text }),
-    )
-      .then((r) => toast(tabId, sender.frameId, { key, ...toastState(r.delivery.kind), text: resultText(r, 'Selection') }))
-      .catch((e: unknown) =>
-        toast(tabId, sender.frameId, { key, state: 'error', text: `Could not send: ${e instanceof Error ? e.message : String(e)}` }),
+onTargetMessage<WebRequest>(WEB_TARGET, (req, sender) => {
+  switch (req.type) {
+    case 'send-selection': {
+      const tabId = sender.tab?.id;
+      if (tabId === undefined) return;
+      const key = crypto.randomUUID();
+      toast(tabId, sender.frameId, { key, state: 'progress', text: 'Sending selection to Devdy…' });
+      sendWebCapture(
+        { markdown: req.markdown, page: req.page, selection: true, title: firstLineTitle(req.selectionText) },
+        (text) => toast(tabId, sender.frameId, { key, state: 'progress', text }),
+      )
+        .then((r) => toast(tabId, sender.frameId, { key, ...toastState(r.delivery.kind), text: resultText(r, 'Selection') }))
+        .catch((e: unknown) =>
+          toast(tabId, sender.frameId, { key, state: 'error', text: `Could not send: ${errorMessage(e)}` }),
+        );
+      return { ok: true } satisfies Result; // accepted; progress/result arrive as toasts
+    }
+    case 'send-page': {
+      const title = req.selection && req.selectionText ? firstLineTitle(req.selectionText) : undefined;
+      return sendWebCapture({ markdown: req.markdown, page: req.page, selection: req.selection, title }).then(
+        (r): SendPageResponse => ok({ result: r, text: resultText(r, req.selection ? 'Selection' : 'Page') }),
       );
-    return;
-  }
-
-  if (req.type === 'send-page') {
-    const title = req.selection && req.selectionText ? firstLineTitle(req.selectionText) : undefined;
-    sendWebCapture({ markdown: req.markdown, page: req.page, selection: req.selection, title })
-      .then((r) => sendResponse({ ok: true, result: r, text: resultText(r, req.selection ? 'Selection' : 'Page') }))
-      .catch((e: unknown) => sendResponse({ ok: false, error: e instanceof Error ? e.message : String(e) }));
-    return true; // async response
-  }
-
-  if (req.type === 'download-page') {
-    downloadPageZip(req.markdown, req.filename)
-      .then(sendResponse)
-      .catch((e: unknown) => sendResponse({ ok: false, error: e instanceof Error ? e.message : String(e) }));
-    return true; // async response
-  }
-
-  if (req.type === 'open-settings') {
-    void openSettings();
-    sendResponse({ ok: true });
+    }
+    case 'download-page':
+      return downloadPageZip(req.markdown, req.filename);
+    case 'open-settings':
+      void openSettings();
+      return { ok: true } satisfies Result;
   }
 });
