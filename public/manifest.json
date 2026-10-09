@@ -6,6 +6,7 @@
   "minimum_chrome_version": "111",
   "permissions": [
     "activeTab",
+    "alarms",
     "clipboardWrite",
     "declarativeNetRequest",
     "downloads",

@@ -11,7 +11,8 @@ export const MAX_FILE_BYTES = 25 * 1024 * 1024;
 /** Cap for the sum of all downloaded files in one export. */
 export const MAX_TOTAL_BYTES = 200 * 1024 * 1024;
 
-export const FILES_DIR = 'files';
+/** Folder for attachments inside the zip (Devdy links `attachments/<name>` in the Markdown). */
+export const FILES_DIR = 'attachments';
 
 /** What happened to one file (keyed by Slack file id). */
 export type AttachmentOutcome =
@@ -22,7 +23,7 @@ export interface PlannedDownload {
   id: string;
   name: string;
   url: string;
-  /** Path inside the zip, e.g. "files/03-screenshot.png". */
+  /** Path inside the zip, e.g. "attachments/03-screenshot.png". */
   path: string;
   isImage: boolean;
   /** Size reported by Slack (bytes), if known. */
@@ -38,6 +39,8 @@ export interface AttachmentPlan {
 export interface PlanOptions {
   maxFileBytes?: number;
   maxTotalBytes?: number;
+  /** Max number of files to download (Devdy accepts at most 200 zip entries incl. the .md). */
+  maxFiles?: number;
 }
 
 /**
@@ -95,6 +98,7 @@ export function fileDisplayName(f: SlackFile): string {
 export function planAttachments(messages: SlackMessage[], options: PlanOptions = {}): AttachmentPlan {
   const maxFile = options.maxFileBytes ?? MAX_FILE_BYTES;
   const maxTotal = options.maxTotalBytes ?? MAX_TOTAL_BYTES;
+  const maxFiles = options.maxFiles ?? Number.POSITIVE_INFINITY;
 
   // Unique files in thread order.
   const files: SlackFile[] = [];
@@ -129,6 +133,10 @@ export function planAttachments(messages: SlackMessage[], options: PlanOptions =
     const size = typeof f.size === 'number' && f.size >= 0 ? f.size : undefined;
     if (size !== undefined && size > maxFile) {
       skipped.set(id, { kind: 'skipped', reason: `too large (${formatBytes(size)} > ${formatBytes(maxFile)})` });
+      continue;
+    }
+    if (index >= maxFiles) {
+      skipped.set(id, { kind: 'skipped', reason: `file count limit (${maxFiles}) reached` });
       continue;
     }
     if (size !== undefined && total + size > maxTotal) {

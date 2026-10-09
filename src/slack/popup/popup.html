@@ -68,8 +68,38 @@
       </button>
     </div>
 
+    <button id="devdy-send" type="button" class="btn btn-accent" style="margin-top: 8px" title="Send the thread (and attachments when Files is on) to the Devdy app">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" />
+      </svg>
+      <span>Send to Devdy</span>
+    </button>
+
     <p id="status" class="status-line" role="status" aria-live="polite"></p>
     <p id="error" class="alert" role="alert" hidden></p>
+
+    <details id="devdy-panel" class="collapsible">
+      <summary>
+        <span id="devdy-dot" class="dot" aria-hidden="true"></span>
+        <span id="devdy-summary">Devdy</span>
+        <span id="devdy-pending" class="badge" hidden></span>
+      </summary>
+      <div class="collapsible-body">
+        <label for="devdy-token" class="field-label">Inbox API token</label>
+        <div class="input-row">
+          <input id="devdy-token" class="input-field" type="password" placeholder="Devdy → Settings → Inbox API" autocomplete="off" spellcheck="false" />
+          <button id="devdy-token-save" type="button" class="btn btn-secondary btn-sm">Save</button>
+        </div>
+        <label for="devdy-project" class="field-label" style="margin-top: 12px">Project</label>
+        <select id="devdy-project" class="select-field">
+          <option value="">No project</option>
+        </select>
+        <div class="row-between" style="margin-top: 10px">
+          <span id="devdy-detail" class="muted-text"></span>
+          <button id="devdy-retry" type="button" class="link-btn" hidden>Retry now</button>
+        </div>
+      </div>
+    </details>
 
     <p class="hint">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">

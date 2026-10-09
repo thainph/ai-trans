@@ -4,11 +4,13 @@
 
 import { type Zippable, zipSync } from 'fflate';
 import { isAllowedFileUrl, isCompressiblePath } from '../core/attachments';
+import { putBlob } from '../core/blob-store';
 import {
   type BuildZipResponse,
   type FetchFileResponse,
   OFFSCREEN_TARGET,
   type OffscreenRequest,
+  type StoreZipResponse,
 } from '../types/offscreen';
 
 const FETCH_TIMEOUT_MS = 120_000;
@@ -85,17 +87,36 @@ async function fetchFile(req: Extract<OffscreenRequest, { type: 'fetch-file' }>)
   }
 }
 
+/** Zip every fetched file of the job plus the given text entries. */
+function makeZip(jobId: string, texts: { path: string; text: string }[]): Uint8Array {
+  const j = job(jobId);
+  const enc = new TextEncoder();
+  const entries: Zippable = {};
+  for (const t of texts) entries[t.path] = [enc.encode(t.text), { level: 6 }];
+  for (const [path, bytes] of j.files) entries[path] = [bytes, { level: isCompressiblePath(path) ? 6 : 0 }];
+  const zipped = zipSync(entries);
+  j.files.clear(); // the zip now owns the data
+  return zipped;
+}
+
+const zipBlob = (bytes: Uint8Array) => new Blob([bytes as Uint8Array<ArrayBuffer>], { type: 'application/zip' });
+
 function buildZip(req: Extract<OffscreenRequest, { type: 'build-zip' }>): BuildZipResponse {
   try {
+    const zipped = makeZip(req.jobId, req.texts);
     const j = job(req.jobId);
-    const enc = new TextEncoder();
-    const entries: Zippable = {};
-    for (const t of req.texts) entries[t.path] = [enc.encode(t.text), { level: 6 }];
-    for (const [path, bytes] of j.files) entries[path] = [bytes, { level: isCompressiblePath(path) ? 6 : 0 }];
-    const zipped = zipSync(entries);
-    j.files.clear(); // the zip now owns the data
-    j.blobUrl = URL.createObjectURL(new Blob([zipped], { type: 'application/zip' }));
+    j.blobUrl = URL.createObjectURL(zipBlob(zipped));
     return { ok: true, url: j.blobUrl, size: zipped.byteLength };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+async function storeZip(req: Extract<OffscreenRequest, { type: 'store-zip' }>): Promise<StoreZipResponse> {
+  try {
+    const zipped = makeZip(req.jobId, req.texts);
+    await putBlob(req.blobId, zipBlob(zipped));
+    return { ok: true, size: zipped.byteLength };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
@@ -116,6 +137,9 @@ chrome.runtime.onMessage.addListener((msg: OffscreenRequest, _sender, sendRespon
     case 'build-zip':
       sendResponse(buildZip(msg));
       return;
+    case 'store-zip':
+      storeZip(msg).then(sendResponse);
+      return true; // async response
     case 'release':
       release(msg.jobId);
       sendResponse({ ok: true });

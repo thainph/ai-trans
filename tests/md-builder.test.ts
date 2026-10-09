@@ -40,9 +40,11 @@ describe('buildThreadMarkdown', () => {
     expect(messageCount).toBe(5);
     expect(filename).toBe('slack-thread-dev-deploy-20231115-0713.md');
     expect(markdown).toBe(`---
+title: "Deploy plan for v2.3 🚀"
 workspace: Papay
 channel: "#dev-deploy"
 thread_url: https://papay.slack.com/archives/C0DEPLOY/p1700000000123456
+thread_ts: "1700000000.123456"
 exported_at: 2026-10-07T16:20:05+09:00
 messages: 5
 participants: [Alice, Bob, Deploy Bot, Carol Tanaka, Release App]

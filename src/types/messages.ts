@@ -1,6 +1,8 @@
 // Messages exchanged between the popup and the background service worker
 // over a long-lived chrome.runtime port.
 
+import type { SendOutcome } from '../core/devdy-client';
+
 export const EXPORT_PORT_NAME = 'slack-thread-export';
 
 export interface ExportOptions {
@@ -19,7 +21,8 @@ export const DEFAULT_OPTIONS: ExportOptions = {
   zipFiles: true,
 };
 
-export type ExportAction = 'download' | 'copy';
+/** download = save .md/.zip, copy = clipboard, devdy = send to the Devdy inbox API. */
+export type ExportAction = 'download' | 'copy' | 'devdy';
 
 export interface ExportRequest {
   type: 'export';
@@ -43,6 +46,15 @@ interface DoneBase {
   warning?: string;
   /** Present when the export was saved as a .zip with attachments. */
   files?: FileStats;
+  /** Result of a Devdy export. */
+  devdy?: DevdyDelivery;
+}
+
+export interface DevdyDelivery {
+  kind: SendOutcome['kind'];
+  message: string;
+  /** Exports still queued for Devdy (incl. this one if it could not be sent). */
+  pending: number;
 }
 
 export type ExportResponse =
@@ -50,4 +62,5 @@ export type ExportResponse =
   // Markdown is only sent back for "copy"; "download" returns metadata only.
   | (DoneBase & { action: 'copy'; markdown: string })
   | (DoneBase & { action: 'download' })
+  | (DoneBase & { action: 'devdy'; devdy: DevdyDelivery })
   | { type: 'error'; message: string };

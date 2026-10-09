@@ -55,8 +55,8 @@ Khi bật **Files** + **Zip files** và thread có file, nút **Export** lưu
 
 ```
 slack-thread-dev-20231115-0513.zip
-├── slack-thread-dev-20231115-0513.md   # ảnh: ![..](files/01-…png), file khác: 📎 [..](files/02-…)
-└── files/
+├── slack-thread-dev-20231115-0513.md   # ảnh: ![..](attachments/01-…png), file khác: 📎 [..](attachments/02-…)
+└── attachments/
     ├── 01-screenshot.png
     └── 02-server-log.txt
 ```
@@ -70,6 +70,25 @@ slack-thread-dev-20231115-0513.zip
   tải lỗi (giữ link Slack + lý do `_(not included: …)_`).
 - Không tải được file nào → lưu `.md` thường. **Copy** luôn chỉ copy text.
 
+### Slack → Devdy (nút **Send to Devdy**)
+
+Gửi thread vào app Devdy qua Inbox API cục bộ (hợp đồng API: `devdy/docs/slack-thread-inbox-api.md`).
+
+- Thiết lập một lần ở mục **Devdy** cuối tab Slack: dán token lấy từ *Devdy → Settings → Inbox API*,
+  chọn project (không bắt buộc).
+- Có file đính kèm (bật **Files**) → gửi `.zip` (`<thread>.md` + `attachments/…`); không có → gửi `.md`.
+  Devdy tự nối link `attachments/x.png` trong Markdown với file đã lưu.
+- Front matter có `title`, `thread_url`, `thread_ts` → gửi lại cùng thread thì Devdy **cập nhật**, không tạo bản trùng.
+- Tìm Devdy bằng `GET /health` trên cổng `47821–47830` (nhớ cổng tìm được).
+- **Hàng đợi (outbox):** mọi lần gửi đều được lưu trước (`payload` trong IndexedDB, danh sách trong
+  `chrome.storage.local.devdyOutbox`). Devdy tắt / thiếu token / token sai / Devdy lỗi 5xx → giữ lại,
+  `chrome.alarms` gửi lại mỗi phút, và gửi ngay khi lưu token mới hoặc bấm *Retry now*.
+  Lỗi không thể thử lại (400/413/415) → bỏ khỏi hàng đợi và báo lỗi.
+- Giới hạn của Devdy: body ≤ 50 MB, ≤ 200 file → extension chỉ đóng gói tối đa 45 MB / 199 file đính kèm,
+  phần còn lại giữ link Slack kèm ghi chú.
+- Code: `core/devdy-client.ts` (gọi API), `core/devdy-outbox.ts` (hàng đợi, có test),
+  `core/blob-store.ts` (IndexedDB), `background/devdy.ts` (alarm + message cho popup).
+
 ### Background
 
 Hai kênh message độc lập: translator dùng `chrome.runtime.onMessage` với
@@ -79,7 +98,8 @@ mới thì tạo module riêng và import trong `src/background/index.ts`.
 ### Storage (`chrome.storage.sync`)
 
 - Translator: `provider, apiKey, openaiModel, geminiApiKey, geminiModel, ollamaUrl, ollamaModel, style, targetLang, popupWidth`
-- Slack: `includeReactions, includeFiles`
+- Slack: `includeReactions, includeFiles, zipFiles`
+- `chrome.storage.local` — Devdy: `devdyToken, devdyPort, devdyProjectId, devdyOutbox`; popup: `contextKitLastTab`
 
 ## Lưu ý khi chuyển từ extension cũ
 

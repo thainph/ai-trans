@@ -72,6 +72,7 @@ describe('manifest (finding #7)', () => {
     expect(manifest.host_permissions).toEqual(['<all_urls>']);
     expect([...manifest.permissions].sort()).toEqual([
       'activeTab',
+      'alarms',
       'clipboardWrite',
       'declarativeNetRequest',
       'downloads',

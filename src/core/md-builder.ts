@@ -231,11 +231,15 @@ export function buildThreadMarkdown(data: ThreadData, options: BuildOptions, now
   });
 
   const label = channelLabel(data);
+  const threadTs = messages[0]?.thread_ts ?? messages[0]?.ts;
   const frontmatter = [
     '---',
+    // title / thread_url / thread_ts let Devdy name and de-duplicate the thread.
+    `title: ${JSON.stringify(title)}`,
     `workspace: ${yamlScalar(data.workspace.name ?? data.workspace.domain ?? 'unknown')}`,
     `channel: ${JSON.stringify(label)}`,
     `thread_url: ${/^https:\/\/[^\s#,[\]{}"']+$/.test(data.threadUrl) ? data.threadUrl : JSON.stringify(data.threadUrl)}`,
+    ...(threadTs ? [`thread_ts: ${JSON.stringify(threadTs)}`] : []),
     `exported_at: ${formatLocalIso(now)}`,
     `messages: ${messages.length}`,
     `participants: [${participants.map(yamlScalar).join(', ')}]`,

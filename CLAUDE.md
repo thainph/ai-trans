@@ -45,7 +45,13 @@ Load `dist/` unpacked at `chrome://extensions/` (Developer mode). Reload the ext
 - `pageSlackApi` in `src/core/slack-client.ts` is serialized and run in the app.slack.com page (MAIN world): it must stay **self-contained** (no imports/closures). The session token never leaves the page.
 - Attachments: `src/core/attachments.ts` plans downloads (only `https://*.slack.com`, 25 MB per file, 200 MB total, external files skipped); `md-builder` renders saved files as local links and skipped ones with a `_(not included: …)_` note.
 
+## Devdy integration
+
+- "Send to Devdy" posts the thread to Devdy's local Inbox API (`POST http://127.0.0.1:{47821..47830}/v1/slack-threads`, Bearer token). Contract: `devdy/docs/slack-thread-inbox-api.md`.
+- All sends go through `DevdyOutbox` (`src/core/devdy-outbox.ts`): payload stored in IndexedDB (`src/core/blob-store.ts`, shared with the offscreen document which writes zips there via `store-zip`), metadata in `chrome.storage.local.devdyOutbox`. Retryable outcomes (`unreachable`, `no_token`, `unauthorized`, `server_error`) stay queued and are retried by the `devdy-outbox-retry` alarm; others are dropped.
+- Fetches to Devdy must run in extension contexts (service worker / offscreen), never in content scripts (CORS + Private Network Access).
+
 ## Storage keys
 
 - `chrome.storage.sync` — translator: `provider, apiKey, openaiModel, geminiApiKey, geminiModel, ollamaUrl, ollamaModel, style, targetLang, popupWidth` (defaults in `DEFAULT_SETTINGS` in `src/translator/background.js`, re-declared in `public/translator/popup.js` — keep aligned). Slack: `includeReactions, includeFiles, zipFiles`.
-- `chrome.storage.local` — `contextKitLastTab`.
+- `chrome.storage.local` — `contextKitLastTab`; Devdy: `devdyToken, devdyPort, devdyProjectId, devdyOutbox`.

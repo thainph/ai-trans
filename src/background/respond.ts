@@ -1,4 +1,4 @@
-import type { ExportAction, ExportResponse, FileStats } from '../types/messages';
+import type { DevdyDelivery, ExportAction, ExportResponse, FileStats } from '../types/messages';
 
 /** Build the final popup message. Markdown is included only for "copy". */
 export function makeDoneResponse(
@@ -6,7 +6,12 @@ export function makeDoneResponse(
   result: { markdown: string; filename: string; messageCount: number },
   warning?: string,
   files?: FileStats,
+  devdy?: DevdyDelivery,
 ): ExportResponse {
   const meta = { type: 'done' as const, filename: result.filename, messageCount: result.messageCount, warning, files };
-  return action === 'copy' ? { ...meta, action: 'copy', markdown: result.markdown } : { ...meta, action: 'download' };
+  if (action === 'copy') return { ...meta, action: 'copy', markdown: result.markdown };
+  if (action === 'devdy') {
+    return { ...meta, action: 'devdy', devdy: devdy ?? { kind: 'unreachable', message: 'Not sent.', pending: 0 } };
+  }
+  return { ...meta, action: 'download' };
 }

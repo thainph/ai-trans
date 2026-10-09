@@ -7,6 +7,7 @@ import {
   type ExportRequest,
   type ExportResponse,
 } from '../../types/messages';
+import { DEVDY_TARGET, type DevdyCommand, type DevdyStatus } from '../../types/devdy';
 
 const $ = <T extends HTMLElement>(id: string): T => {
   const el = document.getElementById(id);
@@ -20,6 +21,16 @@ const copyBtn = $<HTMLButtonElement>('copy');
 const optReactions = $<HTMLInputElement>('opt-reactions');
 const optFiles = $<HTMLInputElement>('opt-files');
 const optZip = $<HTMLInputElement>('opt-zip');
+const devdySendBtn = $<HTMLButtonElement>('devdy-send');
+const devdyPanel = $<HTMLDetailsElement>('devdy-panel');
+const devdyDot = $<HTMLSpanElement>('devdy-dot');
+const devdySummary = $<HTMLSpanElement>('devdy-summary');
+const devdyPending = $<HTMLSpanElement>('devdy-pending');
+const devdyToken = $<HTMLInputElement>('devdy-token');
+const devdyTokenSave = $<HTMLButtonElement>('devdy-token-save');
+const devdyProject = $<HTMLSelectElement>('devdy-project');
+const devdyDetail = $<HTMLSpanElement>('devdy-detail');
+const devdyRetry = $<HTMLButtonElement>('devdy-retry');
 const statusEl = $<HTMLParagraphElement>('status');
 const errorEl = $<HTMLParagraphElement>('error');
 
@@ -35,6 +46,7 @@ function setError(text: string | null): void {
 function setBusy(busy: boolean): void {
   exportBtn.disabled = busy;
   copyBtn.disabled = busy;
+  devdySendBtn.disabled = busy;
   linkInput.disabled = busy;
 }
 
@@ -90,6 +102,126 @@ async function copyToClipboard(text: string): Promise<void> {
   }
 }
 
+function filesSummary(files?: { saved: number; notIncluded: number }): string {
+  if (!files) return '';
+  return (
+    `, ${files.saved} file${files.saved === 1 ? '' : 's'}` +
+    (files.notIncluded ? `, ${files.notIncluded} not included` : '')
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Devdy
+// ---------------------------------------------------------------------------
+
+function devdyCall<T>(req: DevdyCommand): Promise<T> {
+  return chrome.runtime.sendMessage({ target: DEVDY_TARGET, ...req }) as Promise<T>;
+}
+
+function renderDevdy(st: DevdyStatus): void {
+  let dot = '';
+  let summary: string;
+  if (!st.connected) {
+    summary = 'Devdy · not running';
+  } else if (!st.hasToken) {
+    dot = 'warn';
+    summary = 'Devdy · token needed';
+  } else if (st.tokenValid === false) {
+    dot = 'error';
+    summary = 'Devdy · invalid token';
+  } else {
+    dot = 'ok';
+    summary = `Devdy · connected${st.version ? ` (v${st.version})` : ''}`;
+  }
+  devdyDot.className = `dot ${dot}`.trim();
+  devdySummary.textContent = summary;
+  devdyPending.hidden = st.pending === 0;
+  devdyPending.textContent = `${st.pending} queued`;
+  devdyRetry.hidden = st.pending === 0;
+  devdyToken.placeholder = st.hasToken ? 'Saved — paste a new one to replace' : 'Devdy → Settings → Inbox API';
+
+  // Keep the saved choice even when the list can't be loaded right now.
+  const selected = st.projectId ?? '';
+  devdyProject.replaceChildren(new Option('No project', ''));
+  for (const p of st.projects) devdyProject.add(new Option(p.name, p.id));
+  if (selected && !st.projects.some((p) => p.id === selected)) devdyProject.add(new Option('(saved project)', selected));
+  devdyProject.value = selected;
+  devdyProject.disabled = st.projects.length === 0;
+
+  devdyDetail.textContent = st.error
+    ? st.error
+    : st.connected
+      ? `127.0.0.1:${st.port}`
+      : 'Start Devdy to send threads. Exports are queued meanwhile.';
+
+  // Open the panel when something needs the user's attention.
+  if (!st.hasToken || st.tokenValid === false) devdyPanel.open = true;
+}
+
+async function refreshDevdy(): Promise<void> {
+  try {
+    renderDevdy(await devdyCall<DevdyStatus>({ type: 'status' }));
+  } catch {
+    devdySummary.textContent = 'Devdy · status unavailable';
+  }
+}
+
+function showDevdyResult(
+  d: { kind: string; message: string; pending: number },
+  files: { saved: number; notIncluded: number } | undefined,
+  messageCount: number,
+): void {
+  const counts = `(${messageCount} messages${filesSummary(files)})`;
+  if (d.kind === 'created' || d.kind === 'updated') {
+    setStatus(`${d.message} ${counts}`);
+  } else if (d.kind === 'unreachable' || d.kind === 'server_error') {
+    setStatus(`${d.message} ${counts}`);
+  } else {
+    setStatus('');
+    setError(d.message);
+    if (d.kind === 'unauthorized' || d.kind === 'no_token') {
+      devdyPanel.open = true;
+      devdyToken.focus();
+    }
+  }
+  void refreshDevdy();
+}
+
+devdyTokenSave.addEventListener('click', async () => {
+  const token = devdyToken.value.trim();
+  if (!token) {
+    devdyToken.focus();
+    return;
+  }
+  devdyTokenSave.disabled = true;
+  try {
+    const st = await devdyCall<DevdyStatus>({ type: 'save-token', token });
+    devdyToken.value = '';
+    renderDevdy(st);
+    setError(st.tokenValid === false ? 'Devdy rejected this token.' : null);
+    if (st.flushed) setStatus(`Sent ${st.flushed} queued export${st.flushed === 1 ? '' : 's'} to Devdy.`);
+    else if (st.tokenValid) setStatus('Devdy token saved.');
+  } finally {
+    devdyTokenSave.disabled = false;
+  }
+});
+devdyToken.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') devdyTokenSave.click();
+});
+devdyProject.addEventListener('change', () => {
+  void devdyCall({ type: 'set-project', projectId: devdyProject.value || null });
+});
+devdyRetry.addEventListener('click', async () => {
+  devdyRetry.disabled = true;
+  try {
+    const r = await devdyCall<{ sent: number; pending: number; status: DevdyStatus }>({ type: 'flush' });
+    renderDevdy(r.status);
+    setStatus(r.sent ? `Sent ${r.sent} queued export(s) to Devdy.` : 'Devdy is still not reachable.');
+  } finally {
+    devdyRetry.disabled = false;
+  }
+});
+
 function startExport(action: ExportAction): void {
   setError(null);
   const link = linkInput.value.trim();
@@ -125,12 +257,11 @@ function startExport(action: ExportAction): void {
           .then(() => setStatus(`Copied ${msg.messageCount} messages to the clipboard.`))
           .catch((e: unknown) => setError(`Could not copy: ${e instanceof Error ? e.message : String(e)}`))
           .finally(finish);
+      } else if (msg.action === 'devdy') {
+        showDevdyResult(msg.devdy, msg.files, msg.messageCount);
+        finish();
       } else {
-        const files = msg.files
-          ? `, ${msg.files.saved} file${msg.files.saved === 1 ? '' : 's'}` +
-            (msg.files.notIncluded ? `, ${msg.files.notIncluded} not included` : '')
-          : '';
-        setStatus(`Saved ${msg.filename} (${msg.messageCount} messages${files}).`);
+        setStatus(`Saved ${msg.filename} (${msg.messageCount} messages${filesSummary(msg.files)}).`);
         finish();
       }
     }
@@ -148,6 +279,7 @@ function startExport(action: ExportAction): void {
 
 exportBtn.addEventListener('click', () => startExport('download'));
 copyBtn.addEventListener('click', () => startExport('copy'));
+devdySendBtn.addEventListener('click', () => startExport('devdy'));
 linkInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') startExport('download');
 });
@@ -160,4 +292,5 @@ optZip.addEventListener('change', saveOptions);
 
 void loadOptions();
 void prefillFromActiveTab();
+void refreshDevdy();
 linkInput.focus();

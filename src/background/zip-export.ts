@@ -9,6 +9,7 @@ import {
   type FetchFileResponse,
   OFFSCREEN_TARGET,
   type OffscreenRequest,
+  type StoreZipResponse,
 } from '../types/offscreen';
 import { chromePing, KEEPALIVE_CHUNK_MS } from './keepalive';
 
@@ -69,6 +70,8 @@ export interface ZipJob {
   fetchFiles(plan: AttachmentPlan, onProgress: (text: string) => void): Promise<ZipFetchResult>;
   /** Zip fetched files + markdown and save it via chrome.downloads. */
   saveZip(markdownPath: string, markdown: string, zipFilename: string): Promise<void>;
+  /** Zip fetched files + markdown into the IndexedDB outbox (Devdy export). Returns the zip size. */
+  storeZip(blobId: string, markdownPath: string, markdown: string): Promise<number>;
   /** Always call (finally): frees offscreen memory. */
   dispose(): void;
 }
@@ -137,6 +140,18 @@ export async function startZipJob(): Promise<ZipJob> {
       });
       // The blob URL must stay alive until Chrome has finished writing the file.
       await waitForDownload(downloadId, DOWNLOAD_WAIT_MS);
+    },
+
+    async storeZip(blobId, markdownPath, markdown) {
+      const res = await send<StoreZipResponse>({
+        target: OFFSCREEN_TARGET,
+        type: 'store-zip',
+        jobId,
+        blobId,
+        texts: [{ path: markdownPath, text: markdown }],
+      });
+      if (!res?.ok) throw new Error(`Could not build the zip: ${res?.error ?? 'no response'}`);
+      return res.size;
     },
 
     dispose() {
