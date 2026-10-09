@@ -296,7 +296,7 @@ describe('DevdyOutbox', () => {
     await box.enqueue({ id: 'a', title: 'A', contentType: 'x' }, md('A'));
     await box.enqueue({ id: 'b', title: 'B', contentType: 'x' }, md('B'));
     expect(bad.entries()).toHaveLength(2);
-    expect(bad.entries()[0]!.attempts).toBe(2); // tried on each enqueue
+    expect(bad.entries()[0]!.attempts).toBe(0); // a rejected token is not an attempt on the payload
     expect(calls).toBe(2); // 'b' was never posted after 'a' failed
   });
 
@@ -475,6 +475,49 @@ describe('DevdyOutbox: durability and bounds', () => {
     const r = await box.flush();
     expect(r.sent).toBe(1);
     expect(m.state().paused).toBe(false);
+  });
+
+  it('a server error on one entry does not block the next ones', async () => {
+    const m = memoryDeps({ resolveDevdy: async () => ({ kind: 'none' }) });
+    const box = new DevdyOutbox(m.deps);
+    for (const id of ['a', 'b', 'c']) await box.enqueue({ id, title: id, contentType: 'x' }, md(id));
+    m.deps.resolveDevdy = async () => ok;
+    const tried: string[] = [];
+    m.deps.postCapture = async (_p, _t, payload) => {
+      tried.push(payload.idempotencyKey!);
+      return payload.idempotencyKey === 'a'
+        ? { kind: 'server_error', message: 'storage error' }
+        : { kind: 'created', id: 'srv' };
+    };
+    const r = await box.flush();
+    expect(tried).toEqual(['a', 'b', 'c']);
+    expect(r).toMatchObject({ sent: 2, pending: 1 });
+    expect(m.entries()).toMatchObject([{ id: 'a', attempts: 1, lastError: 'storage error' }]);
+    expect(m.alarm.on).toBe(true);
+  });
+
+  it('unreachable during a post still stops the round', async () => {
+    const m = memoryDeps({ resolveDevdy: async () => ({ kind: 'none' }) });
+    const box = new DevdyOutbox(m.deps);
+    for (const id of ['a', 'b']) await box.enqueue({ id, title: id, contentType: 'x' }, md(id));
+    m.deps.resolveDevdy = async () => ok;
+    let calls = 0;
+    m.deps.postCapture = async () => {
+      calls++;
+      return { kind: 'unreachable', message: 'Devdy is not reachable.' };
+    };
+    await box.flush();
+    expect(calls).toBe(1);
+  });
+
+  it('manual sends while paused on a rejected token do not count attempts', async () => {
+    const m = memoryDeps({ postCapture: async () => ({ kind: 'unauthorized', message: 'invalid token' }) });
+    const box = new DevdyOutbox(m.deps);
+    await box.enqueue({ id: 'a', title: 'a', contentType: 'x' }, md('a'));
+    expect(m.state().paused).toBe(true);
+    for (let i = 0; i < 3; i++) await box.flush(); // "Retry now"
+    expect(m.entries()[0]!.attempts).toBe(0);
+    expect(m.entries()[0]!.lastError).toBe('invalid token');
   });
 
   it('removes orphan blobs but never a held (being written) one', async () => {
