@@ -1,6 +1,8 @@
-// Offscreen document: fetches Slack-hosted attachments and builds the export
-// zip. Runs as an extension page, so cross-origin fetches to files.slack.com
-// are allowed by host permissions and carry the user's Slack cookies.
+// Offscreen document: fetches Slack-hosted attachments and web images and
+// builds the export zip (blob: URL for chrome.downloads, or IndexedDB for the
+// Devdy outbox). Runs as an extension page, so cross-origin fetches to
+// files.slack.com are allowed by host permissions and carry the user's Slack
+// cookies. Each fetched file goes straight into the job's streaming zip.
 
 import { fromExtension } from '../features/devdy/background/sender';
 import { putBlob } from '../features/devdy/core/blob-store';
@@ -8,6 +10,7 @@ import { isAllowedFileUrl } from '../features/slack/core/attachments';
 import { imageExtension, isFetchableImageUrl } from '../features/web-to-md/core/web-capture';
 import { errorMessage } from '../shared/errors';
 import { onTargetMessage, type Result } from '../shared/messaging';
+import { fetchImage as fetchImageResponse } from './image-fetch';
 import {
   type BuildZipResponse,
   type FetchFileResponse,
@@ -16,8 +19,7 @@ import {
   type OffscreenRequest,
   type StoreZipResponse,
 } from './messages';
-import { isPublicHttpUrl, isSameSite } from './url-safety';
-import { buildZipBlob } from './zip-stream';
+import { ZipWriter } from './zip-stream';
 
 const FETCH_TIMEOUT_MS = 120_000;
 /**
@@ -27,7 +29,7 @@ const FETCH_TIMEOUT_MS = 120_000;
 const JOB_TTL_MS = 15 * 60_000;
 
 interface Job {
-  files: Map<string, Uint8Array>;
+  zip: ZipWriter;
   blobUrl?: string;
   touched: number;
 }
@@ -37,7 +39,7 @@ const jobs = new Map<string, Job>();
 function job(id: string): Job {
   let j = jobs.get(id);
   if (!j) {
-    j = { files: new Map(), touched: Date.now() };
+    j = { zip: new ZipWriter(), touched: Date.now() };
     jobs.set(id, j);
   }
   j.touched = Date.now();
@@ -98,7 +100,7 @@ async function fetchFile(req: Extract<OffscreenRequest, { type: 'fetch-file' }>)
   }
   try {
     const bytes = await readCapped(res, req.maxBytes);
-    job(req.jobId).files.set(req.path, bytes);
+    job(req.jobId).zip.add(req.path, bytes);
     return { ok: true, size: bytes.byteLength };
   } catch (e) {
     return { ok: false, error: errorMessage(e) };
@@ -106,26 +108,12 @@ async function fetchFile(req: Extract<OffscreenRequest, { type: 'fetch-file' }>)
 }
 
 async function fetchImage(req: Extract<OffscreenRequest, { type: 'fetch-image' }>): Promise<FetchImageResponse> {
-  const isData = req.url.startsWith('data:');
-  if (!isFetchableImageUrl(req.url) || (!isData && !isPublicHttpUrl(req.url))) {
-    return { ok: false, error: 'URL not allowed' };
-  }
-  let res: Response;
-  try {
-    // Cookies only for images of the page's own site (login-only images);
-    // never send the user's cookies to third parties.
-    res = await fetch(req.url, {
-      credentials: !isData && isSameSite(req.url, req.pageUrl) ? 'include' : 'omit',
-      redirect: 'follow',
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-    });
-  } catch (e) {
-    const timedOut = e instanceof DOMException && e.name === 'TimeoutError';
-    return { ok: false, error: timedOut ? 'download timed out' : 'network error' };
-  }
+  if (!isFetchableImageUrl(req.url)) return { ok: false, error: 'URL not allowed' };
+  // Public hosts only; cookies only for the page's own origin and never across a redirect.
+  const fetched = await fetchImageResponse(req.url, { pageUrl: req.pageUrl, timeoutMs: FETCH_TIMEOUT_MS });
+  if (!fetched.ok) return fetched;
+  const res = fetched.res;
   if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
-  // A redirect may have led to a private address: don't keep what it returned.
-  if (!isData && !isPublicHttpUrl(res.url || req.url)) return { ok: false, error: 'URL not allowed' };
   const type = res.headers.get('Content-Type') ?? '';
   const ext = imageExtension(type, req.url);
   if (!type.toLowerCase().startsWith('image/') && ext === 'img')
@@ -133,7 +121,7 @@ async function fetchImage(req: Extract<OffscreenRequest, { type: 'fetch-image' }
   try {
     const bytes = await readCapped(res, req.maxBytes);
     const path = `${req.pathBase}.${ext}`;
-    job(req.jobId).files.set(path, bytes);
+    job(req.jobId).zip.add(path, bytes);
     return { ok: true, path, size: bytes.byteLength };
   } catch (e) {
     return { ok: false, error: errorMessage(e) };
@@ -143,7 +131,7 @@ async function fetchImage(req: Extract<OffscreenRequest, { type: 'fetch-image' }
 function buildZip(req: Extract<OffscreenRequest, { type: 'build-zip' }>): BuildZipResponse {
   try {
     const j = job(req.jobId);
-    const blob = buildZipBlob(j.files, req.texts);
+    const blob = j.zip.finish(req.texts);
     j.blobUrl = URL.createObjectURL(blob);
     return { ok: true, url: j.blobUrl, size: blob.size };
   } catch (e) {
@@ -153,7 +141,7 @@ function buildZip(req: Extract<OffscreenRequest, { type: 'build-zip' }>): BuildZ
 
 async function storeZip(req: Extract<OffscreenRequest, { type: 'store-zip' }>): Promise<StoreZipResponse> {
   try {
-    const blob = buildZipBlob(job(req.jobId).files, req.texts);
+    const blob = job(req.jobId).zip.finish(req.texts);
     await putBlob(req.blobId, blob);
     return { ok: true, size: blob.size };
   } catch (e) {
@@ -164,6 +152,7 @@ async function storeZip(req: Extract<OffscreenRequest, { type: 'store-zip' }>): 
 function release(jobId: string): void {
   const j = jobs.get(jobId);
   if (j?.blobUrl) URL.revokeObjectURL(j.blobUrl);
+  j?.zip.abort();
   jobs.delete(jobId);
 }
 
