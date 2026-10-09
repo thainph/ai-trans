@@ -5,15 +5,18 @@
   "description": "Chrome extension (MV3): AI Translator + Web to Markdown + Slack Thread Exporter",
   "type": "module",
   "scripts": {
-    "build": "tsc --noEmit && vite build && vite build -c vite.content.config.ts --mode slack && vite build -c vite.content.config.ts --mode page",
+    "build": "pnpm typecheck && vite build && vite build -c vite.content.config.ts --mode slack && vite build -c vite.content.config.ts --mode page",
     "dev": "vite build --watch",
+    "dev:content": "vite build -c vite.content.config.ts --mode slack --watch",
+    "dev:page": "vite build -c vite.content.config.ts --mode page --watch",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "dev:content": "vite build -c vite.content.config.ts --mode slack --watch",
-    "dev:page": "vite build -c vite.content.config.ts --mode page --watch"
+    "lint": "biome check .",
+    "format": "biome check --write ."
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.5.15",
     "@types/chrome": "^0.3.4",
     "happy-dom": "^20.14.6",
     "typescript": "^7.0.2",
