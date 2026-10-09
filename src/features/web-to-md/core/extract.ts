@@ -62,9 +62,11 @@ export function extractInPage(mode: ExtractMode, depth: ExtractDepth = 'content'
   if (depth === 'meta') return result;
 
   const finalize = () => {
-    const tmp = document.createElement('div');
+    // Parse into an inert <template>: no resource loads, no event handlers, and
+    // nothing re-parsed into the live document (this runs in every frame).
+    const tmp = document.createElement('template');
     tmp.innerHTML = result.html || '';
-    result.textLen = (tmp.textContent || '').replace(/\s+/g, ' ').trim().length;
+    result.textLen = (tmp.content.textContent || '').replace(/\s+/g, ' ').trim().length;
     if (depth !== 'content') {
       result.html = '';
       delete result.text;

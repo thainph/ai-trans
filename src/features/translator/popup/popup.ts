@@ -226,7 +226,12 @@ translatePageBtn.addEventListener('click', () => {
     const tabId = tabs[0]?.id;
     if (tabId === undefined) return;
     const type = currentPageState === 'translated' ? 'revert-page' : 'translate-page';
-    sendToPage(tabId, type, () => {
+    sendToPage<{ ok: boolean }>(tabId, type, (response) => {
+      // No content script in the tab (opened before the extension was installed/updated, or a system page).
+      if (!response?.ok) {
+        showStatus('Reload the page to use translation', 'error');
+        return;
+      }
       if (type === 'translate-page') {
         updateTranslatePageBtn('translating');
         // Embedded in the Context Kit popup's iframe → close the top-level popup.

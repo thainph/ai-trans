@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { CANCELLED, signalWithTimeout } from '../src/features/translator/background/llm';
 import { ollamaCorsRules, ollamaOrigin } from '../src/features/translator/background/ollama-cors';
-import { isExtensionPage, rejectReason } from '../src/features/translator/background/sender';
+import { isExtensionPage, rejectReason, requestKey } from '../src/features/translator/background/sender';
 import {
   BATCH_KEY,
   buildBatchInput,
@@ -9,6 +10,7 @@ import {
 } from '../src/features/translator/core/batch-protocol';
 
 const SRC = ['Hello', 'World', 'Good bye'];
+const NONE = [null, null, null];
 
 describe('batch protocol', () => {
   it('sends the texts as a JSON array and asks for a same-length JSON object', () => {
@@ -34,29 +36,26 @@ describe('batch protocol', () => {
     expect(parseBatchResponse(JSON.stringify({ translations: out }), src)).toEqual(out);
   });
 
-  it('falls back to the source on a length mismatch, and per item on bad items', () => {
-    expect(parseBatchResponse(JSON.stringify({ translations: ['a', 'b'] }), SRC)).toEqual(SRC);
-    expect(parseBatchResponse(JSON.stringify({ translations: ['a', 'b', 'c', 'd'] }), SRC)).toEqual(SRC);
-    expect(parseBatchResponse(JSON.stringify({ translations: ['a', 42, '  '] }), SRC)).toEqual([
-      'a',
-      'World',
-      'Good bye',
-    ]);
-    expect(parseBatchResponse('{"foo": 1}', SRC)).toEqual(SRC);
+  it('marks every item as failed (null) on a length mismatch, and bad items one by one', () => {
+    expect(parseBatchResponse(JSON.stringify({ translations: ['a', 'b'] }), SRC)).toEqual(NONE);
+    expect(parseBatchResponse(JSON.stringify({ translations: ['a', 'b', 'c', 'd'] }), SRC)).toEqual(NONE);
+    expect(parseBatchResponse(JSON.stringify({ translations: ['a', 42, '  '] }), SRC)).toEqual(['a', null, null]);
+    expect(parseBatchResponse('{"foo": 1}', SRC)).toEqual(NONE);
   });
 
   it('keeps the complete leading items of a truncated reply', () => {
     expect(parseBatchResponse('{"translations": ["Xin chào", "Thế \\"giới\\"", "Tạm b', SRC)).toEqual([
       'Xin chào',
       'Thế "giới"',
-      'Good bye',
+      null,
     ]);
   });
 
   it('parses legacy numbered lines: first occurrence wins, continuation lines kept', () => {
     const raw = '[0] Xin chào\n[1] Thế\ngiới\n[1] injected\n[2] Tạm biệt\n[7] out of range';
     expect(parseBatchResponse(raw, SRC)).toEqual(['Xin chào', 'Thế\ngiới', 'Tạm biệt']);
-    expect(parseBatchResponse('no structure at all', SRC)).toEqual(SRC);
+    expect(parseBatchResponse('no structure at all', SRC)).toEqual(NONE);
+    expect(parseBatchResponse('[0] Xin chào\n[2] Tạm biệt', SRC)).toEqual(['Xin chào', null, 'Tạm biệt']);
     expect(parseBatchResponse('[0] Xin chào', ['Hello'])).toEqual(['Xin chào']);
   });
 });
@@ -105,5 +104,35 @@ describe('translator sender checks', () => {
     ).not.toBeNull();
     expect(rejectReason({ target: T, type: 'grammar-check', text: 'x'.repeat(100_001) }, content, ID)).not.toBeNull();
     expect(rejectReason({ target: T, type: 'translate', text: 'hi', ...lang }, { id: 'other' }, ID)).not.toBeNull();
+  });
+});
+
+describe('cancellable requests', () => {
+  const ID = 'extid';
+  const T = 'context-kit-translator' as const;
+  const tab = { id: 7 } as chrome.tabs.Tab;
+
+  it('accepts cancel / requestId from our frames and scopes keys per frame', () => {
+    const sender = { id: ID, tab, frameId: 3, documentId: 'doc' };
+    expect(rejectReason({ target: T, type: 'cancel', requestId: 'abc' }, sender, ID)).toBeNull();
+    expect(rejectReason({ target: T, type: 'cancel', requestId: '' }, sender, ID)).not.toBeNull();
+    expect(rejectReason({ target: T, type: 'cancel', requestId: 'abc' }, { id: 'other' }, ID)).not.toBeNull();
+    expect(
+      rejectReason({ target: T, type: 'grammar-check', text: 'hi', requestId: 'x'.repeat(65) }, sender, ID),
+    ).not.toBeNull();
+    expect(requestKey(sender, 'abc')).not.toBe(requestKey({ ...sender, frameId: 4 }, 'abc'));
+    expect(requestKey(sender, 'abc')).not.toBe(requestKey({ ...sender, tab: { id: 8 } as chrome.tabs.Tab }, 'abc'));
+  });
+
+  it('signalWithTimeout aborts on the caller signal or on timeout', async () => {
+    const ctrl = new AbortController();
+    const signal = signalWithTimeout(ctrl.signal, 60_000);
+    expect(signal.aborted).toBe(false);
+    ctrl.abort();
+    expect(signal.aborted).toBe(true);
+    const timed = signalWithTimeout(undefined, 1);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(timed.aborted).toBe(true);
+    expect(CANCELLED).toBe('Cancelled');
   });
 });

@@ -1,10 +1,6 @@
 // Who may send which translator request (pure → unit-tested).
 
-import type { TranslatorRequest } from '../shared/messages';
-
-/** Upper bounds of one request, so a misbehaving frame can't run up the bill. */
-export const MAX_TEXT_CHARS = 100_000;
-export const MAX_BATCH_ITEMS = 200;
+import { MAX_BATCH_ITEMS, MAX_TEXT_CHARS, type TranslatorRequest } from '../shared/messages';
 
 /** Sent by this extension (content script or extension page). */
 export function isOwnSender(sender: chrome.runtime.MessageSender, extensionId: string): boolean {
@@ -15,6 +11,13 @@ export function isOwnSender(sender: chrome.runtime.MessageSender, extensionId: s
 export function isExtensionPage(sender: chrome.runtime.MessageSender, extensionId: string): boolean {
   const origin = `chrome-extension://${extensionId}`;
   return sender.id === extensionId && (sender.origin === origin || !!sender.url?.startsWith(`${origin}/`));
+}
+
+const isRequestId = (id: unknown) => typeof id === 'string' && id.length > 0 && id.length <= 64;
+
+/** Key of a cancellable request: scoped to the sending frame, so a frame can only cancel its own. */
+export function requestKey(sender: chrome.runtime.MessageSender, requestId: string): string {
+  return `${sender.tab?.id ?? 'ext'}:${sender.frameId ?? 0}:${sender.documentId ?? ''}:${requestId}`;
 }
 
 /** Why the request is refused, or null when it is allowed. */
@@ -31,7 +34,10 @@ export function rejectReason(
       return typeof request.url === 'string' ? null : 'Invalid request';
     case 'translate':
     case 'grammar-check':
+      if (request.requestId !== undefined && !isRequestId(request.requestId)) return 'Invalid request';
       return isText(request.text) ? null : 'Invalid or too long text';
+    case 'cancel':
+      return isRequestId(request.requestId) ? null : 'Invalid request';
     case 'translate-batch': {
       const { texts } = request;
       const valid =
