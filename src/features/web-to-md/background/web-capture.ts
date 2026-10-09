@@ -58,22 +58,29 @@ export async function sendWebCapture(
   let r: Awaited<ReturnType<typeof outbox.enqueue>>;
   try {
     if (images.length > 0) {
-      const job = await startZipJob();
       try {
-        const { saved, failed } = await job.fetchImages(
-          images,
-          { maxBytes: MAX_IMAGE_BYTES, maxTotalBytes: MAX_TOTAL_IMAGE_BYTES, pageUrl: input.page.url },
-          onProgress,
-        );
-        stats = { saved: saved.size, failed };
-        if (saved.size > 0) {
-          body = rewriteImageLinks(input.markdown, saved);
-          onProgress('Building zip…');
-          await job.storeZip(id, PAGE_MD, head + body); // written straight into the outbox
-          contentType = 'application/zip';
+        const job = await startZipJob();
+        try {
+          const { saved, failed } = await job.fetchImages(
+            images,
+            { maxBytes: MAX_IMAGE_BYTES, maxTotalBytes: MAX_TOTAL_IMAGE_BYTES, pageUrl: input.page.url },
+            onProgress,
+          );
+          stats = { saved: saved.size, failed };
+          if (saved.size > 0) {
+            body = rewriteImageLinks(input.markdown, saved);
+            onProgress('Building zip…');
+            await job.storeZip(id, PAGE_MD, head + body); // written straight into the outbox
+            contentType = 'application/zip';
+          }
+        } finally {
+          job.dispose();
         }
-      } finally {
-        job.dispose();
+      } catch {
+        // Offscreen / zip failure: still send the page, as plain Markdown with the original image links.
+        body = input.markdown;
+        contentType = 'text/markdown; charset=utf-8';
+        stats = { saved: 0, failed: images.length };
       }
     }
     if (contentType !== 'application/zip') {
@@ -101,6 +108,20 @@ export async function downloadPageZip(
 ): Promise<DownloadPageResponse> {
   const images = planImages(collectImageUrls(markdown));
   if (images.length === 0) return { ok: true, zipped: false, images: { saved: 0, failed: 0 } };
+  try {
+    return await downloadZip(images, markdown, filename, pageUrl);
+  } catch {
+    // Offscreen / zip failure: the popup saves the plain .md (original image links).
+    return { ok: true, zipped: false, images: { saved: 0, failed: images.length } };
+  }
+}
+
+async function downloadZip(
+  images: ReturnType<typeof planImages>,
+  markdown: string,
+  filename: string,
+  pageUrl?: string,
+): Promise<DownloadPageResponse> {
   const job = await startZipJob();
   try {
     const { saved, failed } = await job.fetchImages(
