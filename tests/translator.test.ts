@@ -19,7 +19,7 @@ describe('splitForTranslation', () => {
   });
 
   it('splits on line boundaries and reassembles to the exact original', () => {
-    const text = Array.from({ length: 50 }, (_, i) => `Line ${i} with some words.`).join('\n') + '\n\n';
+    const text = `${Array.from({ length: 50 }, (_, i) => `Line ${i} with some words.`).join('\n')}\n\n`;
     const segs = splitForTranslation(text, 120);
     expect(segs.length).toBeGreaterThan(1);
     expect(segs.join('')).toBe(text);
@@ -42,7 +42,7 @@ describe('splitForTranslation', () => {
   });
 
   it('keeps special characters intact', () => {
-    const text = '・項目 <a href="x">&amp;</a> {{name}} $var '.repeat(30) + '\n🙂 ★ ※ → ① `code` [0] ---';
+    const text = `${'・項目 <a href="x">&amp;</a> {{name}} $var '.repeat(30)}\n🙂 ★ ※ → ① \`code\` [0] ---`;
     expect(splitForTranslation(text, 200).join('')).toBe(text);
   });
 });
