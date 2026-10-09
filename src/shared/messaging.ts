@@ -38,3 +38,15 @@ export function onTargetMessage<M extends TargetedMessage>(
     sendResponse(res);
   });
 }
+
+/** A request without its `target` (distributes over a union of requests). */
+export type Command<R> = R extends TargetedMessage ? Omit<R, 'target'> : never;
+
+/**
+ * Send a message to the content script of one frame (or every frame when
+ * `frameId` is undefined), ignoring delivery errors: the tab may be closed or
+ * the content script missing, and the caller's work still completes.
+ */
+export function sendToTab<M extends TargetedMessage>(tabId: number, frameId: number | undefined, msg: M): void {
+  chrome.tabs.sendMessage(tabId, msg, frameId !== undefined ? { frameId } : undefined).catch(() => {});
+}

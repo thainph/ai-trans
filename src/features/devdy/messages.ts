@@ -1,5 +1,6 @@
 // Messages between the Devdy tab (popup) and the background worker for settings/status.
 
+import type { Command } from '../../shared/messaging';
 import type { DevdyProject, SendOutcome } from './core/client';
 
 /** Result of one send through the outbox, as reported to the UI. */
@@ -68,5 +69,4 @@ export interface DevdyFlushResult {
   status: DevdyStatus;
 }
 
-/** A request without its `target` (distributes over the union). */
-export type DevdyCommand = DevdyRequest extends infer R ? (R extends DevdyRequest ? Omit<R, 'target'> : never) : never;
+export type DevdyCommand = Command<DevdyRequest>;

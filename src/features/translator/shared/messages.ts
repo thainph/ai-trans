@@ -3,7 +3,7 @@
 // content script / popup ─TRANSLATOR_TARGET─▶ background   (LLM calls)
 // popup ─TRANSLATOR_PAGE_TARGET─▶ content script  (full-page translation)
 
-import type { Result } from '../../../shared/messaging';
+import type { Command, Result } from '../../../shared/messaging';
 import type { TranslationStyle } from './settings';
 
 export const TRANSLATOR_TARGET = 'context-kit-translator';
@@ -47,9 +47,6 @@ export type TranslatorPageRequest =
   | { target: typeof TRANSLATOR_PAGE_TARGET; type: 'get-state' };
 
 export type PageStateResponse = Result<{ state: PageTranslationState }>;
-
-/** A request without its `target` (distributes over the union). */
-type Command<R> = R extends { target: string } ? Omit<R, 'target'> : never;
 
 /** Send a request to the translator background; rejects when the runtime fails. */
 export function callTranslator<C extends Command<TranslatorRequest>>(

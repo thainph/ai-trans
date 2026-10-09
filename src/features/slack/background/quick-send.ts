@@ -2,7 +2,7 @@
 // into Slack's own message menu. Progress and results are shown as a toast
 // inside the Slack tab.
 
-import { onTargetMessage, type Result } from '../../../shared/messaging';
+import { onTargetMessage, type Result, sendToTab } from '../../../shared/messaging';
 import { fromContentScriptOf } from '../../../shared/sender';
 import { openSettings } from '../../devdy/api';
 import { toastFor } from '../core/quick-send';
@@ -21,12 +21,7 @@ const SLACK_APP_ORIGIN = 'https://app.slack.com';
 /** Threads currently being sent (avoid double sends from repeated clicks). */
 const inFlight = new Set<string>();
 
-function toast(tabId: number, frameId: number | undefined, msg: ToastMessage): void {
-  const opts = frameId !== undefined ? { frameId } : undefined;
-  chrome.tabs.sendMessage(tabId, msg, opts).catch(() => {
-    // Tab closed / content script not injected: the send still completes.
-  });
-}
+const toast = (tabId: number, frameId: number | undefined, msg: ToastMessage) => sendToTab(tabId, frameId, msg);
 
 export async function quickSend(link: string, tabId: number, frameId?: number): Promise<void> {
   const key = crypto.randomUUID();

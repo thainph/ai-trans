@@ -3,7 +3,7 @@
 // outbox (queued + retried when Devdy is down).
 
 import { errorMessage } from '../../../shared/errors';
-import { ok, onTargetMessage, type Result } from '../../../shared/messaging';
+import { type Command, ok, onTargetMessage, type Result, sendToTab } from '../../../shared/messaging';
 import { startZipJob } from '../../../shared/offscreen/zip-job';
 import { fromExtensionPage } from '../../../shared/sender';
 import type { ToastState } from '../../../shared/toast';
@@ -167,10 +167,8 @@ export function resultText(r: WebSendResult, what: string): string {
   return r.delivery.message;
 }
 
-function toast(tabId: number, frameId: number | undefined, msg: Omit<WebToastMessage, 'target'>): void {
-  const full: WebToastMessage = { target: WEB_TOAST_TARGET, ...msg };
-  chrome.tabs.sendMessage(tabId, full, frameId !== undefined ? { frameId } : undefined).catch(() => {});
-}
+const toast = (tabId: number, frameId: number | undefined, msg: Command<WebToastMessage>) =>
+  sendToTab<WebToastMessage>(tabId, frameId, { target: WEB_TOAST_TARGET, ...msg });
 
 /** Commands the all-frames content script may send; the rest come from the Web → MD tab only. */
 const CONTENT_COMMANDS = new Set<WebRequest['type']>(['send-selection', 'open-settings']);
