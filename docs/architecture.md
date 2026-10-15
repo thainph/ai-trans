@@ -69,7 +69,7 @@ Defined once in `src/shared/sender.ts`:
 
 | Channel | Allowed |
 |---|---|
-| Translator (`translator/background/sender.ts`) | any extension sender; `fetch-ollama-models` and `devdy-status` from extension pages only; the stream port from any extension sender (`streamPortRejectReason`), its `translate` message validated like `translate` (`isStreamRequest`). Sizes are validated (text ≤ 100 000 chars, batch ≤ 200 items and ≤ 100 000 chars in total). `cancel` only reaches requests of the sending frame (`requestKey`). |
+| Translator (`translator/background/sender.ts`) | any extension sender; `fetch-ollama-models` and `devdy-status` from extension pages only; the stream port from any extension sender (`streamPortRejectReason`), its `translate` message validated like `translate` (`isStreamRequest`). Sizes are validated (text ≤ 100 000 chars, batch ≤ 200 items and ≤ 100 000 chars in total). `cancel` only reaches requests of the sending frame (`requestKey`); `translate`, `grammar-check` and `translate-batch` take an optional `requestId` for it. |
 | Devdy, offscreen | extension pages only |
 | Web → MD | `send-selection` / `open-settings` from content scripts; `send-page` / `download-page` from extension pages only. Incoming Markdown ≤ 30 × 1024 × 1024 chars (`background/limits.ts`). |
 | Slack | the export port from extension pages only; quick send only from the content script on `https://app.slack.com` |
@@ -79,7 +79,8 @@ Defined once in `src/shared/sender.ts`:
 - **Settings:** types + defaults live only in `features/translator/shared/settings.ts` (`loadSettings()` /
   `saveSettings()`). On install/update only `SEEDED_SETTINGS` are written (never API keys).
 - **LLM calls** happen only in `background/index.ts`: OpenAI chat completions, Gemini `generateContent`, Ollama
-  `/api/chat`. Timeouts: 120 s (Ollama 300 s, model list 10 s). Long selections are split into ≤ 4 000-char chunks.
+  `/api/chat`. Timeouts: 120 s (Ollama 300 s, model list 10 s). Long selections are split into ≤ 4 000-char chunks
+  (never inside a UTF-16 surrogate pair).
 - **In-page UI** (floating toolbar and result popup) uses **closed** Shadow DOM — page scripts can't read or change it.
   Every handler ignores synthetic events (`e.isTrusted`), so a page can't click for the user. Closing the popup or
   starting a new request sends `cancel`, which aborts the LLM fetch in flight.
@@ -94,7 +95,7 @@ Defined once in `src/shared/sender.ts`:
   `{"translations": [...]}` with exactly as many strings (JSON mode per provider). `parseBatchResponse()` returns one
   translation or `null` per item: wrong length → all `null`; truncated JSON → the complete leading items; the legacy
   `[N] text` format is still parsed. `null` items keep their original text, are never cached and are retried after 2 s,
-  at most 2 times per text (`RetryBudget`).
+  at most 2 times per text (`RetryBudget`). A provider may also answer `false` for an item (`BatchTranslation`): it can't take that text, so the original is kept and cached without retries.
 - **Devdy provider** (`provider: 'devdy'`, `background/devdy.ts`): no LLM call — requests go through the Devdy service
   API (`features/devdy/api.ts`: `devdyTranslate`, `devdyTranslateStatus`, `openSettings`). Engine/model/style are
   Devdy's; only the target language is sent (`devdyTargetLang()`: `vi en ja zh ko fr de es` codes, else the English
@@ -105,12 +106,22 @@ Defined once in `src/shared/sender.ts`:
     works too (JSON mode).
   - Page (`core/devdy-pack.ts`): Devdy only translates plain text with its own prompt and serializes requests, so the
     content script sends larger batches (≤ 5 500 chars, concurrency 1) and the SW packs each batch into one Markdown
-    document — a marker line `⟦i⟧` before each item (`packItems`), ≤ 6 500 chars per request (`planPacks`; items with a
-    marker-like line or too large are left `null`). `unpackItems()` splits the reply on marker lines (spacing and
-    full-width digits tolerated): a missing, empty, duplicated or unknown marker → `null` for that item, so text is never
-    taken from the wrong marker; `null` items follow the usual retry path. A pack failing with an engine error / timeout
-    leaves its items `null`; connection, token and engine-unavailable errors fail the batch. This depends on the model
-    keeping the markers — Devdy's prompt says to keep Markdown, but it is not guaranteed.
+    document — a marker line `⟦i⟧` before each item (`packItems`), ≤ 6 500 chars per request (`planPacks`). Items that
+    contain `⟦` / `⟧` themselves or are too large are not sent and come back as `false` (*untranslatable*: the content
+    script keeps the original and caches it, no retry).
+  - `unpackItems()` reads the reply line by line. A marker may start a line, wrapped in Markdown the model may add
+    (`**⟦1⟧**`, `` `⟦1⟧` ``, `\⟦1\⟧`, `# `, `- `), with full-width digits, and may be followed by the item's text
+    (`⟦1⟧ Sign in`). Any other `⟦`/`⟧` in a line (a marker inside the text, two markers on a line) makes the current
+    item and the item it names `null`; duplicated or reordered markers make both sides `null`; text after an unknown
+    marker is dropped; missing or empty sections are `null`.
+  - The guarantee is structural: an item only gets text from a section opened by one well-formed marker for exactly
+    that item, seen once and in increasing order, with no other bracket inside — so no returned text contains a
+    marker. It can't detect a model that keeps the markers but moves one item's meaning under another item's marker.
+    It also relies on the model keeping the markers at all (Devdy's prompt says to keep Markdown, not guaranteed);
+    `null` items follow the usual retry path.
+  - A pack failing with an engine error / timeout / 429 after retries leaves its items `null`; connection, token and
+    engine-unavailable errors fail the batch. Batches carry a `requestId` and are cancellable: revert, a new run and
+    `pagehide` (navigation / tab close) send `cancel`, and the SW stops before the next pack.
 - **Ollama CORS** (`background/ollama-cors.ts`): Ollama rejects requests with an unknown `Origin` header. The extension
   installs dynamic `declarativeNetRequest` rules (ids 1–3) that remove `Origin` only on requests **made by this
   extension** (`initiatorDomains: [extension id]`) to the configured Ollama origin(s) — the saved `ollamaUrl` and the URL
