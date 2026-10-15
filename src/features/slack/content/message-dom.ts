@@ -8,6 +8,7 @@
 // Slack tab of the popup.
 
 import { parseThreadLink } from '../core/permalink';
+import { createDevdyIcon, DEVDY_ICON_ATTR } from './devdy-icon';
 
 const MESSAGE_SELECTORS = [
   '[data-qa="message_container"]',
@@ -155,6 +156,12 @@ export function injectMenuItem(menu: Element, label: string, onSelect: () => voi
   const templateRow = itemRow(template, menu);
   const row = templateRow.cloneNode(true) as Element;
   row.setAttribute(INJECTED_ATTR, '');
+  // Before the attribute cleanup below: Slack's data-qa hooks help find the slots.
+  const iconSize = templateIconSize(templateRow);
+  const iconSlot = row.querySelector(ICON_SLOT_SELECTOR);
+  stripIcons(row, iconSlot);
+  const labelEl = setLabel(row, label);
+  placeIcon(row, iconSlot, labelEl, createDevdyIcon(row.ownerDocument, iconSize));
   for (const el of [row, ...row.querySelectorAll('*')]) {
     el.removeAttribute('id');
     el.removeAttribute('aria-checked');
@@ -167,11 +174,12 @@ export function injectMenuItem(menu: Element, label: string, onSelect: () => voi
     // mistakes the clone for one of its rows; keep a data-qa marker for styling.
     const hadQa = el.hasAttribute('data-qa');
     for (const attr of [...el.attributes]) {
-      if (attr.name.startsWith('data-') && attr.name !== INJECTED_ATTR) el.removeAttribute(attr.name);
+      if (attr.name.startsWith('data-') && attr.name !== INJECTED_ATTR && attr.name !== DEVDY_ICON_ATTR) {
+        el.removeAttribute(attr.name);
+      }
     }
     if (hadQa) el.setAttribute('data-qa', 'context-kit-send-to-devdy');
   }
-  setLabel(row, label);
   row.querySelectorAll('.c-menu_item__shortcut, [data-qa="menu_item_shortcut"], kbd').forEach((k) => {
     k.remove();
   });
@@ -200,13 +208,76 @@ export function injectMenuItem(menu: Element, label: string, onSelect: () => voi
   return row;
 }
 
-/** Replace the visible text of a cloned row with `label` (keeps icons/markup). */
-function setLabel(row: Element, label: string): void {
+/**
+ * Replace the visible text of a cloned row with `label`. Returns the element
+ * now holding the label, or null when the whole row text was replaced.
+ */
+function setLabel(row: Element, label: string): Element | null {
   const labelEl =
-    row.querySelector('.c-menu_item__label, [data-qa="menu_item_label"]') ??
-    [...row.querySelectorAll('*')].reverse().find((el) => el.children.length === 0 && el.textContent?.trim());
+    row.querySelector(LABEL_SELECTOR) ??
+    [...row.querySelectorAll('*')]
+      .reverse()
+      .find((el) => el.children.length === 0 && el.namespaceURI !== SVG_NS && el.textContent?.trim());
   if (labelEl) labelEl.textContent = label;
   else row.textContent = label;
+  return labelEl ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// Icon
+// ---------------------------------------------------------------------------
+// The cloned template row carries whatever icon Slack gave it (it differs per
+// menu and message type), so we always drop it and draw our own ➤ icon.
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const LABEL_SELECTOR = '.c-menu_item__label, [data-qa="menu_item_label"]';
+/** The wrapper Slack reserves for a row's icon (kept, emptied, refilled). */
+const ICON_SLOT_SELECTOR = '.c-menu_item__icon, [data-qa="menu_item_icon"], [class*="menu_item__icon"]';
+/** Anything that renders an icon: SVG, images, icon-font elements. */
+const ICON_SELECTOR = [
+  'svg',
+  'img',
+  'i',
+  '.c-icon',
+  '[class*="c-icon--"]',
+  '[class*="__icon"]',
+  '[data-qa*="icon"]',
+  '[type][aria-hidden="true"]',
+].join(', ');
+const DEFAULT_ICON_SIZE = 16;
+
+/** Pixel size of the template row's icon, so ours lines up with Slack's. */
+function templateIconSize(templateRow: Element): number {
+  const icon = templateRow.querySelector('svg, img, .c-icon, [class*="c-icon--"]');
+  if (!icon) return DEFAULT_ICON_SIZE;
+  const attr = Number.parseFloat(icon.getAttribute('width') ?? icon.getAttribute('height') ?? '');
+  if (attr > 0 && attr <= 32) return attr;
+  const rendered = icon.getBoundingClientRect().width;
+  return rendered > 0 && rendered <= 32 ? Math.round(rendered) : DEFAULT_ICON_SIZE;
+}
+
+/** Remove every icon from a cloned row; the icon slot itself is kept, empty. */
+function stripIcons(row: Element, slot: Element | null): void {
+  slot?.replaceChildren();
+  for (const el of row.querySelectorAll(ICON_SELECTOR)) {
+    if (!row.contains(el)) continue; // inside an icon removed earlier in this loop
+    if (el === slot || el.contains(slot) || el.querySelector(LABEL_SELECTOR) || el.matches(LABEL_SELECTOR)) continue;
+    if (el.querySelector('[role="menuitem"], button')) continue; // a wrapper, not an icon
+    el.remove();
+  }
+}
+
+/** Put `icon` in Slack's icon slot, or right before the label when the row has none. */
+function placeIcon(row: Element, slot: Element | null, labelEl: Element | null, icon: SVGSVGElement): void {
+  if (slot) {
+    slot.appendChild(icon);
+    return;
+  }
+  const wrap = row.ownerDocument.createElement('span');
+  wrap.style.cssText = 'display:inline-flex;align-items:center;margin-inline-end:8px;vertical-align:middle';
+  wrap.appendChild(icon);
+  if (labelEl && labelEl !== row) labelEl.before(wrap);
+  else row.prepend(wrap);
 }
 
 // ---------------------------------------------------------------------------
