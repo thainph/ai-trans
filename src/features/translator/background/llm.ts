@@ -216,4 +216,5 @@ export function signalWithTimeout(signal: AbortSignal | undefined, timeoutMs: nu
   return ctrl.signal;
 }
 
-export const CANCELLED = 'Cancelled';
+/** Error message of a request aborted by its sender. */
+export { CANCELLED } from '../shared/messages';

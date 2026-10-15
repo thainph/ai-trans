@@ -27,6 +27,7 @@ import {
 } from '../shared/settings';
 import { detectLanguage } from './detect-language';
 import { getPageTranslationState, revertPageTranslation, translatePage } from './page-translation';
+import { randomRequestId } from './request-id';
 import { POPUP_CSS, TRIGGER_CSS } from './styles';
 
 type TextControl = HTMLInputElement | HTMLTextAreaElement;
@@ -541,8 +542,7 @@ function cancelActiveRequest(): void {
 /** Start a cancellable request (cancelling the previous one); returns its id. */
 function newRequestId(): string {
   cancelActiveRequest();
-  // crypto.randomUUID() needs a secure context (missing on http:// pages).
-  activeRequestId = Array.from(crypto.getRandomValues(new Uint32Array(3)), (n) => n.toString(36)).join('');
+  activeRequestId = randomRequestId();
   return activeRequestId;
 }
 

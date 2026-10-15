@@ -7,9 +7,9 @@ import { DevdyTranslateError, devdyTranslateStatus, needsDevdySettings, openSett
 import { buildBatchInput, buildBatchPrompt, parseBatchResponse } from '../core/batch-protocol';
 import { languageName } from '../shared/languages';
 import {
+  type BatchTranslation,
   type StreamTranslateEvent,
   type StreamTranslateRequest,
-  TRANSLATOR_STREAM_PORT,
   TRANSLATOR_TARGET,
   type TranslatorRequest,
   type TranslatorResponses,
@@ -41,7 +41,8 @@ import {
   wrapText,
 } from './llm';
 import { syncOllamaCors } from './ollama-cors';
-import { isStreamRequest, rejectReason, requestKey, streamPortRejectReason } from './sender';
+import { rejectReason, requestKey } from './sender';
+import { serveStreamPort } from './stream-port';
 
 // Initialize defaults on first install, fill in missing ones on update.
 chrome.runtime.onInstalled.addListener((details) => {
@@ -114,9 +115,9 @@ onTargetMessage<TranslatorRequest>(TRANSLATOR_TARGET, (request, sender) => {
       return reply<'fetch-ollama-models'>(fetchOllamaModels(request.url).then((models) => ({ models })));
     case 'translate-batch':
       return reply<'translate-batch'>(
-        handleTranslateBatch(request.texts, request.sourceLang, request.targetLang, request.style).then(
-          (translations) => ({ translations }),
-        ),
+        cancellable(sender, request.requestId, (signal) =>
+          handleTranslateBatch(request.texts, request.sourceLang, request.targetLang, request.style, signal),
+        ).then((translations) => ({ translations })),
       );
     case 'grammar-check':
       return reply<'grammar-check'>(
@@ -133,41 +134,13 @@ onTargetMessage<TranslatorRequest>(TRANSLATOR_TARGET, (request, sender) => {
 
 // Streamed selection translation: one port per request, disconnect = cancel.
 chrome.runtime.onConnect.addListener((port) => {
-  if (port.name !== TRANSLATOR_STREAM_PORT) return;
-  if (streamPortRejectReason(port, chrome.runtime.id)) {
-    port.disconnect();
-    return;
-  }
-  const ctrl = new AbortController();
-  let open = true;
-  port.onDisconnect.addListener(() => {
-    open = false;
-    ctrl.abort();
-  });
-  const post = (event: StreamTranslateEvent) => {
-    if (!open) return;
-    try {
-      port.postMessage(event);
-    } catch {
-      open = false;
-    }
-  };
-  let started = false;
-  port.onMessage.addListener((msg: unknown) => {
-    if (started) return; // one request per port
-    started = true;
-    if (!isStreamRequest(msg)) {
-      post({ type: 'error', error: 'Invalid request' });
-      return;
-    }
-    handleStreamTranslate(msg, ctrl.signal, post).then(
-      (text) => post({ type: 'done', text }),
-      (err: unknown) => {
-        if (ctrl.signal.aborted) return;
-        const devdySettings = err instanceof DevdyTranslateError && needsDevdySettings(err.code);
-        post({ type: 'error', error: errorMessage(err), ...(devdySettings && { devdySettings }) });
-      },
-    );
+  serveStreamPort(port, {
+    extensionId: chrome.runtime.id,
+    translate: handleStreamTranslate,
+    errorEvent: (err) => {
+      const devdySettings = err instanceof DevdyTranslateError && needsDevdySettings(err.code);
+      return { type: 'error', error: errorMessage(err), ...(devdySettings && { devdySettings }) };
+    },
   });
 });
 
@@ -346,16 +319,17 @@ async function handleTranslateBatch(
   sourceLang: string,
   targetLang: string,
   style: string,
-): Promise<(string | null)[]> {
+  signal?: AbortSignal,
+): Promise<BatchTranslation[]> {
   if (texts.length === 0) return [];
-  if ((await activeProvider()) === 'devdy') return translateBatchWithDevdy(texts, targetLang);
+  if ((await activeProvider()) === 'devdy') return translateBatchWithDevdy(texts, targetLang, signal);
   const systemPrompt = buildBatchPrompt(
     languageName(sourceLang),
     languageName(targetLang),
     styleInstruction(style),
     texts.length,
   );
-  const { text: raw } = await callLLM(systemPrompt, buildBatchInput(texts), true);
+  const { text: raw } = await callLLM(systemPrompt, buildBatchInput(texts), true, signal);
   return parseBatchResponse(raw, texts);
 }
 

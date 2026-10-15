@@ -41,6 +41,7 @@ export function rejectReason(
     case 'cancel':
       return isRequestId(request.requestId) ? null : 'Invalid request';
     case 'translate-batch': {
+      if (request.requestId !== undefined && !isRequestId(request.requestId)) return 'Invalid request';
       const { texts } = request;
       const valid =
         Array.isArray(texts) &&

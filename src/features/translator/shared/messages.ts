@@ -16,6 +16,9 @@ interface LangPair {
   style: TranslationStyle;
 }
 
+/** Error of a request aborted by its sender (`cancel`, revert, port disconnect). */
+export const CANCELLED = 'Cancelled';
+
 /** Upper bounds of one request (checked by the service worker). */
 export const MAX_TEXT_CHARS = 100_000;
 export const MAX_BATCH_ITEMS = 200;
@@ -23,8 +26,8 @@ export const MAX_BATCH_ITEMS = 200;
 export type TranslatorRequest =
   /** `requestId` (optional): lets the sender abort it with `cancel`. */
   | ({ target: typeof TRANSLATOR_TARGET; type: 'translate'; text: string; requestId?: string } & LangPair)
-  /** Full-page translation: many short texts in one JSON-array prompt. */
-  | ({ target: typeof TRANSLATOR_TARGET; type: 'translate-batch'; texts: string[] } & LangPair)
+  /** Full-page translation: many short texts in one request. `requestId`: cancellable like `translate`. */
+  | ({ target: typeof TRANSLATOR_TARGET; type: 'translate-batch'; texts: string[]; requestId?: string } & LangPair)
   | { target: typeof TRANSLATOR_TARGET; type: 'grammar-check'; text: string; requestId?: string }
   /** Abort the sender frame's request `requestId` (no-op when already done). */
   | { target: typeof TRANSLATOR_TARGET; type: 'cancel'; requestId: string }
@@ -37,8 +40,7 @@ export type TranslatorRequest =
 /** Response type per request type. */
 export interface TranslatorResponses {
   translate: Result<{ translation: string }>;
-  /** One entry per text; null = no usable translation (retry later, don't cache). */
-  'translate-batch': Result<{ translations: (string | null)[] }>;
+  'translate-batch': Result<{ translations: BatchTranslation[] }>;
   'grammar-check': Result<{ corrected: string }>;
   cancel: Result;
   'fetch-ollama-models': Result<{ models: string[] }>;
@@ -75,6 +77,13 @@ export type StreamTranslateEvent =
   | { type: 'done'; text: string }
   /** `devdySettings`: the fix is in AI Trans → Devdy (token / instance choice). */
   | { type: 'error'; error: string; devdySettings?: boolean };
+
+/**
+ * One entry per text of a batch: the translation; `null` = no usable
+ * translation (retry later, don't cache); `false` = this provider can't take
+ * the text (keep the original, don't retry).
+ */
+export type BatchTranslation = string | null | false;
 
 export type PageTranslationState = 'idle' | 'translating' | 'translated';
 
