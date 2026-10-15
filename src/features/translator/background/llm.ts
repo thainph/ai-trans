@@ -1,6 +1,6 @@
 // Pure helpers for the translator's LLM calls (no chrome.* APIs → unit-testable).
 
-import type { Provider } from '../shared/settings';
+import type { LLMProvider } from '../shared/settings';
 
 /** Max characters sent to the model in one request when translating a selection. */
 export const CHUNK_CHARS = 4000;
@@ -26,9 +26,7 @@ export function splitForTranslation(text: string, max = CHUNK_CHARS): string[] {
       continue;
     }
     const sentences = line.match(/[^.!?。！？]*[.!?。！？]+\s*|[^.!?。！？]+$/g) || [line];
-    for (const s of sentences) {
-      for (let i = 0; i < s.length; i += max) pieces.push(s.slice(i, i + max));
-    }
+    for (const s of sentences) pieces.push(...hardCut(s, max));
   }
 
   // Greedily pack pieces into segments.
@@ -44,6 +42,22 @@ export function splitForTranslation(text: string, max = CHUNK_CHARS): string[] {
   if (current) segments.push(current);
   return segments;
 }
+
+/** Cut `s` into pieces of at most `max` UTF-16 units, never inside a surrogate pair. */
+function hardCut(s: string, max: number): string[] {
+  const out: string[] = [];
+  let i = 0;
+  while (i < s.length) {
+    let end = Math.min(i + max, s.length);
+    // A high surrogate as last unit would split an astral character (emoji…).
+    if (end < s.length && end - i > 1 && isHighSurrogate(s.charCodeAt(end - 1))) end--;
+    out.push(s.slice(i, end));
+    i = end;
+  }
+  return out;
+}
+
+const isHighSurrogate = (code: number) => code >= 0xd800 && code <= 0xdbff;
 
 /** Split a segment into leading whitespace, content and trailing whitespace. */
 export function splitOuterWhitespace(s: string): { lead: string; core: string; trail: string } {
@@ -118,7 +132,7 @@ export interface LLMRequestBody {
  * reply (the prompt must say so too: OpenAI requires the word "JSON").
  */
 export function buildRequestBody(
-  provider: Provider,
+  provider: LLMProvider,
   model: string,
   systemPrompt: string,
   userContent: string,
@@ -163,7 +177,7 @@ export function buildRequestBody(
  * limit. Throws when there is no usable text.
  */
 // biome-ignore lint/suspicious/noExplicitAny: provider JSON is validated field by field
-export function parseLLMResponse(provider: Provider, result: any): LLMReply {
+export function parseLLMResponse(provider: LLMProvider, result: any): LLMReply {
   if (provider === 'ollama') {
     const text = result?.message?.content;
     if (typeof text !== 'string') throw new Error('Ollama returned no text');
@@ -202,4 +216,5 @@ export function signalWithTimeout(signal: AbortSignal | undefined, timeoutMs: nu
   return ctrl.signal;
 }
 
-export const CANCELLED = 'Cancelled';
+/** Error message of a request aborted by its sender. */
+export { CANCELLED } from '../shared/messages';

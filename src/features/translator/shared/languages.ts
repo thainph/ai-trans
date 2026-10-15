@@ -34,3 +34,20 @@ export function languageName(id: string): string {
 export function otherTarget(source: string): LanguageId {
   return source === 'english' ? 'vietnamese' : 'english';
 }
+
+/** Language codes Devdy knows; other languages are sent by English name. */
+const DEVDY_CODES: Partial<Record<LanguageId, string>> = {
+  vietnamese: 'vi',
+  english: 'en',
+  japanese: 'ja',
+  chinese: 'zh',
+  korean: 'ko',
+  french: 'fr',
+  german: 'de',
+  spanish: 'es',
+};
+
+/** `targetLang` for Devdy's /v1/translate: its code, else the language name. */
+export function devdyTargetLang(id: string): string {
+  return (isLanguageId(id) && DEVDY_CODES[id]) || languageName(id);
+}

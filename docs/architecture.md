@@ -43,7 +43,7 @@ Each request/response channel is a `chrome.runtime.onMessage` listener filtered 
 
 | Target | Direction | Used for |
 |---|---|---|
-| `context-kit-translator` | content script / popup → SW | translate, grammar check, page batches, cancel, list Ollama models |
+| `context-kit-translator` | content script / popup → SW | translate, grammar check, page batches, cancel, list Ollama models, Devdy status, open the Devdy tab |
 | `context-kit-translator-page` | Translate tab → tab (frame 0) | translate / revert the whole page |
 | `context-kit-devdy` | Devdy tab → SW | status, save token, pick app, retry, remove/download failed records |
 | `context-kit-quick-send` | Slack content script → SW | "Send to Devdy" in Slack's menu |
@@ -52,7 +52,9 @@ Each request/response channel is a `chrome.runtime.onMessage` listener filtered 
 | `context-kit-toast`, `context-kit-web-toast` | SW → tab (`sendToTab()`) | in-page progress/result toasts |
 
 The Slack export started from the Slack tab streams progress over the **port** `slack-thread-export`
-(`chrome.runtime.onConnect`).
+(`chrome.runtime.onConnect`). Streamed selection translations (Devdy provider) use one **port**
+`context-kit-translator-stream` per request (content script → SW): one `translate` message in, `delta` / `segment`
+events then exactly one `done` or `error` out; disconnecting the port aborts the request.
 
 ### Sender kinds
 
@@ -67,7 +69,7 @@ Defined once in `src/shared/sender.ts`:
 
 | Channel | Allowed |
 |---|---|
-| Translator (`translator/background/sender.ts`) | any extension sender; `fetch-ollama-models` from extension pages only. Sizes are validated (text ≤ 100 000 chars, batch ≤ 200 items and ≤ 100 000 chars in total). `cancel` only reaches requests of the sending frame (`requestKey`). |
+| Translator (`translator/background/sender.ts`) | any extension sender; `fetch-ollama-models` and `devdy-status` from extension pages only; the stream port from any extension sender (`streamPortRejectReason`), its `translate` message validated like `translate` (`isStreamRequest`). Sizes are validated (text ≤ 100 000 chars, batch ≤ 200 items and ≤ 100 000 chars in total). `cancel` only reaches requests of the sending frame (`requestKey`); `translate`, `grammar-check` and `translate-batch` take an optional `requestId` for it. |
 | Devdy, offscreen | extension pages only |
 | Web → MD | `send-selection` / `open-settings` from content scripts; `send-page` / `download-page` from extension pages only. Incoming Markdown ≤ 30 × 1024 × 1024 chars (`background/limits.ts`). |
 | Slack | the export port from extension pages only; quick send only from the content script on `https://app.slack.com` |
@@ -77,7 +79,8 @@ Defined once in `src/shared/sender.ts`:
 - **Settings:** types + defaults live only in `features/translator/shared/settings.ts` (`loadSettings()` /
   `saveSettings()`). On install/update only `SEEDED_SETTINGS` are written (never API keys).
 - **LLM calls** happen only in `background/index.ts`: OpenAI chat completions, Gemini `generateContent`, Ollama
-  `/api/chat`. Timeouts: 120 s (Ollama 300 s, model list 10 s). Long selections are split into ≤ 4 000-char chunks.
+  `/api/chat`. Timeouts: 120 s (Ollama 300 s, model list 10 s). Long selections are split into ≤ 4 000-char chunks
+  (never inside a UTF-16 surrogate pair).
 - **In-page UI** (floating toolbar and result popup) uses **closed** Shadow DOM — page scripts can't read or change it.
   Every handler ignores synthetic events (`e.isTrusted`), so a page can't click for the user. Closing the popup or
   starting a new request sends `cancel`, which aborts the LLM fetch in flight.
@@ -92,7 +95,33 @@ Defined once in `src/shared/sender.ts`:
   `{"translations": [...]}` with exactly as many strings (JSON mode per provider). `parseBatchResponse()` returns one
   translation or `null` per item: wrong length → all `null`; truncated JSON → the complete leading items; the legacy
   `[N] text` format is still parsed. `null` items keep their original text, are never cached and are retried after 2 s,
-  at most 2 times per text (`RetryBudget`).
+  at most 2 times per text (`RetryBudget`). A provider may also answer `false` for an item (`BatchTranslation`): it can't take that text, so the original is kept and cached without retries.
+- **Devdy provider** (`provider: 'devdy'`, `background/devdy.ts`): no LLM call — requests go through the Devdy service
+  API (`features/devdy/api.ts`: `devdyTranslate`, `devdyTranslateStatus`, `openSettings`). Engine/model/style are
+  Devdy's; only the target language is sent (`devdyTargetLang()`: `vi en ja zh ko fr de es` codes, else the English
+  name). Grammar check throws (the G button is shown disabled), the style selectors are hidden.
+  - Selection: the content script opens the stream port; the SW splits the text into ≤ 8 000-char segments
+    (`splitForTranslation`), translates them **sequentially** over SSE, posts each `delta`, a `segment` when one part is
+    final and `done` with the full text (the popup replaces what it rendered). The non-streamed `translate` request
+    works too (JSON mode).
+  - Page (`core/devdy-pack.ts`): Devdy only translates plain text with its own prompt and serializes requests, so the
+    content script sends larger batches (≤ 5 500 chars, concurrency 1) and the SW packs each batch into one Markdown
+    document — a marker line `⟦i⟧` before each item (`packItems`), ≤ 6 500 chars per request (`planPacks`). Items that
+    contain `⟦` / `⟧` themselves or are too large are not sent and come back as `false` (*untranslatable*: the content
+    script keeps the original and caches it, no retry).
+  - `unpackItems()` reads the reply line by line. A marker may start a line, wrapped in Markdown the model may add
+    (`**⟦1⟧**`, `` `⟦1⟧` ``, `\⟦1\⟧`, `# `, `- `), with full-width digits, and may be followed by the item's text
+    (`⟦1⟧ Sign in`). Any other `⟦`/`⟧` in a line (a marker inside the text, two markers on a line) makes the current
+    item and the item it names `null`; duplicated or reordered markers make both sides `null`; text after an unknown
+    marker is dropped; missing or empty sections are `null`.
+  - The guarantee is structural: an item only gets text from a section opened by one well-formed marker for exactly
+    that item, seen once and in increasing order, with no other bracket inside — so no returned text contains a
+    marker. It can't detect a model that keeps the markers but moves one item's meaning under another item's marker.
+    It also relies on the model keeping the markers at all (Devdy's prompt says to keep Markdown, not guaranteed);
+    `null` items follow the usual retry path.
+  - A pack failing with an engine error / timeout / 429 after retries leaves its items `null`; connection, token and
+    engine-unavailable errors fail the batch. Batches carry a `requestId` and are cancellable: revert, a new run and
+    `pagehide` (navigation / tab close) send `cancel`, and the SW stops before the next pack.
 - **Ollama CORS** (`background/ollama-cors.ts`): Ollama rejects requests with an unknown `Origin` header. The extension
   installs dynamic `declarativeNetRequest` rules (ids 1–3) that remove `Origin` only on requests **made by this
   extension** (`initiatorDomains: [extension id]`) to the configured Ollama origin(s) — the saved `ollamaUrl` and the URL
@@ -157,6 +186,25 @@ Defined once in `src/shared/sender.ts`:
 - App choice (`resolveDevdy()`): a pinned port (`devdyPortPinned`) is used exclusively; otherwise the single running app;
   several apps and no pin → sends stay queued (`choose_instance`), never guessed.
 - Other features only use `features/devdy/api.ts`.
+- `/health` `features` is kept (`parseHealth()`); `supportsTranslate()` is true only when it exists and contains
+  `"translate"` (older Devdy has no `features`).
+
+### Translation (`core/translate.ts`, `core/translator.ts`, `background/translate.ts`)
+
+- `POST /v1/translate` with `{"text","targetLang"}` (text ≤ 8 000 characters after trim, checked locally first).
+  `translateJson()` (JSON mode, 120 s client timeout) and `translateStream()` (SSE over `fetch` — `EventSource` can't
+  POST or send `Authorization`; aborts after 100 s without a byte, keep-alives included). `SseParser` is a pure
+  incremental parser: chunks split anywhere, LF / CRLF / CR, multi-line `data`, `:` comments; `chunk` deltas are display
+  only, `done.text` is authoritative; pre-stream errors are JSON with a status.
+- Errors are `DevdyTranslateError` with a code from the HTTP status (`codeForStatus`: 400/415 bad request, 401, 413,
+  429 busy, 502 engine error, 503 `server stopping` vs `translation engine unavailable`, 504) or the SSE `error` message;
+  `describeTranslateError()` gives the user text, `needsDevdySettings()` marks the ones fixed in the Devdy tab (no token,
+  401, several apps).
+- `DevdyTranslator` (SW): the instance comes from `resolveDevdy()` (pinned port / single app / ambiguous → error) and is
+  cached 30 s (dropped when the token / port settings change). A connection error probes the ports again and retries
+  once; the feature check is repeated once before reporting "unsupported"; 429 is retried 3 times after 1.5 s. Aborting
+  the fetch frees Devdy's slot, but its engine still finishes that turn (FIFO on one session) — hence the sparing page
+  translation. A 20 s `chrome.runtime` ping keeps the SW alive while a request waits in Devdy's queue.
 
 ### Outbox (`features/devdy/core/outbox.ts`)
 

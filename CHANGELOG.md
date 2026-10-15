@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.1.0 — 2026-10-15 — Devdy translation provider
+
+### Added
+
+- **Devdy as a translation provider** (Translate tab → Provider **Devdy**): translates with the Devdy app's own engine,
+  model and style through its local Inbox API (`POST /v1/translate`). Requires a Devdy build with the `translate`
+  feature. The tab shows whether Devdy is found, can translate and has a valid token, with a link to the Devdy tab.
+  - Selection translations stream into the result popup; long selections are sent in ≤ 8 000-character parts.
+  - Page translation packs several texts per request (marker lines), one request at a time.
+  - Grammar check is disabled with this provider (greyed-out **G** with a tooltip); the style menus are hidden.
+  - Clear errors for Devdy not running / Inbox API off, rejected token (button to open the Devdy tab), engine
+    unavailable, busy (retried automatically) and timeouts.
+
 ## 2.0.0 — 2026-10-09 — renamed to AI Trans, TypeScript restructure
 
 The whole extension was rewritten in TypeScript and reorganised by feature. Most changes are internal; below is what

@@ -25,6 +25,7 @@
         <button type="button" class="provider-tab active" data-provider="openai">OpenAI</button>
         <button type="button" class="provider-tab" data-provider="gemini">Gemini</button>
         <button type="button" class="provider-tab" data-provider="ollama">Ollama</button>
+        <button type="button" class="provider-tab" data-provider="devdy">Devdy</button>
       </div>
     </div>
 
@@ -103,7 +104,22 @@
       </div>
     </div>
 
-    <div class="section">
+    <div id="devdySettings" class="section hidden">
+      <div class="devdy-status">
+        <span id="devdyDot" class="devdy-dot" aria-hidden="true"></span>
+        <span id="devdyStatus" class="devdy-status-text">Checking Devdy…</span>
+      </div>
+      <div class="devdy-actions">
+        <button id="devdyRefresh" type="button" class="link-btn">Refresh</button>
+        <button id="devdyOpenTab" type="button" class="link-btn">Open the Devdy tab</button>
+      </div>
+      <p class="devdy-note">
+        Translates with the Devdy app on this computer. The engine, model and style come from Devdy → Settings
+        (translation); only the target language is chosen here. Grammar check is not available.
+      </p>
+    </div>
+
+    <div id="styleSection" class="section">
       <label class="field-label">Translation Style</label>
       <div class="radio-group">
         <label class="radio-label">

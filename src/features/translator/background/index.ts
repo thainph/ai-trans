@@ -3,16 +3,27 @@
 import { mapLimit } from '../../../shared/async';
 import { errorMessage } from '../../../shared/errors';
 import { fail, ok, onTargetMessage, type Result } from '../../../shared/messaging';
+import { DevdyTranslateError, devdyTranslateStatus, needsDevdySettings, openSettings } from '../../devdy/api';
 import { buildBatchInput, buildBatchPrompt, parseBatchResponse } from '../core/batch-protocol';
 import { languageName } from '../shared/languages';
-import { TRANSLATOR_TARGET, type TranslatorRequest, type TranslatorResponses } from '../shared/messages';
+import {
+  type BatchTranslation,
+  type StreamTranslateEvent,
+  type StreamTranslateRequest,
+  TRANSLATOR_TARGET,
+  type TranslatorRequest,
+  type TranslatorResponses,
+} from '../shared/messages';
 import {
   DEFAULT_SETTINGS,
+  isProvider,
+  type LLMProvider,
   type Provider,
   SEEDED_SETTINGS,
   type TranslationStyle,
   type TranslatorSettings,
 } from '../shared/settings';
+import { DEVDY_NO_GRAMMAR, translateBatchWithDevdy, translateTextWithDevdy } from './devdy';
 import {
   buildRequestBody,
   buildTranslatePrompt,
@@ -31,6 +42,7 @@ import {
 } from './llm';
 import { syncOllamaCors } from './ollama-cors';
 import { rejectReason, requestKey } from './sender';
+import { serveStreamPort } from './stream-port';
 
 // Initialize defaults on first install, fill in missing ones on update.
 chrome.runtime.onInstalled.addListener((details) => {
@@ -103,9 +115,9 @@ onTargetMessage<TranslatorRequest>(TRANSLATOR_TARGET, (request, sender) => {
       return reply<'fetch-ollama-models'>(fetchOllamaModels(request.url).then((models) => ({ models })));
     case 'translate-batch':
       return reply<'translate-batch'>(
-        handleTranslateBatch(request.texts, request.sourceLang, request.targetLang, request.style).then(
-          (translations) => ({ translations }),
-        ),
+        cancellable(sender, request.requestId, (signal) =>
+          handleTranslateBatch(request.texts, request.sourceLang, request.targetLang, request.style, signal),
+        ).then((translations) => ({ translations })),
       );
     case 'grammar-check':
       return reply<'grammar-check'>(
@@ -113,8 +125,41 @@ onTargetMessage<TranslatorRequest>(TRANSLATOR_TARGET, (request, sender) => {
           (corrected) => ({ corrected }),
         ),
       );
+    case 'devdy-status':
+      return reply<'devdy-status'>(devdyTranslateStatus().then((status) => ({ status })));
+    case 'open-devdy-settings':
+      return reply<'open-devdy-settings'>(openSettings().then(() => ({})));
   }
 });
+
+// Streamed selection translation: one port per request, disconnect = cancel.
+chrome.runtime.onConnect.addListener((port) => {
+  serveStreamPort(port, {
+    extensionId: chrome.runtime.id,
+    translate: handleStreamTranslate,
+    errorEvent: (err) => {
+      const devdySettings = err instanceof DevdyTranslateError && needsDevdySettings(err.code);
+      return { type: 'error', error: errorMessage(err), ...(devdySettings && { devdySettings }) };
+    },
+  });
+});
+
+async function handleStreamTranslate(
+  request: StreamTranslateRequest,
+  signal: AbortSignal,
+  post: (event: StreamTranslateEvent) => void,
+): Promise<string> {
+  if ((await activeProvider()) === 'devdy') {
+    return translateTextWithDevdy(request.text, request.targetLang, {
+      signal,
+      onDelta: (delta) => post({ type: 'delta', delta }),
+      onSegment: (text) => post({ type: 'segment', text }),
+    });
+  }
+  // LLM providers answer in one piece.
+  const { style } = (await chrome.storage.sync.get({ style: DEFAULT_SETTINGS.style })) as { style: string };
+  return handleTranslate(request.text, request.sourceLang, request.targetLang, style, signal);
+}
 
 /** The payload of a successful response to request type `K`. */
 type Payload<K extends keyof TranslatorResponses> = Omit<Extract<TranslatorResponses[K], { ok: true }>, 'ok'>;
@@ -158,8 +203,14 @@ async function fetchOllamaModels(url: string): Promise<string[]> {
   }
 }
 
+/** The saved provider (default when unset or unknown). */
+async function activeProvider(): Promise<Provider> {
+  const { provider } = await chrome.storage.sync.get('provider');
+  return isProvider(provider) ? provider : DEFAULT_SETTINGS.provider;
+}
+
 interface ProviderConfig {
-  provider: Provider;
+  provider: LLMProvider;
   url: string;
   model: string;
   headers: Record<string, string>;
@@ -177,6 +228,11 @@ async function getProviderConfig(): Promise<ProviderConfig> {
     'geminiModel',
   ])) as Partial<TranslatorSettings>;
   const provider = data.provider || DEFAULT_SETTINGS.provider;
+
+  if (provider === 'devdy') {
+    // Devdy requests never go through callLLM (see ./devdy.ts).
+    throw new Error('Devdy is not an LLM API provider.');
+  }
 
   if (provider === 'ollama') {
     if (!data.ollamaModel) {
@@ -263,19 +319,23 @@ async function handleTranslateBatch(
   sourceLang: string,
   targetLang: string,
   style: string,
-): Promise<(string | null)[]> {
+  signal?: AbortSignal,
+): Promise<BatchTranslation[]> {
   if (texts.length === 0) return [];
+  if ((await activeProvider()) === 'devdy') return translateBatchWithDevdy(texts, targetLang, signal);
   const systemPrompt = buildBatchPrompt(
     languageName(sourceLang),
     languageName(targetLang),
     styleInstruction(style),
     texts.length,
   );
-  const { text: raw } = await callLLM(systemPrompt, buildBatchInput(texts), true);
+  const { text: raw } = await callLLM(systemPrompt, buildBatchInput(texts), true, signal);
   return parseBatchResponse(raw, texts);
 }
 
 async function handleGrammarCheck(text: string, signal?: AbortSignal): Promise<string> {
+  // Never fall back silently to another provider.
+  if ((await activeProvider()) === 'devdy') throw new Error(DEVDY_NO_GRAMMAR);
   const systemPrompt =
     'You are an English grammar and spelling corrector. Fix grammar, spelling, ' +
     'and punctuation while preserving the original meaning and tone. Return ONLY ' +
@@ -295,6 +355,7 @@ async function handleTranslate(
   style: string,
   signal?: AbortSignal,
 ): Promise<string> {
+  if ((await activeProvider()) === 'devdy') return translateTextWithDevdy(text, targetLang, { signal });
   const systemPrompt = buildTranslatePrompt(
     languageName(sourceLang),
     languageName(targetLang),

@@ -439,6 +439,62 @@ label {
   }
 }
 
+/* ===== Devdy provider ===== */
+.devdy-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.devdy-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--text-faint);
+}
+
+/* Same colours as .dot in shared/styles/theme.css (Devdy tab). */
+.devdy-dot.ok {
+  background: var(--accent);
+}
+
+.devdy-dot.warn {
+  background: #f59e0b;
+}
+
+.devdy-dot.error {
+  background: #dc2626;
+}
+
+.devdy-actions {
+  display: flex;
+  gap: 14px;
+  margin-top: 6px;
+}
+
+.link-btn {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--primary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.link-btn:hover {
+  text-decoration: underline;
+}
+
+.devdy-note {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
 /* ===== Misc ===== */
 .hidden {
   display: none;

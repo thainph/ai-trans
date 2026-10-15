@@ -1,6 +1,8 @@
 // Translator tab: provider settings (saved only on "Save Settings") and the
 // "Translate This Page" toggle for the active tab.
 
+import { requestOpenTab } from '../../../shared/popup-tabs';
+import { devdyStatusLine } from '../core/devdy-status';
 import {
   callTranslator,
   type PageStateResponse,
@@ -10,8 +12,10 @@ import {
 } from '../shared/messages';
 import {
   DEFAULT_SETTINGS,
+  isProvider,
   loadSettings,
   type Provider,
+  providerHasStyle,
   saveSettings,
   type TranslationStyle,
   type TranslatorSettings,
@@ -33,6 +37,12 @@ const providerTabs = document.querySelectorAll<HTMLButtonElement>('.provider-tab
 const openaiSettings = $<HTMLDivElement>('openaiSettings');
 const geminiSettings = $<HTMLDivElement>('geminiSettings');
 const ollamaSettings = $<HTMLDivElement>('ollamaSettings');
+const devdySettings = $<HTMLDivElement>('devdySettings');
+const devdyDot = $<HTMLSpanElement>('devdyDot');
+const devdyStatusEl = $<HTMLSpanElement>('devdyStatus');
+const devdyRefreshBtn = $<HTMLButtonElement>('devdyRefresh');
+const devdyOpenTabBtn = $<HTMLButtonElement>('devdyOpenTab');
+const styleSection = $<HTMLDivElement>('styleSection');
 const openaiModelSelect = $<HTMLSelectElement>('openaiModel');
 const geminiApiKeyInput = $<HTMLInputElement>('geminiApiKey');
 const toggleGeminiKeyBtn = $<HTMLButtonElement>('toggleGeminiKey');
@@ -74,7 +84,7 @@ void loadSettings(
   ollamaUrlInput.value = data.ollamaUrl;
   savedOllamaModel = data.ollamaModel;
   // switchProvider lazy-loads Ollama models only when Ollama is the active provider
-  switchProvider(data.provider);
+  switchProvider(isProvider(data.provider) ? data.provider : DEFAULT_SETTINGS.provider);
 });
 
 // Provider tabs — switch the visible section only (no persistence)
@@ -86,6 +96,10 @@ function switchProvider(provider: Provider): void {
   openaiSettings.classList.toggle('hidden', provider !== 'openai');
   geminiSettings.classList.toggle('hidden', provider !== 'gemini');
   ollamaSettings.classList.toggle('hidden', provider !== 'ollama');
+  devdySettings.classList.toggle('hidden', provider !== 'devdy');
+  // Devdy applies the style chosen in its own settings.
+  styleSection.classList.toggle('hidden', !providerHasStyle(provider));
+  if (provider === 'devdy') void loadDevdyStatus();
 
   // Fetch Ollama models only when its tab is active, and only once
   if (provider === 'ollama' && !ollamaLoaded) {
@@ -140,6 +154,29 @@ async function loadOllamaModels(url: string, selectedModel: string): Promise<voi
 function setOllamaOptions(placeholder: string, models: string[] = []): void {
   ollamaModelSelect.replaceChildren(new Option(placeholder, ''), ...models.map((name) => new Option(name, name)));
 }
+
+// Devdy: readiness is checked by the service worker (fetches to Devdy run there only).
+let devdyStatusSeq = 0;
+async function loadDevdyStatus(): Promise<void> {
+  const seq = ++devdyStatusSeq;
+  devdyDot.className = 'devdy-dot';
+  devdyStatusEl.textContent = 'Checking Devdy…';
+  devdyOpenTabBtn.style.fontWeight = '';
+  const response = await callTranslator({ type: 'devdy-status' }).catch(() => undefined);
+  if (seq !== devdyStatusSeq) return;
+  if (!response?.ok) {
+    devdyDot.className = 'devdy-dot error';
+    devdyStatusEl.textContent = (response && !response.ok && response.error) || 'Could not check Devdy.';
+    return;
+  }
+  const line = devdyStatusLine(response.status);
+  devdyDot.className = `devdy-dot ${line.tone}`;
+  devdyStatusEl.textContent = line.text;
+  devdyOpenTabBtn.style.fontWeight = line.openDevdyTab ? '700' : '';
+}
+
+devdyRefreshBtn.addEventListener('click', () => void loadDevdyStatus());
+devdyOpenTabBtn.addEventListener('click', () => requestOpenTab('devdy'));
 
 refreshOllamaBtn.addEventListener('click', () => {
   void loadOllamaModels(ollamaUrlInput.value.trim(), ollamaModelSelect.value);

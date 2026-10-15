@@ -10,12 +10,24 @@ import { isLanguageId, LANGUAGES, otherTarget } from '../shared/languages';
 import {
   callTranslator,
   type PageStateResponse,
+  type StreamTranslateEvent,
   TRANSLATOR_PAGE_TARGET,
+  TRANSLATOR_STREAM_PORT,
   type TranslatorPageRequest,
 } from '../shared/messages';
-import { loadSettings, saveSettings, type TranslationStyle } from '../shared/settings';
+import {
+  DEFAULT_SETTINGS,
+  isProvider,
+  loadSettings,
+  type Provider,
+  providerHasGrammar,
+  providerHasStyle,
+  saveSettings,
+  type TranslationStyle,
+} from '../shared/settings';
 import { detectLanguage } from './detect-language';
 import { getPageTranslationState, revertPageTranslation, translatePage } from './page-translation';
+import { randomRequestId } from './request-id';
 import { POPUP_CSS, TRIGGER_CSS } from './styles';
 
 type TextControl = HTMLInputElement | HTMLTextAreaElement;
@@ -36,7 +48,22 @@ let shadowRoot: ShadowRoot | null = null;
 let currentSelection = '';
 /** requestId of the selection translation / grammar check in flight (cancelled on close / new request). */
 let activeRequestId: string | null = null;
+/** Port of the streamed (Devdy) translation in flight; disconnecting it aborts the request. */
+let activePort: chrome.runtime.Port | null = null;
 let lastDetectedSourceLang: string | null = null;
+/** Saved provider, kept current: the toolbar is built synchronously. */
+let currentProvider: Provider = DEFAULT_SETTINGS.provider;
+
+if (isExtensionAlive()) {
+  void loadSettings('provider').then(({ provider }) => {
+    currentProvider = isProvider(provider) ? provider : DEFAULT_SETTINGS.provider;
+  });
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'sync' || !changes.provider) return;
+    const provider = changes.provider.newValue;
+    currentProvider = isProvider(provider) ? provider : DEFAULT_SETTINGS.provider;
+  });
+}
 
 // --- Selection context ---
 // Captured at mouseup because opening the popup / clicking a button collapses
@@ -127,7 +154,14 @@ function showTrigger(rect: DOMRect, anchorEl: Element | null): void {
 
   // Grammar check — only in editable fields (correct the text you are writing)
   if (isEditable) {
-    const gBtn = triggerButton('ai-translator-trigger-grammar', 'Check English Grammar', onGrammarClick);
+    const grammar = providerHasGrammar(currentProvider);
+    const gBtn = triggerButton(
+      'ai-translator-trigger-grammar',
+      grammar ? 'Check English Grammar' : 'Grammar check is not available with the Devdy provider',
+      grammar ? onGrammarClick : () => undefined,
+    );
+    // aria-disabled (not `disabled`) so the tooltip still shows on hover.
+    if (!grammar) gBtn.setAttribute('aria-disabled', 'true');
     gBtn.textContent = 'G';
     container.appendChild(gBtn);
   }
@@ -209,7 +243,7 @@ async function createPopup(
     cleanup();
     return false;
   }
-  const saved = await loadSettings('popupWidth', 'popupHeight', 'style');
+  const saved = await loadSettings('popupWidth', 'popupHeight', 'style', 'provider');
   removePopup();
 
   const host = document.createElement('div');
@@ -349,7 +383,10 @@ async function createPopup(
       }),
     );
   } else {
-    (root.getElementById('styleSelect') as HTMLSelectElement).value = saved.style;
+    const styleSelect = root.getElementById('styleSelect') as HTMLSelectElement;
+    styleSelect.value = saved.style;
+    // Devdy applies the style chosen in its own settings.
+    if (!providerHasStyle(saved.provider)) styleSelect.style.display = 'none';
 
     // Target language change → re-translate
     root.getElementById('targetSelect')!.addEventListener(
@@ -490,14 +527,22 @@ function setupDragHandle(header: HTMLElement): void {
 function cancelActiveRequest(): void {
   const requestId = activeRequestId;
   activeRequestId = null;
+  if (activePort) {
+    const port = activePort;
+    activePort = null;
+    try {
+      port.disconnect();
+    } catch {
+      // already closed
+    }
+  }
   if (requestId && isExtensionAlive()) void callTranslator({ type: 'cancel', requestId }).catch(() => undefined);
 }
 
 /** Start a cancellable request (cancelling the previous one); returns its id. */
 function newRequestId(): string {
   cancelActiveRequest();
-  // crypto.randomUUID() needs a secure context (missing on http:// pages).
-  activeRequestId = Array.from(crypto.getRandomValues(new Uint32Array(3)), (n) => n.toString(36)).join('');
+  activeRequestId = randomRequestId();
   return activeRequestId;
 }
 
@@ -520,10 +565,22 @@ function showResult(text: string): void {
   if (replaceBtn) replaceBtn.disabled = false;
 }
 
-function showError(msg: string): void {
+/** Show an error; `devdySettings` adds a button opening AI Trans → Devdy (token / instance). */
+function showError(msg: string, devdySettings = false): void {
   if (!shadowRoot) return;
   const resultEl = shadowRoot.getElementById('result')!;
   resultEl.innerHTML = `<div class="error">${escapeHtml(msg)}</div>`;
+  if (!devdySettings) return;
+  const btn = document.createElement('button');
+  btn.className = 'action-btn';
+  btn.textContent = 'Open Devdy settings';
+  btn.addEventListener(
+    'click',
+    trusted(() => {
+      if (isExtensionAlive()) void callTranslator({ type: 'open-devdy-settings' }).catch(() => undefined);
+    }),
+  );
+  resultEl.appendChild(btn);
 }
 
 function escapeHtml(str: string): string {
@@ -568,8 +625,12 @@ function translate(text: string, sourceLang: string, targetLang: string): void {
   copyBtn.disabled = true;
 
   const requestId = newRequestId();
-  void loadSettings('style').then(({ style }) => {
+  void loadSettings('style', 'provider').then(({ style, provider }) => {
     if (activeRequestId !== requestId) return;
+    if (provider === 'devdy') {
+      streamTranslation(requestId, text, sourceLang, targetLang);
+      return;
+    }
     showResponse(
       requestId,
       callTranslator({ type: 'translate', text, sourceLang, targetLang, style, requestId }),
@@ -577,6 +638,57 @@ function translate(text: string, sourceLang: string, targetLang: string): void {
       'Translation failed',
     );
   });
+}
+
+/**
+ * Streamed translation (Devdy): deltas are shown as they arrive, each finished
+ * segment of a long text replaces its deltas, and `done` replaces everything.
+ * Closing the popup / a new request disconnects the port, which aborts it.
+ */
+function streamTranslation(requestId: string, text: string, sourceLang: string, targetLang: string): void {
+  const port = chrome.runtime.connect({ name: TRANSLATOR_STREAM_PORT });
+  activePort = port;
+  const current = () => activeRequestId === requestId && activePort === port;
+  let committed = '';
+  let pending = '';
+  const finish = () => {
+    activeRequestId = null;
+    activePort = null;
+    port.disconnect();
+  };
+  const render = () => {
+    if (!shadowRoot) return;
+    shadowRoot.getElementById('result')!.textContent = committed + pending;
+  };
+  port.onMessage.addListener((event: StreamTranslateEvent) => {
+    if (!current()) return;
+    switch (event.type) {
+      case 'delta':
+        pending += event.delta;
+        render();
+        break;
+      case 'segment':
+        committed += event.text;
+        pending = '';
+        render();
+        break;
+      case 'done':
+        finish();
+        showResult(event.text);
+        break;
+      case 'error':
+        finish();
+        showError(event.error, event.devdySettings === true);
+        break;
+    }
+  });
+  port.onDisconnect.addListener(() => {
+    if (!current()) return;
+    activeRequestId = null;
+    activePort = null;
+    showError('Translation stopped: the extension was reloaded or the connection closed.');
+  });
+  port.postMessage({ type: 'translate', text, sourceLang, targetLang });
 }
 
 // --- Grammar Check ---

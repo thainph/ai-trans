@@ -7,7 +7,9 @@
 import { mapLimit } from '../../../shared/async';
 import { errorMessage } from '../../../shared/errors';
 import { isExtensionAlive } from '../../../shared/runtime';
+import { DEVDY_BATCH_CHARS } from '../core/devdy-pack';
 import {
+  BATCH_CHARS,
   createTextBatches,
   fitsInRequest,
   needsTranslation,
@@ -19,9 +21,10 @@ import {
 } from '../core/page-text';
 import { isElementVisible, isInViewport } from '../core/visibility';
 import { otherTarget } from '../shared/languages';
-import { callTranslator, type PageTranslationState } from '../shared/messages';
+import { type BatchTranslation, CANCELLED, callTranslator, type PageTranslationState } from '../shared/messages';
 import { loadSettings, type TranslationStyle } from '../shared/settings';
 import { detectLanguage } from './detect-language';
+import { randomRequestId } from './request-id';
 import { LOADING_CSS } from './styles';
 
 interface Langs {
@@ -47,6 +50,8 @@ const originalTexts = new WeakOriginals<Text>();
 let generation = 0;
 let langs: Langs | null = null;
 let concurrency = 1;
+/** Characters per batch request (larger for Devdy: fewer, serialized requests). */
+let batchChars = BATCH_CHARS;
 const cache = new TranslationCache();
 const retries = new RetryBudget();
 let lastPrune = 0;
@@ -112,11 +117,37 @@ function collectTextNodes(root: Node): Text[] {
 
 const isVisibleText = (node: Text) => !!node.parentElement && isElementVisible(node.parentElement);
 
-async function requestBatch(texts: string[], l: Langs): Promise<(string | null)[]> {
-  const response = await callTranslator({ type: 'translate-batch', texts, ...l });
-  if (response?.ok && response.translations.length === texts.length) return response.translations;
-  throw new Error((response && !response.ok && response.error) || 'Translation failed');
+/** requestIds of the batches in flight (cancelled on revert, a new run or when the page goes away). */
+const activeBatches = new Set<string>();
+
+class BatchCancelled extends Error {}
+
+async function requestBatch(texts: string[], l: Langs): Promise<BatchTranslation[]> {
+  const requestId = randomRequestId();
+  activeBatches.add(requestId);
+  try {
+    const response = await callTranslator({ type: 'translate-batch', texts, requestId, ...l });
+    if (response?.ok && response.translations.length === texts.length) return response.translations;
+    const error = (response && !response.ok && response.error) || 'Translation failed';
+    if (error === CANCELLED) throw new BatchCancelled(error);
+    throw new Error(error);
+  } finally {
+    activeBatches.delete(requestId);
+  }
 }
+
+/** Abort the batches in flight: the SW stops before sending their remaining requests. */
+function cancelBatches(): void {
+  const ids = [...activeBatches];
+  activeBatches.clear();
+  if (!isExtensionAlive()) return;
+  for (const requestId of ids) void callTranslator({ type: 'cancel', requestId }).catch(() => undefined);
+}
+
+// Navigation / tab close: don't let the SW keep translating for a page that is gone.
+addEventListener('pagehide', () => {
+  if (activeBatches.size > 0) cancelBatches();
+});
 
 function applyTranslation(node: Text, source: string, translation: string): void {
   // The page changed the text meanwhile → leave it alone.
@@ -158,7 +189,7 @@ async function translateNodes(
     else bySource.set(source, [node]);
   }
 
-  const batches = createTextBatches([...bySource.keys()]);
+  const batches = createTextBatches([...bySource.keys()], batchChars);
   const deferred: Text[] = [];
   const retry: Text[] = [];
   let done = 0;
@@ -170,7 +201,7 @@ async function translateNodes(
         for (const source of batch) deferred.push(...bySource.get(source)!);
         return;
       }
-      let translations: (string | null)[];
+      let translations: BatchTranslation[];
       try {
         translations = await requestBatch(batch, l);
       } catch (err) {
@@ -180,6 +211,12 @@ async function translateNodes(
       if (gen !== generation) return;
       batch.forEach((source, i) => {
         const translation = translations[i];
+        if (translation === false) {
+          // The provider can't take this text: keep it as it is, without retrying.
+          cache.set(source, source);
+          for (const node of bySource.get(source)!) applyTranslation(node, source, source);
+          return;
+        }
         if (translation == null) {
           if (retries.fail(source)) retry.push(...bySource.get(source)!);
           return;
@@ -217,6 +254,7 @@ export async function translatePage(): Promise<void> {
   }
 
   stopObservers();
+  cancelBatches();
   const gen = ++generation;
   pageTranslationState = 'translating';
   showLoading();
@@ -241,8 +279,10 @@ export async function translatePage(): Promise<void> {
   }
   const l: Langs = { sourceLang, targetLang, style: settings.style };
   langs = l;
-  concurrency = settings.provider === 'ollama' ? 2 : 5;
-  cache.use(`${sourceLang}|${targetLang}|${settings.style}`);
+  // Devdy runs one translation at a time on a session shared with the app: be sparing.
+  concurrency = settings.provider === 'devdy' ? 1 : settings.provider === 'ollama' ? 2 : 5;
+  batchChars = settings.provider === 'devdy' ? DEVDY_BATCH_CHARS : BATCH_CHARS;
+  cache.use(`${settings.provider}|${sourceLang}|${targetLang}|${settings.style}`);
   retries.clear();
 
   // Viewport first; the rest when it gets close (and content added later).
@@ -257,6 +297,11 @@ export async function translatePage(): Promise<void> {
     if (gen === generation) requeue(leftovers);
   } catch (err) {
     if (gen !== generation) return;
+    if (err instanceof BatchCancelled) {
+      hideLoading();
+      pageTranslationState = originalTexts.size > 0 ? 'translated' : 'idle';
+      return;
+    }
     console.warn('AI Translator: batch failed', errorMessage(err));
     showLoadingError(`Error: ${errorMessage(err)}`);
     stopObservers();
@@ -270,6 +315,7 @@ export async function translatePage(): Promise<void> {
 
 export function revertPageTranslation(): void {
   generation++;
+  cancelBatches();
   stopObservers();
   hideLoading();
   originalTexts.restoreAll((node, original) => {
@@ -382,7 +428,7 @@ async function flushPendingNodes(): Promise<void> {
     const leftovers = await translateNodes(nodes, langs, gen, { limiter });
     if (gen === generation) requeue(leftovers);
   } catch (err) {
-    console.warn('AI Translator: dynamic translate failed', errorMessage(err));
+    if (!(err instanceof BatchCancelled)) console.warn('AI Translator: dynamic translate failed', errorMessage(err));
   } finally {
     flushing = false;
     if (gen === generation && pendingNodes.size > 0) scheduleFlush(FLUSH_DELAY_MS);

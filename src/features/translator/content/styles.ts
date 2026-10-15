@@ -177,6 +177,22 @@ export const POPUP_CSS = `
     font-size: 13px;
   }
 
+  .action-btn {
+    margin-top: 8px;
+    padding: 4px 10px;
+    background: #ffffff;
+    color: #2563eb;
+    border: 1px solid #2563eb;
+    border-radius: 5px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+
+  .action-btn:hover {
+    background: #eff6ff;
+  }
+
   .footer {
     display: flex;
     align-items: center;
@@ -352,6 +368,14 @@ export const TRIGGER_CSS = `
   .ai-translator-trigger-grammar:hover {
     background: rgba(34, 197, 94, 0.35);
     color: #86efac;
+  }
+
+  /* Not available with the current provider (tooltip says why) */
+  .ai-translator-trigger[aria-disabled="true"],
+  .ai-translator-trigger[aria-disabled="true"]:hover {
+    background: transparent;
+    color: #64748b;
+    cursor: not-allowed;
   }
 
   /* Teal accent for Send to Devdy */

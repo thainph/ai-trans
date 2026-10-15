@@ -1,9 +1,10 @@
-// Client for Devdy's local Inbox API (contract: devdy docs/slack-thread-inbox-api.md).
+// Client for Devdy's local Inbox API (contract: devdy docs/inbox-api.md).
 //
-//   GET  /health            → {"app":"devdy","version":"…","api":1}   (no token)
+//   GET  /health            → {"app":"devdy","version":"…","api":1,"features":["translate"]}   (no token)
 //   GET  /v1/projects       → [{"id","name"}]                         (Bearer token)
 //   POST /v1/slack-threads  → 201 {"id","status":"created"} | 200 {"id","status":"updated"}
 //   POST /v1/web-pages      → same (web page / selection captures)
+//   POST /v1/translate      → see core/translate.ts (only when features has "translate")
 //
 // Loopback only, on the first free port in 47821…47830. Must be called from an
 // extension context (service worker / offscreen): Devdy only accepts a
@@ -29,6 +30,27 @@ export interface DevdyHealth {
   app: 'devdy';
   version?: string;
   api?: number;
+  /** Optional features (e.g. "translate"); missing on older Devdy builds. */
+  features?: string[];
+}
+
+/** Devdy feature flag of `POST /v1/translate`. */
+export const TRANSLATE_FEATURE = 'translate';
+
+/** Translation is available only when /health lists the "translate" feature. */
+export function supportsTranslate(health: DevdyHealth | null | undefined): boolean {
+  return !!health?.features?.includes(TRANSLATE_FEATURE);
+}
+
+/** Keep the /health fields we use, with their types checked. */
+export function parseHealth(j: unknown): DevdyHealth | null {
+  if (!j || typeof j !== 'object' || (j as { app?: unknown }).app !== 'devdy') return null;
+  const { version, api, features } = j as Record<string, unknown>;
+  const health: DevdyHealth = { app: 'devdy' };
+  if (typeof version === 'string') health.version = version;
+  if (typeof api === 'number') health.api = api;
+  if (Array.isArray(features)) health.features = features.filter((f): f is string => typeof f === 'string');
+  return health;
 }
 
 export interface DevdyProject {
@@ -62,9 +84,11 @@ export function isRetryable(o: SendOutcome): boolean {
   );
 }
 
-const base = (port: number) => `http://127.0.0.1:${port}`;
+/** Base URL of the Devdy inbox on `port`. */
+export const base = (port: number): string => `http://127.0.0.1:${port}`;
 
-async function readError(res: Response): Promise<string> {
+/** The `error` of a Devdy JSON error body, or `HTTP <status>`. */
+export async function readError(res: Response): Promise<string> {
   try {
     const j = (await res.json()) as { error?: unknown };
     if (typeof j?.error === 'string' && j.error) return j.error;
@@ -79,8 +103,7 @@ export async function checkHealth(port: number, fetchFn: FetchFn = fetch): Promi
   try {
     const res = await fetchFn(`${base(port)}/health`, { signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS) });
     if (!res.ok) return null;
-    const j = (await res.json()) as Partial<DevdyHealth>;
-    return j?.app === 'devdy' ? (j as DevdyHealth) : null;
+    return parseHealth(await res.json());
   } catch {
     return null;
   }
