@@ -7,7 +7,7 @@ A Chrome extension (Manifest V3) that merges three older extensions (`ai-transla
 
 | Tab | What it does |
 |---|---|
-| 🌐 **Translate** | Translate the selected text or a whole page with OpenAI, Gemini or Ollama (local models); fix English grammar while you type. |
+| 🌐 **Translate** | Translate the selected text or a whole page with OpenAI, Gemini, Ollama (local models) or the Devdy app; fix English grammar while you type. |
 | 📄 **Web → MD** | Turn the current page into Markdown: copy it, download it (`.md`, or a `.zip` with images) or send it to Devdy. |
 | 💬 **Slack** | Export a Slack thread to Markdown (with reactions and attachments), or send it straight to Devdy. |
 | ➤ **Devdy** | Connect to the Devdy app on your machine: token, app choice, delivery queue. |
@@ -47,7 +47,7 @@ tab directly.
 
 ### 🌐 Translate
 
-**Setup (once, in the Translate tab):** pick a **Provider** (OpenAI / Gemini / Ollama), paste the API key, choose a
+**Setup (once, in the Translate tab):** pick a **Provider** (OpenAI / Gemini / Ollama / Devdy), paste the API key, choose a
 model, a **Translation Style** (Casual / Polite / Business) and a **Target Language** (Vietnamese by default), then click
 **Save Settings**.
 
@@ -72,6 +72,31 @@ of iframes.
 2. Translate tab → Provider **Ollama** → **Ollama URL** (default `http://localhost:11434`) → pick a model (the list is
    loaded from Ollama automatically; use the refresh button next to **Model** to reload it) → **Save Settings**.
 3. No need to set `OLLAMA_ORIGINS`: the extension removes the `Origin` header on its own requests to that Ollama URL.
+
+**Using Devdy as the translation provider:**
+
+Requires a Devdy build with the **translate** feature (its `GET /health` lists `"translate"` in `features`; older Devdy
+builds don't have it and the Translate tab says so).
+
+1. Set up the Devdy connection first (Devdy tab: token, app choice — see [➤ Devdy](#-devdy)).
+2. Translate tab → Provider **Devdy** → **Save Settings**. The tab shows whether Devdy was found, can translate and has a
+   valid token, with a link to the Devdy tab when something is missing there.
+3. No API key or model here: Devdy translates with the engine, model and style set in **Devdy → Settings**; AI Trans only
+   picks the **Target Language** (Vietnamese, English, Japanese, Chinese, Korean, French, German and Spanish are sent
+   as language codes, other languages by name). The style menus are hidden.
+
+With Devdy:
+
+- The selection translation appears **progressively** in the result popup. Selections over 8 000 characters are split
+  at paragraph/sentence boundaries and translated one part after another.
+- **G (grammar check) is not available** — the button is greyed out (its tooltip says why); AI Trans never switches to
+  another provider behind your back.
+- **Page translation** packs many page texts into each request (Devdy translates one request at a time, shared with the
+  Devdy app), so it is slower than with an API provider; texts that come back unusable are retried, then left as they
+  are.
+- Errors say what to do: *Devdy is not running or its Inbox API is turned off*, token rejected (with an **Open Devdy
+  settings** button), engine unavailable (check the translation settings in Devdy), busy (retried automatically),
+  timeout.
 
 ### 📄 Web → MD
 
@@ -157,7 +182,8 @@ pick one, the extension doesn't guess: sends wait in the queue.
 
 ## Privacy & security
 
-- **Text to translate** goes only to the provider you chose (OpenAI, Gemini, or Ollama on your machine). API keys are
+- **Text to translate** goes only to the provider you chose (OpenAI, Gemini, Ollama on your machine, or the Devdy app on
+  your machine, which uses its own engine). API keys are
   stored in the browser's `chrome.storage.sync`.
 - **Devdy** is only contacted on `127.0.0.1` (your machine); its token lives in `chrome.storage.local`.
 - **Slack:** the export runs inside your Slack tab with your session; the Slack token never leaves the page.
@@ -171,7 +197,7 @@ pick one, the extension doesn't guess: sends wait in the queue.
 
 | What | Limit |
 |---|---|
-| Selection translation | 100 000 characters per request |
+| Selection translation | 100 000 characters per request (Devdy: sent in parts of ≤ 8 000 characters) |
 | Page translation | segments over 4 000 characters are skipped; content loaded later: at most 20 requests/minute |
 | Slack attachments (export) | 25 MB per file, 200 MB total |
 | Slack → Devdy | 45 MB total, 199 files |
