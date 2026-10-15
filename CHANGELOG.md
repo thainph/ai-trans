@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Slack: the **Send to Devdy** item in Slack's message menu always shows the same ➤ icon. It used to inherit the icon
+  of whichever Slack row it was cloned from, so it changed from menu to menu.
+
 ## 2.1.0 — 2026-10-15 — Devdy translation provider
 
 ### Added

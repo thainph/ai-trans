@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { DEVDY_ICON_ATTR } from '../src/features/slack/content/devdy-icon';
 import {
   FALLBACK_HIGHLIGHT_ATTR,
   findHighlighted,
@@ -167,6 +168,84 @@ describe('injectMenuItem', () => {
   it('leaves menus without items alone', () => {
     document.body.innerHTML = `<div role="menu"><p>Loading…</p></div>`;
     expect(injectMenuItem(findMenu(document.body)!, 'Send to Devdy', () => {})).toBeNull();
+  });
+});
+
+describe('icon of the injected row', () => {
+  const menuWith = (rowInner: string) => `
+    <div role="menu" class="c-menu" data-qa="menu">
+      <div role="presentation" class="c-menu_item__li">
+        <button role="menuitem" class="c-menu_item__button" data-qa="menu_item_button">${rowInner}</button>
+      </div>
+    </div>`;
+  const svgIcon = (d: string) =>
+    `<svg data-qa="${d}" viewBox="0 0 20 20" width="20" height="20" fill="currentColor"><path d="M${d}"/></svg>`;
+
+  const variants: Record<string, string> = {
+    'an svg icon in the icon slot': `<div class="c-menu_item__icon" data-qa="menu_item_icon">${svgIcon('1 1h2')}</div>
+       <span class="c-menu_item__label">Reply in thread</span>`,
+    'an icon-font span': `<span class="c-menu_item__icon"><i class="c-icon c-icon--reply" type="reply" aria-hidden="true"></i></span>
+       <span class="c-menu_item__label">Reply in thread</span>`,
+    'a text glyph in the icon slot': `<span class="c-menu_item__icon">↩</span><span class="c-menu_item__label">Reply</span>`,
+    'an img icon': `<img class="c-emoji" src="https://a.slack-edge.com/x.png" alt=":+1:" width="18" height="18">
+       <span class="c-menu_item__label">React</span>`,
+    'a bare c-icon outside any slot': `<span class="c-icon c-icon--bookmark" type="bookmark" aria-hidden="true"></span>
+       <span class="c-menu_item__label">Save for later</span>`,
+    'two icons (leading + trailing)': `<div class="c-menu_item__icon">${svgIcon('2 2h2')}</div>
+       <span class="c-menu_item__label">Remind me</span>${svgIcon('3 3h3')}`,
+    'no icon at all': `<span class="c-menu_item__label">Copy link</span>`,
+  };
+
+  for (const [name, inner] of Object.entries(variants)) {
+    it(`always shows exactly our ➤ icon (template row with ${name})`, () => {
+      document.body.innerHTML = menuWith(inner);
+      const row = injectMenuItem(findMenu(document.body)!, 'Send to Devdy', () => {})!;
+      const icons = row.querySelectorAll('svg, img, i, .c-icon, [class*="c-icon--"]');
+      expect(icons).toHaveLength(1);
+      const icon = icons[0]!;
+      expect(icon.hasAttribute(DEVDY_ICON_ATTR)).toBe(true);
+      expect(icon.getAttribute('aria-hidden')).toBe('true');
+      expect(icon.getAttribute('stroke')).toBe('currentColor');
+      expect(icon.querySelector('polygon')?.getAttribute('points')).toBe('22 2 15 22 11 13 2 9 22 2');
+      expect(row.textContent?.trim()).toBe('Send to Devdy');
+      expect(row.querySelector('.c-menu_item__label')?.textContent).toBe('Send to Devdy');
+      // The icon comes before the label, whatever the template looked like.
+      const label = row.querySelector('.c-menu_item__label')!;
+      expect(icon.compareDocumentPosition(label) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+  }
+
+  it("reuses Slack's icon slot and matches the template icon size", () => {
+    document.body.innerHTML = menuWith(variants['an svg icon in the icon slot']!);
+    const row = injectMenuItem(findMenu(document.body)!, 'Send to Devdy', () => {})!;
+    const slot = row.querySelector('.c-menu_item__icon')!;
+    expect(slot.children).toHaveLength(1);
+    expect(slot.firstElementChild?.hasAttribute(DEVDY_ICON_ATTR)).toBe(true);
+    expect(slot.firstElementChild?.getAttribute('width')).toBe('20');
+  });
+
+  it('adds the icon before the label when the template has no icon slot', () => {
+    document.body.innerHTML = menuWith(variants['no icon at all']!);
+    const row = injectMenuItem(findMenu(document.body)!, 'Send to Devdy', () => {})!;
+    const label = row.querySelector('.c-menu_item__label')!;
+    expect(label.previousElementSibling?.querySelector(`[${DEVDY_ICON_ATTR}]`)).not.toBeNull();
+    expect(row.querySelector(`[${DEVDY_ICON_ATTR}]`)?.getAttribute('width')).toBe('16');
+  });
+
+  it('gives the same icon to every menu, whatever the template row', () => {
+    const shapes = Object.values(variants).map((inner) => {
+      document.body.innerHTML = menuWith(inner);
+      const row = injectMenuItem(findMenu(document.body)!, 'Send to Devdy', () => {})!;
+      return row.querySelector(`[${DEVDY_ICON_ATTR}]`)!.innerHTML;
+    });
+    expect(new Set(shapes).size).toBe(1);
+  });
+
+  it('adds an icon to plain ARIA menus too', () => {
+    document.body.innerHTML = `<ul role="menu"><li role="menuitem">Mark unread</li></ul>`;
+    const row = injectMenuItem(findMenu(document.body)!, 'Send to Devdy', () => {})!;
+    expect(row.querySelectorAll('svg')).toHaveLength(1);
+    expect(row.textContent).toBe('Send to Devdy');
   });
 });
 
