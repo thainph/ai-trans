@@ -1,7 +1,11 @@
 // Translator settings in chrome.storage.sync: the single source of truth for
 // keys, types and defaults (background, content script and popup).
 
-export type Provider = 'openai' | 'gemini' | 'ollama';
+/** `devdy`: Devdy's local Inbox API (engine, model and style are chosen in Devdy). */
+export const PROVIDERS = ['openai', 'gemini', 'ollama', 'devdy'] as const;
+export type Provider = (typeof PROVIDERS)[number];
+/** Providers called directly with an LLM API. */
+export type LLMProvider = Exclude<Provider, 'devdy'>;
 export type TranslationStyle = 'casual' | 'polite' | 'business';
 
 export interface TranslatorSettings {
@@ -34,6 +38,15 @@ export const DEFAULT_SETTINGS: TranslatorSettings = {
   popupWidth: 340,
   popupHeight: 0,
 };
+
+export function isProvider(v: unknown): v is Provider {
+  return (PROVIDERS as readonly unknown[]).includes(v);
+}
+
+/** Devdy applies its own translation style: the style setting is ignored. */
+export const providerHasStyle = (provider: Provider): boolean => provider !== 'devdy';
+/** Devdy has no grammar check. */
+export const providerHasGrammar = (provider: Provider): boolean => provider !== 'devdy';
 
 /** Defaults written to storage on install/update (never secrets). */
 export const SEEDED_SETTINGS: Partial<TranslatorSettings> = {

@@ -7,7 +7,9 @@
 import { mapLimit } from '../../../shared/async';
 import { errorMessage } from '../../../shared/errors';
 import { isExtensionAlive } from '../../../shared/runtime';
+import { DEVDY_BATCH_CHARS } from '../core/devdy-pack';
 import {
+  BATCH_CHARS,
   createTextBatches,
   fitsInRequest,
   needsTranslation,
@@ -47,6 +49,8 @@ const originalTexts = new WeakOriginals<Text>();
 let generation = 0;
 let langs: Langs | null = null;
 let concurrency = 1;
+/** Characters per batch request (larger for Devdy: fewer, serialized requests). */
+let batchChars = BATCH_CHARS;
 const cache = new TranslationCache();
 const retries = new RetryBudget();
 let lastPrune = 0;
@@ -158,7 +162,7 @@ async function translateNodes(
     else bySource.set(source, [node]);
   }
 
-  const batches = createTextBatches([...bySource.keys()]);
+  const batches = createTextBatches([...bySource.keys()], batchChars);
   const deferred: Text[] = [];
   const retry: Text[] = [];
   let done = 0;
@@ -241,8 +245,10 @@ export async function translatePage(): Promise<void> {
   }
   const l: Langs = { sourceLang, targetLang, style: settings.style };
   langs = l;
-  concurrency = settings.provider === 'ollama' ? 2 : 5;
-  cache.use(`${sourceLang}|${targetLang}|${settings.style}`);
+  // Devdy runs one translation at a time on a session shared with the app: be sparing.
+  concurrency = settings.provider === 'devdy' ? 1 : settings.provider === 'ollama' ? 2 : 5;
+  batchChars = settings.provider === 'devdy' ? DEVDY_BATCH_CHARS : BATCH_CHARS;
+  cache.use(`${settings.provider}|${sourceLang}|${targetLang}|${settings.style}`);
   retries.clear();
 
   // Viewport first; the rest when it gets close (and content added later).

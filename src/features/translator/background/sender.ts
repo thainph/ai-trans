@@ -2,7 +2,13 @@
 // request, plus request validation (pure → unit-tested).
 
 import { isExtensionPage, isExtensionSender } from '../../../shared/sender';
-import { MAX_BATCH_ITEMS, MAX_TEXT_CHARS, type TranslatorRequest } from '../shared/messages';
+import {
+  MAX_BATCH_ITEMS,
+  MAX_TEXT_CHARS,
+  type StreamTranslateRequest,
+  TRANSLATOR_STREAM_PORT,
+  type TranslatorRequest,
+} from '../shared/messages';
 
 const isRequestId = (id: unknown) => typeof id === 'string' && id.length > 0 && id.length <= 64;
 
@@ -23,6 +29,11 @@ export function rejectReason(
     case 'fetch-ollama-models':
       if (!isExtensionPage(sender, extensionId)) return 'Not allowed from a web page';
       return typeof request.url === 'string' ? null : 'Invalid request';
+    case 'devdy-status':
+      return isExtensionPage(sender, extensionId) ? null : 'Not allowed from a web page';
+    case 'open-devdy-settings':
+      // Only switches the popup to the Devdy tab (offered after a token error).
+      return null;
     case 'translate':
     case 'grammar-check':
       if (request.requestId !== undefined && !isRequestId(request.requestId)) return 'Invalid request';
@@ -41,4 +52,28 @@ export function rejectReason(
     default:
       return 'Unknown request';
   }
+}
+
+/** Who may open the streaming port: any context of this extension (content scripts included). */
+export function streamPortRejectReason(
+  port: { name: string; sender?: chrome.runtime.MessageSender },
+  extensionId: string,
+): string | null {
+  if (port.name !== TRANSLATOR_STREAM_PORT) return 'Unknown port';
+  return port.sender && isExtensionSender(port.sender, extensionId) ? null : 'Unknown sender';
+}
+
+/** A well-formed `translate` message on the streaming port (same text limit as `translate`). */
+export function isStreamRequest(msg: unknown): msg is StreamTranslateRequest {
+  if (!msg || typeof msg !== 'object') return false;
+  const m = msg as Record<string, unknown>;
+  return (
+    m.type === 'translate' &&
+    typeof m.text === 'string' &&
+    m.text.length <= MAX_TEXT_CHARS &&
+    typeof m.sourceLang === 'string' &&
+    m.sourceLang.length <= 64 &&
+    typeof m.targetLang === 'string' &&
+    m.targetLang.length <= 64
+  );
 }

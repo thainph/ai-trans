@@ -2,6 +2,7 @@
 //
 // content script / popup ─TRANSLATOR_TARGET─▶ background   (LLM calls)
 // popup ─TRANSLATOR_PAGE_TARGET─▶ content script  (full-page translation)
+// content script ─port TRANSLATOR_STREAM_PORT─▶ background  (streamed selection translation)
 
 import type { Command, Result } from '../../../shared/messaging';
 import type { TranslationStyle } from './settings';
@@ -27,7 +28,11 @@ export type TranslatorRequest =
   | { target: typeof TRANSLATOR_TARGET; type: 'grammar-check'; text: string; requestId?: string }
   /** Abort the sender frame's request `requestId` (no-op when already done). */
   | { target: typeof TRANSLATOR_TARGET; type: 'cancel'; requestId: string }
-  | { target: typeof TRANSLATOR_TARGET; type: 'fetch-ollama-models'; url: string };
+  | { target: typeof TRANSLATOR_TARGET; type: 'fetch-ollama-models'; url: string }
+  /** Devdy provider: is Devdy running, able to translate, with a valid token? (Translate tab) */
+  | { target: typeof TRANSLATOR_TARGET; type: 'devdy-status' }
+  /** Open AI Trans on the Devdy tab (token / instance choice), e.g. after a 401. */
+  | { target: typeof TRANSLATOR_TARGET; type: 'open-devdy-settings' };
 
 /** Response type per request type. */
 export interface TranslatorResponses {
@@ -37,7 +42,39 @@ export interface TranslatorResponses {
   'grammar-check': Result<{ corrected: string }>;
   cancel: Result;
   'fetch-ollama-models': Result<{ models: string[] }>;
+  'devdy-status': Result<{ status: DevdyStatusView }>;
+  'open-devdy-settings': Result;
 }
+
+/** Devdy translation readiness as shown in the Translate tab. */
+export interface DevdyStatusView {
+  state: 'not_running' | 'choose_instance' | 'unsupported' | 'no_token' | 'unauthorized' | 'ready';
+  port?: number;
+  version?: string;
+}
+
+/**
+ * Streamed selection translation (Devdy provider): one port per request.
+ * The content script posts one `translate` message; disconnecting aborts it.
+ */
+export const TRANSLATOR_STREAM_PORT = 'context-kit-translator-stream';
+
+export interface StreamTranslateRequest {
+  type: 'translate';
+  text: string;
+  sourceLang: string;
+  targetLang: string;
+}
+
+export type StreamTranslateEvent =
+  /** New text of the segment being translated (display only). */
+  | { type: 'delta'; delta: string }
+  /** A segment of a long text is finished: its final text replaces its deltas. */
+  | { type: 'segment'; text: string }
+  /** Authoritative full translation. */
+  | { type: 'done'; text: string }
+  /** `devdySettings`: the fix is in AI Trans → Devdy (token / instance choice). */
+  | { type: 'error'; error: string; devdySettings?: boolean };
 
 export type PageTranslationState = 'idle' | 'translating' | 'translated';
 

@@ -1,6 +1,6 @@
 // Pure helpers for the translator's LLM calls (no chrome.* APIs → unit-testable).
 
-import type { Provider } from '../shared/settings';
+import type { LLMProvider } from '../shared/settings';
 
 /** Max characters sent to the model in one request when translating a selection. */
 export const CHUNK_CHARS = 4000;
@@ -118,7 +118,7 @@ export interface LLMRequestBody {
  * reply (the prompt must say so too: OpenAI requires the word "JSON").
  */
 export function buildRequestBody(
-  provider: Provider,
+  provider: LLMProvider,
   model: string,
   systemPrompt: string,
   userContent: string,
@@ -163,7 +163,7 @@ export function buildRequestBody(
  * limit. Throws when there is no usable text.
  */
 // biome-ignore lint/suspicious/noExplicitAny: provider JSON is validated field by field
-export function parseLLMResponse(provider: Provider, result: any): LLMReply {
+export function parseLLMResponse(provider: LLMProvider, result: any): LLMReply {
   if (provider === 'ollama') {
     const text = result?.message?.content;
     if (typeof text !== 'string') throw new Error('Ollama returned no text');
