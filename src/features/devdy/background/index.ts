@@ -15,7 +15,7 @@ import {
 import { DevdyOutbox, type DevdySettings, isQueued, type OutboxEntry, type OutboxState } from '../core/outbox';
 import { DEVDY_TARGET, type DevdyFlushResult, type DevdyRequest, type DevdyStatus } from '../messages';
 
-const KEYS = {
+export const KEYS = {
   token: 'devdyToken',
   port: 'devdyPort',
   pinned: 'devdyPortPinned',
@@ -24,7 +24,8 @@ const KEYS = {
 } as const;
 const RETRY_ALARM = 'devdy-outbox-retry';
 
-async function loadSettings(): Promise<DevdySettings> {
+/** Token and instance choice (Devdy tab). */
+export async function loadSettings(): Promise<DevdySettings> {
   const s = await chrome.storage.local.get([KEYS.token, KEYS.port, KEYS.pinned]);
   return {
     token: typeof s[KEYS.token] === 'string' && s[KEYS.token] ? (s[KEYS.token] as string) : undefined,
