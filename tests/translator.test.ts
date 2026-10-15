@@ -177,3 +177,20 @@ describe('DEFAULT_SETTINGS', () => {
     });
   });
 });
+
+describe('splitForTranslation: surrogate pairs', () => {
+  it('never cuts an emoji in half', () => {
+    // 3999 'a' + emoji: a hard cut at 4000 would land between the two halves.
+    const text = `${'a'.repeat(3999)}😀${'b'.repeat(10)}`;
+    const parts = splitForTranslation(text, 4000);
+    expect(parts.join('')).toBe(text);
+    expect(parts[0]).toBe('a'.repeat(3999));
+    expect(parts[1]!.startsWith('😀')).toBe(true);
+    for (const p of parts) {
+      expect(p.length).toBeLessThanOrEqual(4000);
+      expect(p).not.toMatch(/^[\uDC00-\uDFFF]|[\uD800-\uDBFF]$/);
+    }
+    const emojis = '😀'.repeat(5000);
+    for (const p of splitForTranslation(emojis, 4001)) expect(p).not.toMatch(/^[\uDC00-\uDFFF]|[\uD800-\uDBFF]$/);
+  });
+});
