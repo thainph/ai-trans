@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.2.0 — 2026-10-16 — Slack threads sent to Devdy as links, Web → MD export only
 
 Needs a Devdy build whose Inbox API lists `"slack-thread-link"` in `GET /health` `features` (Inbox API 2026-10-16) to
 send Slack threads.
