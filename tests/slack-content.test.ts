@@ -8,10 +8,10 @@ import {
   findMessageElement,
   INJECTED_ATTR,
   injectMenuItem,
-  messageLink,
   messageTs,
+  threadLinkFor,
 } from '../src/features/slack/content/message-dom';
-import { toastFor } from '../src/features/slack/core/quick-send';
+import { toastForDelivery } from '../src/features/slack/core/quick-send';
 
 // Fixtures approximate Slack's web client markup (data-qa hooks + c-* classes).
 const CHANNEL_URL = 'https://app.slack.com/client/T0TEAM/C0DEV1234';
@@ -91,31 +91,62 @@ describe('findMessageElement / messageTs', () => {
   });
 });
 
-describe('messageLink', () => {
-  it('prefers the timestamp permalink', () => {
+describe('threadLinkFor', () => {
+  const hosts = (teamId: string | undefined) => (teamId === 'T0TEAM' ? 'acme.slack.com' : null);
+
+  it('uses the timestamp permalink', () => {
     document.body.innerHTML = channelMessage;
     const msg = findMessageElement(document.getElementById('body1'))!;
-    expect(messageLink(msg, CHANNEL_URL)).toBe('https://acme.slack.com/archives/C0DEV1234/p1700000000000100');
+    expect(threadLinkFor(msg, CHANNEL_URL, hosts)).toEqual({
+      ok: true,
+      url: 'https://acme.slack.com/archives/C0DEV1234/p1700000000000100',
+    });
   });
 
-  it('builds a client thread link from ts + channel id when there is no permalink', () => {
+  it('keeps thread_ts/cid of a reply permalink (normalized)', () => {
+    document.body.innerHTML = channelMessage.replace(
+      'p1700000000000100"',
+      'p1700000100000200?thread_ts=1700000000.000100&amp;cid=C0DEV1234&amp;foo=bar"',
+    );
+    const msg = findMessageElement(document.getElementById('body1'))!;
+    expect(threadLinkFor(msg, CHANNEL_URL, hosts)).toEqual({
+      ok: true,
+      url: 'https://acme.slack.com/archives/C0DEV1234/p1700000100000200?thread_ts=1700000000.000100&cid=C0DEV1234',
+    });
+  });
+
+  it('builds the root permalink from ts + channel id + workspace host when there is no permalink', () => {
     document.body.innerHTML = noPermalinkMessage;
     const msg = findMessageElement(document.getElementById('body2'))!;
-    expect(messageLink(msg, CHANNEL_URL)).toBe(
-      'https://app.slack.com/client/T0TEAM/C0OTHER99/thread/C0OTHER99-1700000500.000900',
-    );
+    expect(threadLinkFor(msg, CHANNEL_URL, hosts)).toEqual({
+      ok: true,
+      url: 'https://acme.slack.com/archives/C0OTHER99/p1700000500000900',
+    });
   });
 
-  it('uses the open thread for replies in the thread pane', () => {
+  it('a reply in the open thread pane gets thread_ts (root) and cid', () => {
     document.body.innerHTML = threadPane;
     const msg = findMessageElement(document.getElementById('reply'))!;
-    expect(messageLink(msg, THREAD_URL)).toBe(THREAD_URL);
+    expect(threadLinkFor(msg, THREAD_URL, hosts)).toEqual({
+      ok: true,
+      url: 'https://acme.slack.com/archives/C0DEV1234/p1700000100000200?thread_ts=1700000000.000100&cid=C0DEV1234',
+    });
   });
 
-  it('returns null when nothing usable is found', () => {
+  it('rejects DM channels early', () => {
+    document.body.innerHTML = noPermalinkMessage.replace('C0OTHER99', 'D0DIRECT9');
+    const msg = findMessageElement(document.getElementById('body2'))!;
+    expect(threadLinkFor(msg, CHANNEL_URL, hosts)).toMatchObject({ ok: false, error: 'dm' });
+    document.body.innerHTML = channelMessage.replace(/C0DEV1234/g, 'D0DIRECT9');
+    const msg2 = findMessageElement(document.getElementById('body1'))!;
+    expect(threadLinkFor(msg2, CHANNEL_URL, hosts)).toMatchObject({ ok: false, error: 'dm' });
+  });
+
+  it('reports a missing workspace host, and null when nothing usable is found', () => {
     document.body.innerHTML = noPermalinkMessage;
     const msg = findMessageElement(document.getElementById('body2'))!;
-    expect(messageLink(msg, 'https://example.com/')).toBeNull();
+    expect(threadLinkFor(msg, CHANNEL_URL, () => null)).toMatchObject({ ok: false, error: 'no_workspace' });
+    expect(threadLinkFor(msg, 'https://example.com/', hosts)).toBeNull();
   });
 });
 
@@ -296,26 +327,27 @@ describe('hover highlight on the injected row', () => {
   });
 });
 
-describe('quick-send helpers', () => {
-  it('maps export results to toasts', () => {
-    const base = { type: 'done' as const, action: 'devdy' as const, filename: 'a.md', messageCount: 3 };
-    expect(toastFor({ type: 'progress', text: 'Fetching…' }, 'k')).toMatchObject({
-      state: 'progress',
-      text: 'Fetching…',
+describe('quick-send toasts', () => {
+  const toast = (outcome: Parameters<typeof toastForDelivery>[0]['outcome'], message = 'm') =>
+    toastForDelivery({ outcome, message }, 'k');
+
+  it('maps delivery results to toast states and actions', () => {
+    expect(toast({ kind: 'created', id: 'x' }, 'Sent')).toEqual({
+      target: 'context-kit-toast',
+      key: 'k',
+      state: 'success',
+      text: 'Sent',
     });
-    expect(
-      toastFor(
-        { ...base, files: { saved: 2, notIncluded: 0 }, devdy: { kind: 'created', message: '', pending: 0 } },
-        'k',
-      ),
-    ).toMatchObject({ state: 'success', text: 'Sent to Devdy (3 messages, 2 files).' });
-    expect(toastFor({ ...base, devdy: { kind: 'unreachable', message: 'queued', pending: 1 } }, 'k')?.state).toBe(
-      'queued',
-    );
-    expect(toastFor({ ...base, devdy: { kind: 'no_token', message: 'set token', pending: 1 } }, 'k')).toMatchObject({
-      state: 'error',
+    expect(toast({ kind: 'existing', id: 'x' }).state).toBe('success');
+    expect(toast({ kind: 'created', id: 'x', errorCode: 'no_token' }).state).toBe('queued');
+    expect(toast({ kind: 'unreachable', message: 'down' }).state).toBe('queued');
+    expect(toast({ kind: 'choose_instance', message: 'm' })).toMatchObject({
+      state: 'queued',
       action: 'open-settings',
     });
-    expect(toastFor({ type: 'error', message: 'Open app.slack.com' }, 'k')?.state).toBe('error');
+    expect(toast({ kind: 'token_missing', message: 'm' })).toMatchObject({ state: 'queued', action: 'open-settings' });
+    expect(toast({ kind: 'unauthorized', message: 'm' })).toMatchObject({ state: 'error', action: 'open-settings' });
+    expect(toast({ kind: 'outdated', status: 415, message: 'm' }).state).toBe('error');
+    expect(toast({ kind: 'rejected', status: 400, code: 'dm_unsupported', message: 'm' })).not.toHaveProperty('action');
   });
 });

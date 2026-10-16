@@ -1,15 +1,13 @@
-// Devdy tab: connection status, app (port) choice, token and outbox queue.
+// Devdy tab: connection status and features, app (port) choice, token and the Slack link queue.
 
 import { errorMessage } from '../../../shared/errors';
-import { safeFileName } from '../../../shared/filename';
 import type { Result } from '../../../shared/messaging';
-import { getBlob } from '../core/blob-store';
 import {
   DEVDY_TARGET,
   type DevdyCommand,
   type DevdyFlushResult,
   type DevdyStatus,
-  type FailedExport,
+  type PendingLink,
 } from '../messages';
 
 const $ = <T extends HTMLElement>(id: string): T => {
@@ -21,6 +19,9 @@ const $ = <T extends HTMLElement>(id: string): T => {
 const dot = $<HTMLSpanElement>('dot');
 const summary = $<HTMLSpanElement>('summary');
 const detail = $<HTMLDivElement>('detail');
+const featuresRow = $<HTMLDivElement>('features');
+const featTranslate = $<HTMLSpanElement>('feat-translate');
+const featSlack = $<HTMLSpanElement>('feat-slack');
 const refreshBtn = $<HTMLButtonElement>('refresh');
 const instanceSection = $<HTMLDivElement>('instance-section');
 const instanceSelect = $<HTMLSelectElement>('instance');
@@ -28,10 +29,9 @@ const instanceHint = $<HTMLParagraphElement>('instance-hint');
 const tokenInput = $<HTMLInputElement>('token');
 const tokenSave = $<HTMLButtonElement>('token-save');
 const queueSection = $<HTMLDivElement>('queue-section');
-const queueText = $<HTMLSpanElement>('queue');
+const queueText = $<HTMLParagraphElement>('queue');
+const queueList = $<HTMLUListElement>('queue-list');
 const retryBtn = $<HTMLButtonElement>('retry');
-const failedSection = $<HTMLDivElement>('failed-section');
-const failedList = $<HTMLUListElement>('failed');
 const noticeSection = $<HTMLDivElement>('notice-section');
 const noticeText = $<HTMLSpanElement>('notice');
 const noticeClear = $<HTMLButtonElement>('notice-clear');
@@ -68,8 +68,8 @@ function render(st: DevdyStatus): void {
     text = 'Devdy is not running';
     info =
       st.pinned && st.port
-        ? `The selected app (port ${st.port}) is not answering. Exports are queued meanwhile.`
-        : 'Start Devdy to send. Exports are queued meanwhile.';
+        ? `The selected app (port ${st.port}) is not answering. Slack links are queued meanwhile.`
+        : 'Devdy is not running or the Inbox API is off. Slack links are queued meanwhile.';
   } else if (!st.hasToken) {
     cls = 'warn';
     text = 'Token needed';
@@ -86,6 +86,7 @@ function render(st: DevdyStatus): void {
   dot.className = `dot ${cls}`.trim();
   summary.textContent = text;
   detail.textContent = info;
+  renderFeatures(st);
 
   // App picker: needed when several Devdy apps run, or one was pinned before.
   const showPicker = st.instances.length > 1 || st.pinned;
@@ -103,61 +104,53 @@ function render(st: DevdyStatus): void {
     instanceSelect.value = st.pinned && st.port ? String(st.port) : AUTO;
     instanceHint.textContent =
       st.instances.length > 1
-        ? 'e.g. a production and a dev build. Exports go only to the selected app.'
-        : 'Only the selected app receives exports.';
+        ? 'e.g. a production and a dev build. Links go only to the selected app.'
+        : 'Only the selected app receives links.';
   }
 
   tokenInput.placeholder = st.hasToken ? 'Saved — paste a new one to replace' : 'Devdy → Settings → Inbox API';
-  queueSection.hidden = st.pending === 0;
+  const pending = st.queue.length;
+  queueSection.hidden = pending === 0;
   queueText.textContent =
-    `${st.pending} export${st.pending === 1 ? '' : 's'} waiting to be sent` +
-    (st.paused && st.pending ? ' — paused until a valid token is saved' : '');
-
-  failedSection.hidden = st.failed.length === 0;
-  failedList.replaceChildren(...st.failed.map(failedItem));
+    `${pending} Slack link${pending === 1 ? '' : 's'} waiting for Devdy` +
+    (st.paused && pending ? ' — paused until a valid token is saved' : '');
+  queueList.replaceChildren(...st.queue.map(queueItem));
   noticeSection.hidden = !st.notice;
   noticeText.textContent = st.notice ?? '';
 }
 
-function formatSize(n?: number): string {
-  if (!n) return '';
-  return n < 1024 * 1024 ? ` · ${Math.ceil(n / 1024)} KB` : ` · ${(n / (1024 * 1024)).toFixed(1)} MB`;
+function renderFeatures(st: DevdyStatus): void {
+  featuresRow.hidden = !st.connected;
+  const show = (el: HTMLElement, on: boolean, label: string, missing: string) => {
+    el.className = `feature ${on ? 'on' : 'off'}`;
+    el.textContent = `${on ? '✓' : '✗'} ${label}${on ? '' : ` — ${missing}`}`;
+  };
+  show(featTranslate, st.features.translate, 'Translate', 'not available');
+  show(featSlack, st.features.slackThreadLink, 'Slack thread links', 'update Devdy to send Slack threads');
 }
 
-function downloadName(f: FailedExport): string {
-  const ext = f.contentType.startsWith('application/zip') ? 'zip' : 'md';
-  return `${safeFileName(f.title.replace(/\.(md|zip)$/i, ''), 80)}.${ext}`;
+/** When a link was queued, its attempts and last error. */
+function linkSummary(link: PendingLink): string {
+  const when = new Date(link.createdAt);
+  return [
+    Number.isNaN(when.getTime()) ? '' : `queued ${when.toLocaleString()}`,
+    link.attempts ? `${link.attempts} attempt${link.attempts === 1 ? '' : 's'}` : '',
+    link.lastError ?? '',
+  ]
+    .filter(Boolean)
+    .join(' · ');
 }
 
-/** Save a failed export's payload (read straight from the outbox IndexedDB). */
-async function downloadFailed(f: FailedExport): Promise<void> {
-  const blob = await getBlob(f.id);
-  if (!blob) throw new Error('The export data is no longer stored.');
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = downloadName(f);
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 60_000);
-}
-
-function failedItem(f: FailedExport): HTMLLIElement {
+function queueItem(link: PendingLink): HTMLLIElement {
   const li = document.createElement('li');
-  const title = document.createElement('div');
-  title.className = 'failed-title';
-  title.textContent = f.title;
+  const url = document.createElement('div');
+  url.className = 'queue-url';
+  url.textContent = link.url;
   const info = document.createElement('div');
   info.className = 'muted-text';
-  info.textContent = `${f.message}${formatSize(f.size)}`;
+  info.textContent = linkSummary(link);
   const row = document.createElement('div');
   row.className = 'btn-row';
-  const dl = document.createElement('button');
-  dl.type = 'button';
-  dl.className = 'link-btn';
-  dl.textContent = 'Download';
-  dl.addEventListener('click', () => {
-    downloadFailed(f).catch((e: unknown) => setError(errorMessage(e)));
-  });
   const rm = document.createElement('button');
   rm.type = 'button';
   rm.className = 'link-btn';
@@ -165,14 +158,14 @@ function failedItem(f: FailedExport): HTMLLIElement {
   rm.addEventListener('click', async () => {
     rm.disabled = true;
     try {
-      render(await call<DevdyStatus>({ type: 'remove-failed', id: f.id }));
+      render(await call<DevdyStatus>({ type: 'remove', id: link.id }));
     } catch (e) {
       setError(errorMessage(e));
       rm.disabled = false;
     }
   });
-  row.append(dl, rm);
-  li.append(title, info, row);
+  row.append(rm);
+  li.append(url, info, row);
   return li;
 }
 
@@ -192,7 +185,7 @@ async function refresh(): Promise<DevdyStatus | undefined> {
 }
 
 function flushedNote(n?: number): void {
-  if (n) setStatus(`Sent ${n} queued export${n === 1 ? '' : 's'} to Devdy.`);
+  if (n) setStatus(`Sent ${n} queued link${n === 1 ? '' : 's'} to Devdy.`);
 }
 
 tokenSave.addEventListener('click', async () => {
@@ -221,7 +214,7 @@ instanceSelect.addEventListener('change', async () => {
   const port = instanceSelect.value === AUTO ? null : Number(instanceSelect.value);
   const st = await call<DevdyStatus>({ type: 'select-instance', port });
   render(st);
-  setStatus(port ? `Exports now go to the Devdy app on port ${port}.` : 'Automatic app selection.');
+  setStatus(port ? `Links now go to the Devdy app on port ${port}.` : 'Automatic app selection.');
   flushedNote(st.flushed);
 });
 
@@ -230,7 +223,7 @@ retryBtn.addEventListener('click', async () => {
   try {
     const r = await call<DevdyFlushResult>({ type: 'flush' });
     render(r.status);
-    setStatus(r.sent ? `Sent ${r.sent} queued export${r.sent === 1 ? '' : 's'} to Devdy.` : 'Still waiting for Devdy.');
+    setStatus(r.sent ? `Sent ${r.sent} queued link${r.sent === 1 ? '' : 's'} to Devdy.` : 'Still waiting for Devdy.');
   } finally {
     retryBtn.disabled = false;
   }
@@ -242,9 +235,9 @@ noticeClear.addEventListener('click', async () => {
   render(await call<DevdyStatus>({ type: 'clear-notice' }));
 });
 
-// Opening the tab is a good moment to deliver queued exports (Devdy may be up again).
+// Opening the tab is a good moment to deliver queued links (Devdy may be up again).
 void refresh().then(async (st) => {
-  if (!st?.pending || !st.connected) return;
+  if (!st?.queue.length || !st.connected) return;
   const r = await call<DevdyFlushResult>({ type: 'flush' }).catch(() => undefined);
   if (!r) return;
   render(r.status);

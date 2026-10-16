@@ -40,8 +40,6 @@ export interface AttachmentPlan {
 export interface PlanOptions {
   maxFileBytes?: number;
   maxTotalBytes?: number;
-  /** Max number of files to download (Devdy accepts at most 200 zip entries incl. the .md). */
-  maxFiles?: number;
 }
 
 /**
@@ -78,7 +76,6 @@ export function fileDisplayName(f: SlackFile): string {
 export function planAttachments(messages: SlackMessage[], options: PlanOptions = {}): AttachmentPlan {
   const maxFile = options.maxFileBytes ?? MAX_FILE_BYTES;
   const maxTotal = options.maxTotalBytes ?? MAX_TOTAL_BYTES;
-  const maxFiles = options.maxFiles ?? Number.POSITIVE_INFINITY;
 
   // Unique files in thread order.
   const files: SlackFile[] = [];
@@ -113,10 +110,6 @@ export function planAttachments(messages: SlackMessage[], options: PlanOptions =
     const size = typeof f.size === 'number' && f.size >= 0 ? f.size : undefined;
     if (size !== undefined && size > maxFile) {
       skipped.set(id, { kind: 'skipped', reason: `too large (${formatBytes(size)} > ${formatBytes(maxFile)})` });
-      continue;
-    }
-    if (index >= maxFiles) {
-      skipped.set(id, { kind: 'skipped', reason: `file count limit (${maxFiles}) reached` });
       continue;
     }
     if (size !== undefined && total + size > maxTotal) {

@@ -1,5 +1,4 @@
 import { errorMessage } from '../../../shared/errors';
-import { requestOpenTab } from '../../../shared/popup-tabs';
 import { parseThreadLink } from '../core/permalink';
 import {
   DEFAULT_OPTIONS,
@@ -22,8 +21,6 @@ const copyBtn = $<HTMLButtonElement>('copy');
 const optReactions = $<HTMLInputElement>('opt-reactions');
 const optFiles = $<HTMLInputElement>('opt-files');
 const optZip = $<HTMLInputElement>('opt-zip');
-const devdySendBtn = $<HTMLButtonElement>('devdy-send');
-const openDevdyBtn = $<HTMLButtonElement>('open-devdy');
 const statusEl = $<HTMLParagraphElement>('status');
 const errorEl = $<HTMLParagraphElement>('error');
 
@@ -39,7 +36,6 @@ function setError(text: string | null): void {
 function setBusy(busy: boolean): void {
   exportBtn.disabled = busy;
   copyBtn.disabled = busy;
-  devdySendBtn.disabled = busy;
   linkInput.disabled = busy;
 }
 
@@ -103,36 +99,8 @@ function filesSummary(files?: { saved: number; notIncluded: number }): string {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Devdy
-// ---------------------------------------------------------------------------
-
-/** Outcomes the user fixes in the Devdy tab (token / which Devdy app). */
-const NEEDS_SETTINGS = new Set(['no_token', 'unauthorized', 'choose_instance']);
-
-function showDevdyResult(
-  d: { kind: string; message: string; pending: number },
-  files: { saved: number; notIncluded: number } | undefined,
-  messageCount: number,
-): void {
-  const counts = `(${messageCount} messages${filesSummary(files)})`;
-  openDevdyBtn.hidden = !NEEDS_SETTINGS.has(d.kind);
-  if (d.kind === 'created' || d.kind === 'updated' || d.kind === 'unreachable' || d.kind === 'server_error') {
-    setStatus(`${d.message} ${counts}`);
-  } else {
-    setStatus('');
-    setError(d.message);
-  }
-}
-
-// The popup shell hosts this page in an iframe: ask it to switch to the Devdy tab.
-openDevdyBtn.addEventListener('click', () => {
-  requestOpenTab('devdy');
-});
-
 function startExport(action: ExportAction): void {
   setError(null);
-  openDevdyBtn.hidden = true;
   const link = linkInput.value.trim();
   const parsed = parseThreadLink(link);
   if (!parsed.ok) {
@@ -166,9 +134,6 @@ function startExport(action: ExportAction): void {
           .then(() => setStatus(`Copied ${msg.messageCount} messages to the clipboard.`))
           .catch((e: unknown) => setError(`Could not copy: ${errorMessage(e)}`))
           .finally(finish);
-      } else if (msg.action === 'devdy') {
-        showDevdyResult(msg.devdy, msg.files, msg.messageCount);
-        finish();
       } else {
         setStatus(`Saved ${msg.filename} (${msg.messageCount} messages${filesSummary(msg.files)}).`);
         finish();
@@ -188,7 +153,6 @@ function startExport(action: ExportAction): void {
 
 exportBtn.addEventListener('click', () => startExport('download'));
 copyBtn.addEventListener('click', () => startExport('copy'));
-devdySendBtn.addEventListener('click', () => startExport('devdy'));
 linkInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') startExport('download');
 });

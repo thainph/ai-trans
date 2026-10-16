@@ -1,9 +1,9 @@
-// Client for Devdy's local Inbox API (contract: devdy docs/inbox-api.md).
+// Client for Devdy's local Inbox API (contract: Devdy docs/inbox-api.md, 2026-10-16).
 //
-//   GET  /health            → {"app":"devdy","version":"…","api":1,"features":["translate"]}   (no token)
+//   GET  /health            → {"app":"devdy","version":"…","api":1,"features":["translate","slack-thread-link"]}   (no token)
 //   GET  /v1/projects       → [{"id","name"}]                         (Bearer token)
-//   POST /v1/slack-threads  → 201 {"id","status":"created"} | 200 {"id","status":"updated"}
-//   POST /v1/web-pages      → same (web page / selection captures)
+//   POST /v1/slack-threads  → JSON {"url"} → 202 {"id","status":"created"|"existing","fetchStatus","errorCode"?}
+//                             (only when features has "slack-thread-link"; Devdy fetches/translates the thread itself)
 //   POST /v1/translate      → see core/translate.ts (only when features has "translate")
 //
 // Loopback only, on the first free port in 47821…47830. Must be called from an
@@ -12,34 +12,37 @@
 
 export const DEVDY_PORT_FIRST = 47821;
 export const DEVDY_PORT_LAST = 47830;
-/** Devdy rejects bodies over 50 MB (413). */
-export const DEVDY_MAX_BODY_BYTES = 50 * 1024 * 1024;
-/** Devdy accepts at most 200 zip entries (the .md + 199 attachments). */
-export const DEVDY_MAX_ATTACHMENTS = 199;
 
 const HEALTH_TIMEOUT_MS = 800;
 const REQUEST_TIMEOUT_MS = 30_000;
-const UPLOAD_TIMEOUT_MS = 5 * 60_000;
 
 export type FetchFn = typeof fetch;
-
-/** Inbox endpoint (`/v1/<kind>`). */
-export type CaptureKind = 'slack-threads' | 'web-pages';
 
 export interface DevdyHealth {
   app: 'devdy';
   version?: string;
   api?: number;
-  /** Optional features (e.g. "translate"); missing on older Devdy builds. */
+  /** Optional features ("translate", "slack-thread-link"); missing on older Devdy builds. */
   features?: string[];
 }
 
 /** Devdy feature flag of `POST /v1/translate`. */
 export const TRANSLATE_FEATURE = 'translate';
 
+/** Devdy feature flag of `POST /v1/slack-threads` taking a JSON thread link. */
+export const SLACK_THREAD_LINK_FEATURE = 'slack-thread-link';
+
 /** Translation is available only when /health lists the "translate" feature. */
 export function supportsTranslate(health: DevdyHealth | null | undefined): boolean {
   return !!health?.features?.includes(TRANSLATE_FEATURE);
+}
+
+/**
+ * Slack thread links can be sent only when /health lists "slack-thread-link".
+ * Older Devdy builds still expect Markdown/zip uploads: never send to them.
+ */
+export function supportsSlackThreadLink(health: DevdyHealth | null | undefined): boolean {
+  return !!health?.features?.includes(SLACK_THREAD_LINK_FEATURE);
 }
 
 /** Keep the /health fields we use, with their types checked. */
@@ -58,44 +61,59 @@ export interface DevdyProject {
   name: string;
 }
 
+/** `code` of a 400 from `POST /v1/slack-threads`. */
+export type SlackThreadErrorCode =
+  | 'invalid_json'
+  | 'invalid_link'
+  | 'dm_unsupported'
+  | 'invalid_project'
+  | 'invalid_title';
+
 export type SendOutcome =
-  | { kind: 'created' | 'updated'; id: string }
-  /** Devdy not running / port not found / network error → queue and retry later. */
+  /**
+   * 202: `created` = new thread, `existing` = already in Devdy (refreshed).
+   * `errorCode: "no_token"`: saved, but Devdy has no Slack token to fetch it.
+   */
+  | { kind: 'created' | 'existing'; id: string; fetchStatus?: string; errorCode?: string }
+  /** Devdy not running / Inbox API off / connection error / 503 "server stopping" → queue and retry later. */
   | { kind: 'unreachable'; message: string }
   /** Several Devdy apps answer /health and none is chosen → ask the user; retry afterwards. */
   | { kind: 'choose_instance'; message: string }
-  /** No token saved yet → ask the user to paste it; retry afterwards. */
-  | { kind: 'no_token'; message: string }
-  /** Wrong or regenerated token → ask the user to paste it again; retry afterwards. */
+  /** No Inbox API token saved yet → ask the user to paste it; retry afterwards. */
+  | { kind: 'token_missing'; message: string }
+  /** 401: wrong or regenerated token → ask the user to paste it again; retry afterwards. */
   | { kind: 'unauthorized'; message: string }
-  /** Devdy storage error → retry later. */
-  | { kind: 'server_error'; message: string }
-  /** Payload rejected (400/403/413/415…) → retrying the same payload won't help. */
-  | { kind: 'rejected'; status: number; message: string };
+  /** Devdy without "slack-thread-link" (or 404/415 from an older/newer build) → update Devdy; not queued. */
+  | { kind: 'outdated'; status?: number; message: string }
+  /** Refused (400 with `code`, 413, 500…) → resending the same link won't help; not queued. */
+  | { kind: 'rejected'; status: number; code?: string; message: string };
 
-/** Outcomes worth keeping in the outbox for a later retry. */
+/** Outcomes worth keeping in the queue for a later retry (Inbox API §9.3). */
 export function isRetryable(o: SendOutcome): boolean {
   return (
-    o.kind === 'unreachable' ||
-    o.kind === 'choose_instance' ||
-    o.kind === 'no_token' ||
-    o.kind === 'unauthorized' ||
-    o.kind === 'server_error'
+    o.kind === 'unreachable' || o.kind === 'choose_instance' || o.kind === 'token_missing' || o.kind === 'unauthorized'
   );
 }
+
+export const isSent = (o: SendOutcome): boolean => o.kind === 'created' || o.kind === 'existing';
 
 /** Base URL of the Devdy inbox on `port`. */
 export const base = (port: number): string => `http://127.0.0.1:${port}`;
 
+/** `error` and `code` of a Devdy JSON error body (`error` falls back to `HTTP <status>`). */
+export async function readErrorBody(res: Response): Promise<{ error: string; code?: string }> {
+  try {
+    const j = (await res.json()) as { error?: unknown; code?: unknown };
+    const error = typeof j?.error === 'string' && j.error ? j.error : `HTTP ${res.status}`;
+    return typeof j?.code === 'string' && j.code ? { error, code: j.code } : { error };
+  } catch {
+    return { error: `HTTP ${res.status}` };
+  }
+}
+
 /** The `error` of a Devdy JSON error body, or `HTTP <status>`. */
 export async function readError(res: Response): Promise<string> {
-  try {
-    const j = (await res.json()) as { error?: unknown };
-    if (typeof j?.error === 'string' && j.error) return j.error;
-  } catch {
-    // not JSON
-  }
-  return `HTTP ${res.status}`;
+  return (await readErrorBody(res)).error;
 }
 
 /** Health check of one port; null if it is not a Devdy inbox. */
@@ -186,78 +204,90 @@ export async function listProjects(port: number, token: string, fetchFn: FetchFn
   return { ok: true, projects };
 }
 
-export interface CapturePayload {
-  /** Endpoint; defaults to slack-threads. */
-  kind?: CaptureKind;
-  body: Blob;
-  /** "application/zip" or "text/markdown; charset=utf-8". */
-  contentType: string;
-  projectId?: string;
-  /** Sent as `Idempotency-Key` (the outbox entry id) so a resend after a crash can be deduplicated. */
-  idempotencyKey?: string;
-}
-
-export async function postCapture(
+/**
+ * Send one Slack thread link. Only `Authorization` and `Content-Type` are sent
+ * (project/title would go in the JSON body; no `X-Devdy-*` headers).
+ */
+export async function postSlackThread(
   port: number,
   token: string,
-  payload: CapturePayload,
+  url: string,
   fetchFn: FetchFn = fetch,
 ): Promise<SendOutcome> {
-  const kind = payload.kind ?? 'slack-threads';
-  if (payload.body.size > DEVDY_MAX_BODY_BYTES) {
-    return { kind: 'rejected', status: 413, message: 'The export is larger than Devdy’s 50 MB limit.' };
-  }
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${token}`,
-    'Content-Type': payload.contentType,
-  };
-  if (payload.projectId) headers['X-Devdy-Project-Id'] = payload.projectId;
-  if (payload.idempotencyKey) headers['Idempotency-Key'] = payload.idempotencyKey;
-
   let res: Response;
   try {
-    res = await fetchFn(`${base(port)}/v1/${kind}`, {
+    res = await fetchFn(`${base(port)}/v1/slack-threads`, {
       method: 'POST',
-      headers,
-      body: payload.body,
-      signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
   } catch {
     return { kind: 'unreachable', message: 'Devdy is not reachable.' };
   }
-
-  if (res.status === 200 || res.status === 201) {
-    const j = (await res.json().catch(() => ({}))) as { id?: unknown; status?: unknown };
-    return { kind: j.status === 'updated' || res.status === 200 ? 'updated' : 'created', id: String(j.id ?? '') };
-  }
-  const message = await readError(res);
-  if (res.status === 401) return { kind: 'unauthorized', message };
-  if (res.status >= 500) return { kind: 'server_error', message };
-  return { kind: 'rejected', status: res.status, message };
+  return slackThreadOutcome(res);
 }
+
+/** Map a `POST /v1/slack-threads` response to an outcome. */
+export async function slackThreadOutcome(res: Response): Promise<SendOutcome> {
+  if (res.ok) {
+    const j = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    const out: SendOutcome = {
+      kind: j.status === 'existing' ? 'existing' : 'created',
+      id: typeof j.id === 'string' ? j.id : '',
+    };
+    if (typeof j.fetchStatus === 'string') out.fetchStatus = j.fetchStatus;
+    if (typeof j.errorCode === 'string' && j.errorCode) out.errorCode = j.errorCode;
+    return out;
+  }
+  const { error, code } = await readErrorBody(res);
+  if (res.status === 401) return { kind: 'unauthorized', message: error };
+  // "server stopping": the Inbox API was switched off mid-request, nothing was saved.
+  if (res.status === 503) return { kind: 'unreachable', message: error };
+  if (res.status === 404 || res.status === 415) return { kind: 'outdated', status: res.status, message: error };
+  return code
+    ? { kind: 'rejected', status: res.status, code, message: error }
+    : { kind: 'rejected', status: res.status, message: error };
+}
+
+const REJECTED_BY_CODE: Record<SlackThreadErrorCode, string> = {
+  invalid_link: 'Not a Slack thread link.',
+  dm_unsupported: 'Direct messages (DMs) are not supported by Devdy.',
+  invalid_project: 'Devdy does not know that project — reload the project list.',
+  invalid_title: 'The title must be 1–200 characters.',
+  invalid_json: 'Devdy could not read the request (invalid JSON).',
+};
+
+/** Saved by Devdy, but Devdy has no Slack token to fetch the thread. */
+export const NO_SLACK_TOKEN_MESSAGE =
+  'Saved, but Devdy has no Slack token: add the Slack MCP server (SLACK_MCP_XOXP_TOKEN) in Devdy, then Refresh.';
 
 /** One-line user message for an outcome. */
 export function describeOutcome(o: SendOutcome): string {
   switch (o.kind) {
     case 'created':
-      return 'Sent to Devdy.';
-    case 'updated':
-      return 'Updated the existing item in Devdy.';
-    case 'choose_instance':
-      return 'Several Devdy apps are running — pick one in AI Trans → Devdy. The export is queued.';
+      return o.errorCode === 'no_token'
+        ? NO_SLACK_TOKEN_MESSAGE
+        : 'Sent — Devdy is fetching and translating the thread.';
+    case 'existing':
+      return o.errorCode === 'no_token' ? NO_SLACK_TOKEN_MESSAGE : 'Already in Devdy — refreshing.';
     case 'unreachable':
-      return 'Devdy is not running — queued, it will be sent automatically when Devdy is available.';
-    case 'no_token':
-      return 'Queued: set the Devdy token (Devdy → Settings → Inbox API) and it will be sent.';
+      return 'Devdy is not running or the Inbox API is off — queued.';
+    case 'choose_instance':
+      return 'Several Devdy apps are running — pick one in AI Trans → Devdy. The link is queued.';
+    case 'token_missing':
+      return 'Queued: set the Devdy token (Devdy → Settings → Inbox API) in AI Trans → Devdy and it will be sent.';
     case 'unauthorized':
-      return 'Devdy rejected the token. Paste the token from Devdy → Settings → Inbox API again.';
-    case 'server_error':
-      return `Devdy could not save it (${o.message}) — queued for retry.`;
+      return 'Devdy rejected the token — paste it again in AI Trans → Devdy. The link is queued.';
+    case 'outdated':
+      return o.status === 415
+        ? 'Devdy version mismatch — update Devdy to send Slack threads.'
+        : 'Update Devdy to send Slack threads.';
     case 'rejected':
-      // status 0: refused locally (queue full, data missing…) — the message says why.
+      // status 0: refused locally (queue full…) — the message says why.
       if (o.status === 0) return o.message;
-      return o.status === 413
-        ? 'The export is too large for Devdy (max 50 MB zipped / 200 MB unzipped). It is kept in AI Trans → Devdy, where you can download it.'
-        : `Devdy rejected the export (${o.message}). It is kept in AI Trans → Devdy.`;
+      if (o.code && o.code in REJECTED_BY_CODE) return REJECTED_BY_CODE[o.code as SlackThreadErrorCode];
+      if (o.status === 413) return 'The request is too large for Devdy.';
+      return `Devdy could not take the link (${o.message}).`;
   }
 }

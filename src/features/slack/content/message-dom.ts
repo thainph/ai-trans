@@ -4,10 +4,10 @@
 // Slack's markup is not a public API. Every lookup therefore tries several
 // selectors, most stable first: `data-qa` attributes (Slack's own test hooks),
 // then `c-*` class names, then generic ARIA roles. When nothing matches we do
-// nothing (Slack's menu stays untouched) — threads can still be sent from the
-// Slack tab of the popup.
+// nothing (Slack's menu stays untouched) — threads can still be exported from
+// the Slack tab of the popup.
 
-import { parseThreadLink } from '../core/permalink';
+import { buildThreadLink, parsePermalink, type ThreadLinkResult, workspaceHost } from '../core/thread-link';
 import { createDevdyIcon, DEVDY_ICON_ATTR } from './devdy-icon';
 
 const MESSAGE_SELECTORS = [
@@ -69,41 +69,50 @@ function permalinkAnchor(msg: Element): HTMLAnchorElement | null {
 }
 
 /**
- * Thread link for a message:
- * 1. its timestamp permalink (`…/archives/C…/p…`, with `?thread_ts=` for replies);
- * 2. otherwise built from the message ts and the client URL
- *    (`/client/T…/C…` or an open thread `/client/T…/C…/thread/C…-ts`).
+ * Devdy thread link for a message (Inbox API §7.1):
+ * 1. its timestamp permalink (`https://<ws>.slack.com/archives/C…/p…`, Slack
+ *    adds `?thread_ts=<root>&cid=<channel>` for replies), normalized;
+ * 2. otherwise built from the message ts, the channel and the client URL
+ *    (`/client/T…/C…`, or an open thread `/client/T…/C…/thread/C…-<root ts>`
+ *    whose root makes the message a reply), with the workspace host from
+ *    `hostForTeam(teamId)`.
+ * DM channels give `{ ok: false, error: 'dm' }`; null = not a message we can link.
  */
-export function messageLink(msg: Element, pageUrl: string): string | null {
-  const anchor = permalinkAnchor(msg);
-  if (anchor) {
-    const href = new URL(anchor.getAttribute('href')!, pageUrl).toString();
-    if (parseThreadLink(href).ok) return href;
-  }
-
-  const ts = messageTs(msg);
-  let url: URL;
+export function threadLinkFor(
+  msg: Element,
+  pageUrl: string,
+  hostForTeam: (teamId: string | undefined) => string | null,
+): ThreadLinkResult | null {
+  let url: URL | null = null;
   try {
     url = new URL(pageUrl);
   } catch {
-    return null;
+    // not a page URL: only the permalink can help
   }
-  const seg = url.pathname.split('/').filter(Boolean);
-  if (url.hostname !== 'app.slack.com' || seg[0] !== 'client' || !seg[1]) return null;
-  const team = seg[1];
+  const seg = url?.hostname === 'app.slack.com' ? url.pathname.split('/').filter(Boolean) : [];
+  const teamId = seg[0] === 'client' ? seg[1] : undefined;
 
+  const href = permalinkAnchor(msg)?.getAttribute('href');
+  const fromAnchor = href ? parsePermalink(new URL(href, pageUrl).toString()) : null;
+  if (fromAnchor) {
+    // Anchors normally carry the workspace host; app.slack.com ones need the team's host.
+    const host = workspaceHost(fromAnchor.host) ?? hostForTeam(teamId) ?? fromAnchor.host;
+    return buildThreadLink({ ...fromAnchor, host });
+  }
+
+  const ts = messageTs(msg);
+  if (!ts || seg[0] !== 'client') return null;
   // A message inside the thread side pane belongs to the open thread.
   const inThreadPane = !!msg.closest('[data-qa="threads_flexpane"], .p-threads_flexpane, [data-qa="thread_view"]');
   const threadIdx = seg.indexOf('thread');
-  if (inThreadPane && threadIdx > 0 && seg[threadIdx + 1]) {
-    const link = `https://app.slack.com/client/${team}/${seg[2] ?? ''}/thread/${seg[threadIdx + 1]}`;
-    if (parseThreadLink(link).ok) return link;
-  }
-
-  const channel = channelIdFor(msg) ?? seg[2];
-  if (!ts || !channel) return null;
-  const link = `https://app.slack.com/client/${team}/${channel}/thread/${channel}-${ts}`;
-  return parseThreadLink(link).ok ? link : null;
+  // `/thread/<channel>-<root ts>`: a message in the pane is (a reply of) that thread.
+  const openThread =
+    inThreadPane && threadIdx > 0
+      ? /^([CGD][A-Z0-9]+)-(\d{10}\.\d{6})$/.exec(decodeURIComponent(seg[threadIdx + 1] ?? ''))
+      : null;
+  const channelId = openThread?.[1] ?? channelIdFor(msg) ?? seg[2];
+  if (!channelId) return null;
+  return buildThreadLink({ host: hostForTeam(teamId) ?? '', channelId, ts, threadTs: openThread?.[2] });
 }
 
 function channelIdFor(msg: Element): string | null {
