@@ -332,6 +332,15 @@ describe('DevdyOutbox: send', () => {
     expect((await box.send(LINK)).pending).toBe(0);
   });
 
+  it('an outdated Devdy keeps an already queued copy of the link', async () => {
+    const m = memoryDeps({ resolveDevdy: async () => DOWN });
+    const box = new DevdyOutbox(m.deps);
+    await box.send(LINK);
+    m.deps.resolveDevdy = async () => ({ kind: 'ok', instance: { port: 47821, health: { app: 'devdy' } } });
+    const r = await box.send(LINK);
+    expect(r).toMatchObject({ outcome: { kind: 'outdated' }, queued: false, pending: 1 });
+  });
+
   it('keeps the link on a missing or rejected token and pauses automatic retries', async () => {
     const noToken = memoryDeps({ token: undefined });
     const r = await new DevdyOutbox(noToken.deps).send(LINK);

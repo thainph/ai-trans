@@ -140,7 +140,8 @@ export class DevdyOutbox {
         if (isTokenProblem(outcome)) state.paused = true;
       } else {
         // Sent, or refused for good: a queued copy of the same link has nothing left to do.
-        list = list.filter((e) => e.url !== url);
+        // (An outdated Devdy says nothing about the link: a queued copy waits for the update.)
+        if (outcome.kind !== 'outdated') list = list.filter((e) => e.url !== url);
         if (isSent(outcome)) {
           sentAny = true;
           state.paused = false;
