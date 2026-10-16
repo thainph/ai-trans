@@ -257,6 +257,8 @@ Defined once in `src/shared/sender.ts`:
   round (no attempt counted). Links are posted oldest first: connection problems, 401 and 404/415 stop the round (the
   rest stays queued); links refused for good are dropped with a notice. Only `unreachable` after reaching Devdy counts an
   attempt.
+- The Devdy tab's `status` request also delivers: when the resolved app lists `"slack-thread-link"`, the token is valid
+  and links are queued, it flushes right away (e.g. Devdy was just updated) instead of waiting for the next backoff step.
 - `unauthorized` / `token_missing` **pause** automatic retries until a token is saved. With links still queued, the
   one-shot alarm `devdy-outbox-retry` is scheduled with backoff 1 → 2 → 5 → 15 → 60 minutes (the last step repeats; back
   to the first step once something is sent). Saving a token, picking an app or *Retry now* sends at once.

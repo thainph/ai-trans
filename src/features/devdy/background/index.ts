@@ -83,7 +83,13 @@ function migrate(): Promise<number> {
   });
 }
 
-async function status(): Promise<DevdyStatus> {
+/**
+ * Connection, features, token and queue for the Devdy tab. With `deliver`, links
+ * still queued are sent right away when the app can take them (e.g. Devdy was
+ * just updated to a build with "slack-thread-link"), instead of waiting for the
+ * next backoff step (up to 60 min); `flushed` then says how many went out.
+ */
+async function status(deliver = false): Promise<DevdyStatus> {
   const settings = await loadSettings();
   // Lock-free reads: the status never waits behind a send in progress.
   const [queue, state, all] = await Promise.all([outbox.entries(), loadState(), findAllDevdy()]);
@@ -116,7 +122,13 @@ async function status(): Promise<DevdyStatus> {
   };
   if (!settings.token) return connected;
   const res = await listProjects(port, settings.token);
-  if (res.ok) return { ...connected, tokenValid: true };
+  if (res.ok) {
+    if (deliver && connected.features.slackThreadLink && queue.length > 0) {
+      const { sent } = await outbox.flush();
+      return { ...(await status()), flushed: sent };
+    }
+    return { ...connected, tokenValid: true };
+  }
   return {
     ...connected,
     tokenValid: res.kind === 'unauthorized' ? false : undefined,
@@ -127,7 +139,7 @@ async function status(): Promise<DevdyStatus> {
 async function handle(msg: DevdyRequest): Promise<DevdyStatus | DevdyFlushResult> {
   switch (msg.type) {
     case 'status':
-      return status();
+      return status(true);
     case 'save-token': {
       const token = typeof msg.token === 'string' ? msg.token.trim() : '';
       await chrome.storage.local.set({ [KEYS.token]: token });

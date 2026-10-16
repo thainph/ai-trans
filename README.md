@@ -186,7 +186,10 @@ pick one, the extension doesn't guess: links wait in the queue.
   queued and retried after 1, 2, 5, 15 and then every 60 minutes. **Retry now** sends immediately; saving a token or
   picking an app does too. The Devdy tab lists the waiting links; **Remove** drops one.
 - Missing or wrong token → automatic retries pause until you save a valid token.
-- Anything else Devdy refuses (not a thread link, DM, outdated Devdy…) is reported right away and never queued.
+- A **new** link Devdy can't take for other reasons (not a thread link, DM, outdated Devdy…) is reported right away and
+  not queued. Links **already** in the queue stay there while the running Devdy is outdated, and are sent as soon as a
+  Devdy with Slack thread links is seen (opening the Devdy tab checks it, besides the automatic retries); a queued link
+  Devdy refuses for good (e.g. not a thread link) is dropped with a notice.
 - The same link is queued once. Links still undelivered after 7 days or 20 attempts are dropped, with a notice in the
   Devdy tab; the queue holds at most 50 links.
 - Updating from AI Trans ≤ 2.1: Markdown/zip exports still queued by the old version can't be sent any more; they are

@@ -235,11 +235,6 @@ noticeClear.addEventListener('click', async () => {
   render(await call<DevdyStatus>({ type: 'clear-notice' }));
 });
 
-// Opening the tab is a good moment to deliver queued links (Devdy may be up again).
-void refresh().then(async (st) => {
-  if (!st?.queue.length || !st.connected) return;
-  const r = await call<DevdyFlushResult>({ type: 'flush' }).catch(() => undefined);
-  if (!r) return;
-  render(r.status);
-  flushedNote(r.sent);
-});
+// Opening the tab is a good moment to deliver queued links: the status check
+// sends them as soon as the running Devdy can take them (see `flushed`).
+void refresh().then((st) => flushedNote(st?.flushed));

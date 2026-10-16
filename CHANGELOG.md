@@ -24,7 +24,8 @@ send Slack threads.
   *Update Devdy to send Slack threads* for an older Devdy, a clear refusal for direct messages (checked before sending),
   and *Devdy is not running or the Inbox API is off — queued*. A rejected token opens the Devdy tab.
 - Only connection problems (incl. `503 server stopping`), an unpicked Devdy app and token problems are queued and
-  retried; other refusals are reported and never queued. The same link is queued once; at most 50 links.
+  retried; other refusals of a new link are reported and not queued. Links already queued wait for an updated Devdy and
+  go out as soon as the Devdy tab sees `slack-thread-link`. The same link is queued once; at most 50 links.
 - The Devdy tab shows the connected app's features (**Translate**, **Slack thread links**) and the waiting links
   (**Retry now**, **Remove**); the "Not accepted by Devdy" downloads are gone.
 - Web → MD zip export: images up to 200 MB in total / 500 images (the 45 MB / 199 limits only existed for Devdy).
