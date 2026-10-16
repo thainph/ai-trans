@@ -11,7 +11,7 @@ popup shell (src/popup) ── iframe ──► each tab's page (features/*/popu
         ▼                                   ▼
 service worker (src/background) ──► offscreen document (src/offscreen): fetch files/images, build zips
         ▲                                   │
-        │ messages                          └──► IndexedDB (Devdy outbox) / blob: URL for chrome.downloads
+        │ messages                          └──► blob: URL for chrome.downloads
 content scripts (content.js in every frame, slack-content.js on app.slack.com)
 ```
 
@@ -21,7 +21,7 @@ content scripts (content.js in every frame, slack-content.js on app.slack.com)
 - The **offscreen document** exists because MV3 service workers can't create `blob:` URLs and `data:` URLs cap at about
   2 MB.
 - **Content scripts** are built as IIFEs (`vite.content.config.ts`) because content scripts can't `import`:
-  `dist/content.js` (Translator + selection capture, every frame) and `dist/slack-content.js` (app.slack.com).
+  `dist/content.js` (Translator, every frame) and `dist/slack-content.js` (app.slack.com).
 
 ## Popup shell
 
@@ -45,11 +45,11 @@ Each request/response channel is a `chrome.runtime.onMessage` listener filtered 
 |---|---|---|
 | `context-kit-translator` | content script / popup → SW | translate, grammar check, page batches, cancel, list Ollama models, Devdy status, open the Devdy tab |
 | `context-kit-translator-page` | Translate tab → tab (frame 0) | translate / revert the whole page |
-| `context-kit-devdy` | Devdy tab → SW | status, save token, pick app, retry, remove/download failed records |
-| `context-kit-quick-send` | Slack content script → SW | "Send to Devdy" in Slack's menu |
-| `context-kit-web` | content script / Web → MD tab → SW | send selection, send/download page, open Devdy settings |
-| `context-kit-offscreen` | SW → offscreen | `fetch-file`, `fetch-image`, `build-zip`, `store-zip`, `release` |
-| `context-kit-toast`, `context-kit-web-toast` | SW → tab (`sendToTab()`) | in-page progress/result toasts |
+| `context-kit-devdy` | Devdy tab → SW | status (connection, features, queue), save token, pick app, retry, remove a queued link, dismiss the notice |
+| `context-kit-quick-send` | Slack content script → SW | "Send to Devdy" in Slack's menu (`devdy-send` with the thread `url`), open the Devdy tab |
+| `context-kit-web` | Web → MD tab → SW | `download-page` (zip the page with its images) |
+| `context-kit-offscreen` | SW → offscreen | `fetch-file`, `fetch-image`, `build-zip`, `release` |
+| `context-kit-toast` | SW → Slack tab (`sendToTab()`) | in-page progress/result toasts |
 
 The Slack export started from the Slack tab streams progress over the **port** `slack-thread-export`
 (`chrome.runtime.onConnect`). Streamed selection translations (Devdy provider) use one **port**
@@ -71,8 +71,8 @@ Defined once in `src/shared/sender.ts`:
 |---|---|
 | Translator (`translator/background/sender.ts`) | any extension sender; `fetch-ollama-models` and `devdy-status` from extension pages only; the stream port from any extension sender (`streamPortRejectReason`), its `translate` message validated like `translate` (`isStreamRequest`). Sizes are validated (text ≤ 100 000 chars, batch ≤ 200 items and ≤ 100 000 chars in total). `cancel` only reaches requests of the sending frame (`requestKey`); `translate`, `grammar-check` and `translate-batch` take an optional `requestId` for it. |
 | Devdy, offscreen | extension pages only |
-| Web → MD | `send-selection` / `open-settings` from content scripts; `send-page` / `download-page` from extension pages only. Incoming Markdown ≤ 30 × 1024 × 1024 chars (`background/limits.ts`). |
-| Slack | the export port from extension pages only; quick send only from the content script on `https://app.slack.com` |
+| Web → MD | `download-page` from extension pages only. Incoming Markdown ≤ 30 × 1024 × 1024 chars (`background/limits.ts`). |
+| Slack | the export port from extension pages only; quick send only from the content script on `https://app.slack.com`, and `devdy-send` only with a canonical thread link (`isCanonicalThreadLink()`; DMs refused) |
 
 ## Translator
 
@@ -136,8 +136,9 @@ Defined once in `src/shared/sender.ts`:
   run); pass 2 fetches the HTML of the frame with the most text (e.g. an artifact iframe beats its shell page). Metadata
   prefers the top frame.
 - Claude artifacts living in an unreadable iframe: the popup offers to open the content page (URL taken from the tab).
-- Selection capture (`content/send-selection.ts`): `blob:` images are inlined as data URLs (≤ 5 MB each, ≤ 10 MB per
-  selection).
+- Export only (copy, `.md`, or `.zip` with `images/`): `background/download.ts` fetches the images in the offscreen
+  document (≤ 10 MB each, ≤ 200 MB total, ≤ 500 images) and saves the zip. Web pages are no longer sent to Devdy (its
+  `POST /v1/web-pages` was removed).
 
 ## Slack
 
@@ -146,16 +147,30 @@ Defined once in `src/shared/sender.ts`:
   (≤ 10 minutes) with keepalive pings.
 - Attachments: `core/attachments.ts` plans downloads (only `https://*.slack.com`, 25 MB per file, 200 MB total; external
   files such as Google Drive are skipped). `md-builder` renders saved files as relative links and skipped ones with a
-  `_(not included: …)_` note. Sends to Devdy are capped at 45 MB / 199 files.
-- Quick send inside Slack (`content/`): `message-dom.ts` finds the message menu via `data-qa` → `c-*` classes → ARIA;
-  when nothing matches it does nothing. "Send to Devdy" is inserted right after "Copy link" (or at the end of the menu).
+  `_(not included: …)_` note.
+- "Send to Devdy" inside Slack (`content/`): `message-dom.ts` finds the message menu via `data-qa` → `c-*` classes →
+  ARIA; when nothing matches it does nothing. The item is inserted right after "Copy link" (or at the end of the menu)
+  with a fixed ➤ icon (`content/devdy-icon.ts`).
+- **Thread link** (`threadLinkFor()` in `content/message-dom.ts`, pure builders in `core/thread-link.ts`), computed
+  when the menu opens:
+  1. the message's timestamp anchor (`…/archives/<channel>/p<16 digits>`; Slack adds `?thread_ts=<root>&cid=<channel>`
+     for replies) is parsed and rebuilt canonically (unknown query parameters dropped);
+  2. otherwise the link is built from the message ts (`data-msg-ts` / `data-item-key`…), the channel (open thread
+     `/thread/<channel>-<root ts>` in the client URL, `data-qa-channel-id`, or the client URL's channel) and the
+     workspace host. A message in the thread pane whose ts differs from the open thread's root is a **reply**: the link
+     gets `?thread_ts=<root ts>&cid=<channel>`; otherwise it is the root message permalink.
+  - Workspace host: the anchor's host, else `url` / `domain` of the team in Slack's `localStorage.localConfig_v2`
+    (`workspaceHostFromLocalConfig()`; the token is never read out). Only `<ws>.slack.com` / `<ws>.enterprise.slack.com`
+    are accepted (`app.slack.com` is not a workspace).
+  - DM channels (`D…`) give an error result: clicking the item shows a toast and sends nothing (Devdy can't fetch DMs).
+  - No message content, file or cookie is read for this.
 
 ## Offscreen document
 
 - **Streamed zips** (`zip-stream.ts`, fflate `Zip`): each fetched file goes straight into the job's `ZipWriter`
   (precompressed formats such as png/jpg/pdf/zip are stored, others deflated); output is folded into Blob parts every
-  8 MB; the Markdown file is written **last**. The result is a `blob:` URL for `chrome.downloads` (`build-zip`) or a Blob
-  stored in IndexedDB for the outbox (`store-zip`). If a zip can't be built, the export falls back to plain Markdown.
+  8 MB; the Markdown file is written **last**. The result is a `blob:` URL for `chrome.downloads` (`build-zip`). If a
+  zip can't be built, the export falls back to plain Markdown.
 - Parallel downloads reserve their bytes from a shared `ByteBudget` before fetching, so the total limit is never
   exceeded. Each fetch times out after 120 s. Jobs idle for 15 minutes are freed.
 - **Lifetime:** the document is closed 10 s after the last job (a timer started after a keepalive ping), with an
@@ -180,14 +195,35 @@ Defined once in `src/shared/sender.ts`:
 
 ## Devdy
 
-- Sends go to the local Inbox API: `POST http://127.0.0.1:{47821..47830}/v1/{slack-threads|web-pages}`,
-  `Authorization: Bearer <token>`, body ≤ 50 MB. Apps are discovered with `GET /health` (800 ms timeout) on that port
-  range. API contract: `devdy/docs/inbox-api.md` (Devdy repo).
+- Local Inbox API (contract: Devdy `docs/inbox-api.md`, version 2026-10-16) on `http://127.0.0.1:{47821..47830}`, Bearer
+  token. Apps are discovered with `GET /health` (800 ms timeout) on that port range.
 - App choice (`resolveDevdy()`): a pinned port (`devdyPortPinned`) is used exclusively; otherwise the single running app;
-  several apps and no pin → sends stay queued (`choose_instance`), never guessed.
-- Other features only use `features/devdy/api.ts`.
-- `/health` `features` is kept (`parseHealth()`); `supportsTranslate()` is true only when it exists and contains
-  `"translate"` (older Devdy has no `features`).
+  several apps and no pin → links stay queued (`choose_instance`), never guessed.
+- Other features only use `features/devdy/api.ts` (`outbox`, `openSettings`, `devdyTranslate`…).
+- `/health` `features` is kept (`parseHealth()`): `supportsTranslate()` needs `"translate"`, `supportsSlackThreadLink()`
+  needs `"slack-thread-link"`. Older Devdy builds lack one or both (or the whole field); the Devdy tab shows both flags.
+
+### Slack thread links (`core/client.ts`)
+
+- `postSlackThread()`: `POST /v1/slack-threads` with the JSON body `{"url": "<thread permalink>"}` and **only**
+  `Authorization` + `Content-Type: application/json` (no `X-Devdy-*`, no `Idempotency-Key`; project/title would go in the
+  body and aren't used). Devdy answers at once and fetches, downloads and translates the thread itself with its Slack MCP
+  token.
+- Never sent unless the resolved app lists `"slack-thread-link"` → otherwise `outdated` ("Update Devdy to send Slack
+  threads"), not queued.
+- Outcomes (`slackThreadOutcome()`, texts in `describeOutcome()`):
+
+| Response | Outcome | Queued | Slack toast |
+|---|---|---|---|
+| 202 `status: created` | `created` | – | "Sent — Devdy is fetching and translating the thread" |
+| 202 `status: existing` | `existing` | – | "Already in Devdy — refreshing" |
+| 202 with `errorCode: no_token` | `created` / `existing` + `errorCode` | – | "Saved, but Devdy has no Slack token: add the Slack MCP server (SLACK_MCP_XOXP_TOKEN) in Devdy, then Refresh" (warning) |
+| connection error, 503 (`server stopping`), no app running | `unreachable` | yes | "Devdy is not running or the Inbox API is off — queued" |
+| several apps, none picked | `choose_instance` | yes | + "Open settings" |
+| no token saved | `token_missing` | yes (paused) | + "Open settings" |
+| 401 | `unauthorized` | yes (paused) | error + the popup opens on the Devdy tab |
+| 404 / 415 / no `slack-thread-link` | `outdated` | no | "Update Devdy…" / "Devdy version mismatch…" |
+| 400 `code` (`invalid_link`, `dm_unsupported`, `invalid_project`, `invalid_title`, `invalid_json`), 413, 500… | `rejected` | no | text per `code` |
 
 ### Translation (`core/translate.ts`, `core/translator.ts`, `background/translate.ts`)
 
@@ -206,33 +242,29 @@ Defined once in `src/shared/sender.ts`:
   the fetch frees Devdy's slot, but its engine still finishes that turn (FIFO on one session) — hence the sparing page
   translation. A 20 s `chrome.runtime` ping keeps the SW alive while a request waits in Devdy's queue.
 
-### Outbox (`features/devdy/core/outbox.ts`)
+### Link queue (`features/devdy/core/outbox.ts`)
 
-Every export is stored before it is sent: payload in IndexedDB `context-kit` / store `devdy-outbox`
-(`core/blob-store.ts`; the offscreen `store-zip` writes there too), metadata in `chrome.storage.local.devdyOutbox`,
-retry state in `devdyOutboxState` (`paused`, `backoff`, `notice`).
+`DevdyOutbox` keeps Slack links Devdy can't take *for now* in `chrome.storage.local.devdyLinkQueue`
+(`[{ id, url, createdAt, attempts, lastError }]`), with the retry state in `devdyLinkQueueState`
+(`paused`, `backoff`, `notice`).
 
-- Every read-modify-write of the list and every delivery round runs serially (one promise chain).
-- Entries are sent oldest first. Before sending, the app is resolved: none (`unreachable`), several (`choose_instance`)
-  or no token (`no_token`) → the round stops without counting an attempt.
-- Per-export outcome:
-  - `created` / `updated` → removed from the list and **saved immediately** (a worker killed mid-round doesn't resend),
-    then the blob is deleted;
-  - `server_error` (5xx) → counts one attempt for that export, the round **continues** with the next one;
-  - `unauthorized` (401) → no attempt counted, the round stops;
-  - `rejected` (400/403/413/415…) → becomes a **failed record** (never retried).
-- After a round: `unauthorized` / `no_token` **pause** automatic retries until a token is saved. With entries still
-  queued, the one-shot alarm `devdy-outbox-retry` is scheduled with backoff 1 → 2 → 5 → 15 → 60 minutes (the last step
-  repeats; back to the first step once something is sent). Saving a token, picking an app or *Retry now* sends at once.
-- `Idempotency-Key: <export id>` lets Devdy drop duplicates after a crash.
-- Bounds:
-  - queued exports older than 7 days or with 20 attempts are dropped (with a notice in the Devdy tab); failed records
-    also expire after 7 days;
-  - at most 20 failed records are kept (newest);
-  - total size ≤ 300 MB: to make room the oldest failed records are evicted first, queued exports never; if that is not
-    enough the new export is **refused** ("queue is full").
-- Cleanup: blobs not referenced by any entry are deleted on startup/install and before each round; `outbox.hold(id)`
-  protects a zip being written before `enqueue`.
+- Every read-modify-write of the queue and every delivery round runs serially (one promise chain).
+- `send(url)` posts right away. Retryable outcomes (`unreachable`, `choose_instance`, `token_missing`, `unauthorized` —
+  Inbox API §9.3) queue the link; the queue is **deduplicated by URL** (resending a link is idempotent in Devdy). Anything
+  else is reported and removes a queued copy of the same link. After a successful send the older queued links are
+  delivered too.
+- `flush()` (alarm, browser start, Devdy tab): resolves the app first; none / several / outdated / no token stops the
+  round (no attempt counted). Links are posted oldest first: connection problems, 401 and 404/415 stop the round (the
+  rest stays queued); links refused for good are dropped with a notice. Only `unreachable` after reaching Devdy counts an
+  attempt.
+- `unauthorized` / `token_missing` **pause** automatic retries until a token is saved. With links still queued, the
+  one-shot alarm `devdy-outbox-retry` is scheduled with backoff 1 → 2 → 5 → 15 → 60 minutes (the last step repeats; back
+  to the first step once something is sent). Saving a token, picking an app or *Retry now* sends at once.
+- Bounds: links older than 7 days or with 20 attempts are dropped (notice in the Devdy tab); at most 50 links — new ones
+  are refused beyond that ("queue is full"), queued ones are never evicted.
+- **Migration** (`core/migration.ts`, on install/update): the blob outbox of AI Trans ≤ 2.1 (`devdyOutbox` /
+  `devdyOutboxState` + IndexedDB `context-kit`) can't be sent any more, so it is deleted; if it held exports, a one-time
+  notice in the Devdy tab says how many were dropped.
 
 ## Build
 
