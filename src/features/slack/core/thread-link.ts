@@ -117,7 +117,8 @@ export function workspaceHostFromLocalConfig(raw: string | null, teamId?: string
   if (!raw) return null;
   let cfg: { teams?: Record<string, LocalConfigTeam | null>; lastActiveTeamId?: unknown };
   try {
-    cfg = JSON.parse(raw) ?? {};
+    // Token-like keys are dropped while parsing: they never exist in our objects.
+    cfg = JSON.parse(raw, (key, value) => (/token/i.test(key) ? undefined : value)) ?? {};
   } catch {
     return null;
   }

@@ -131,4 +131,26 @@ describe('workspace host', () => {
     expect(workspaceHostFromLocalConfig('{bad json', 'T1')).toBeNull();
     expect(workspaceHostFromLocalConfig(null)).toBeNull();
   });
+
+  it('drops token-like keys while parsing', () => {
+    const parse = JSON.parse;
+    const seen: unknown[] = [];
+    // Observe what the reviver keeps for the team object.
+    const spy = (text: string, reviver?: (k: string, v: unknown) => unknown) =>
+      parse(text, (k, v) => {
+        const out = reviver ? reviver(k, v) : v;
+        if (k === 'T1') seen.push(out);
+        return out;
+      });
+    JSON.parse = spy as typeof JSON.parse;
+    try {
+      const cfg = JSON.stringify({
+        teams: { T1: { id: 'T1', url: 'https://acme.slack.com/', token: 'xoxc-1', apiToken: 'x' } },
+      });
+      expect(workspaceHostFromLocalConfig(cfg, 'T1')).toBe('acme.slack.com');
+    } finally {
+      JSON.parse = parse;
+    }
+    expect(seen).toEqual([{ id: 'T1', url: 'https://acme.slack.com/' }]);
+  });
 });

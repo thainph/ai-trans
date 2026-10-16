@@ -21,7 +21,6 @@ const MESSAGE_SELECTORS = [
 ];
 
 const TS_RE = /^\d{9,10}\.\d{6}$/;
-const PERMALINK_RE = /\/archives\/[CGD][A-Z0-9]+\/p\d{16}/;
 
 /**
  * The Slack message element containing `node`, if any. `deep` enables a slower
@@ -42,36 +41,107 @@ export function findMessageElement(node: Node | null, deep = true): Element | nu
   return null;
 }
 
-/** Message timestamp ("1700000000.123456") from attributes on/inside the message. */
-export function messageTs(msg: Element): string | null {
+/**
+ * Parts of a message that show its *content*: text, blocks, files, attachments,
+ * unfurls and shared-message previews. Links in there point at other messages
+ * (a pasted permalink, "View message" of a shared message…), never at this one.
+ */
+const CONTENT_SELECTOR = [
+  '.c-message_kit__blocks',
+  '.c-message__body',
+  '[data-qa="message-text"]',
+  '.p-rich_text_section',
+  '.p-rich_text_block',
+  '.p-block_kit_renderer',
+  '.c-message_attachment',
+  '.c-message_kit__attachments',
+  '[data-qa="message_attachment"]',
+  '.c-message_kit__file',
+  '.c-files_container',
+  '.c-message_kit__thread_replies',
+].join(', ');
+
+/** Timestamp anchors in priority order; the generic one only counts when it matches the known ts. */
+const ANCHOR_SELECTORS = ['a.c-timestamp', '[data-qa="timestamp"] a', 'a[data-qa="message_timestamp"]', 'a[data-ts]'];
+const GENERIC_ANCHOR = 'a[href*="/archives/"]';
+
+const PERMALINK_TS_RE = /\/archives\/[CGD][A-Z0-9]+\/p(\d{10})(\d{6})/;
+
+/** `el` sits in the content part of `msg` (see CONTENT_SELECTOR). */
+function inContent(el: Element, msg: Element): boolean {
+  const content = el.closest(CONTENT_SELECTOR);
+  return !!content && msg.contains(content);
+}
+
+/** Timestamp from the message's own attributes (`data-msg-ts`, `data-ts`, `data-item-key`, id), not from links. */
+function attributeTs(msg: Element): string | null {
   const attrs = ['data-msg-ts', 'data-ts', 'data-item-key'];
   for (const a of attrs) {
     const v = msg.getAttribute(a);
     if (v && TS_RE.test(v)) return v;
   }
+  const id = /(\d{9,10}\.\d{6})$/.exec(msg.id)?.[1];
+  if (id) return id;
   for (const a of attrs) {
-    const inner = msg.querySelector(`[${a}]`)?.getAttribute(a);
-    if (inner && TS_RE.test(inner)) return inner;
+    for (const el of msg.querySelectorAll(`[${a}]`)) {
+      if (inContent(el, msg)) continue;
+      const v = el.getAttribute(a);
+      if (v && TS_RE.test(v)) return v;
+    }
   }
-  const href = permalinkAnchor(msg)?.getAttribute('href');
-  const p = href?.match(/\/p(\d{10})(\d{6})/);
+  return null;
+}
+
+/** Message timestamp ("1700000000.123456") from attributes on/inside the message, else its timestamp anchor. */
+export function messageTs(msg: Element): string | null {
+  const ts = attributeTs(msg);
+  if (ts) return ts;
+  const p = PERMALINK_TS_RE.exec(permalinkAnchor(msg, null)?.getAttribute('href') ?? '');
   return p ? `${p[1]}.${p[2]}` : null;
 }
 
-function permalinkAnchor(msg: Element): HTMLAnchorElement | null {
-  const candidates = msg.querySelectorAll<HTMLAnchorElement>(
-    'a.c-timestamp, [data-qa="timestamp"] a, a[data-qa="message_timestamp"], a[href*="/archives/"]',
-  );
-  for (const a of candidates) {
-    if (PERMALINK_RE.test(a.getAttribute('href') ?? '')) return a;
+/**
+ * The message's own timestamp permalink: selectors tried one at a time in
+ * priority order, anchors in the message content ignored, and — when the ts is
+ * known — only an anchor whose `p<ts>` matches it.
+ */
+function permalinkAnchor(msg: Element, ts: string | null): HTMLAnchorElement | null {
+  const selectors = ts ? [...ANCHOR_SELECTORS, GENERIC_ANCHOR] : ANCHOR_SELECTORS;
+  for (const sel of selectors) {
+    for (const a of msg.querySelectorAll<HTMLAnchorElement>(sel)) {
+      if (inContent(a, msg)) continue;
+      const m = PERMALINK_TS_RE.exec(a.getAttribute('href') ?? '');
+      if (!m || (ts && `${m[1]}.${m[2]}` !== ts)) continue;
+      return a;
+    }
+  }
+  return null;
+}
+
+/**
+ * Workspace host from the page itself: any message timestamp permalink
+ * (`https://<ws>.slack.com/archives/…`), or the page URL when it is a workspace URL.
+ */
+export function workspaceHostFromPage(doc: Document, pageUrl: string): string | null {
+  const fromUrl = workspaceHost(pageUrl);
+  if (fromUrl) return fromUrl;
+  for (const a of doc.querySelectorAll<HTMLAnchorElement>(
+    'a.c-timestamp[href^="https://"], [data-qa="timestamp"] a[href^="https://"]',
+  )) {
+    if (a.closest(CONTENT_SELECTOR)) continue; // e.g. a shared message from another workspace
+    const href = a.getAttribute('href') ?? '';
+    if (!PERMALINK_TS_RE.test(href)) continue;
+    const host = workspaceHost(href);
+    if (host) return host;
   }
   return null;
 }
 
 /**
  * Devdy thread link for a message (Inbox API §7.1):
- * 1. its timestamp permalink (`https://<ws>.slack.com/archives/C…/p…`, Slack
- *    adds `?thread_ts=<root>&cid=<channel>` for replies), normalized;
+ * 1. its own timestamp permalink (`https://<ws>.slack.com/archives/C…/p…`, Slack
+ *    adds `?thread_ts=<root>&cid=<channel>` for replies), normalized — never a
+ *    link from the message content, and only one matching the message ts when known;
  * 2. otherwise built from the message ts, the channel and the client URL
  *    (`/client/T…/C…`, or an open thread `/client/T…/C…/thread/C…-<root ts>`
  *    whose root makes the message a reply), with the workspace host from
@@ -92,15 +162,25 @@ export function threadLinkFor(
   const seg = url?.hostname === 'app.slack.com' ? url.pathname.split('/').filter(Boolean) : [];
   const teamId = seg[0] === 'client' ? seg[1] : undefined;
 
-  const href = permalinkAnchor(msg)?.getAttribute('href');
-  const fromAnchor = href ? parsePermalink(new URL(href, pageUrl).toString()) : null;
+  // The ts from attributes decides which anchor is this message's own permalink.
+  const knownTs = attributeTs(msg);
+  const href = permalinkAnchor(msg, knownTs)?.getAttribute('href');
+  let fromAnchor: ReturnType<typeof parsePermalink> = null;
+  if (href) {
+    try {
+      fromAnchor = parsePermalink(new URL(href, pageUrl).toString());
+    } catch {
+      // unparsable href: build the link from the ts below
+    }
+  }
   if (fromAnchor) {
     // Anchors normally carry the workspace host; app.slack.com ones need the team's host.
     const host = workspaceHost(fromAnchor.host) ?? hostForTeam(teamId) ?? fromAnchor.host;
     return buildThreadLink({ ...fromAnchor, host });
   }
 
-  const ts = messageTs(msg);
+  // No usable anchor (e.g. a continuation message without a header timestamp).
+  const ts = knownTs;
   if (!ts || seg[0] !== 'client') return null;
   // A message inside the thread side pane belongs to the open thread.
   const inThreadPane = !!msg.closest('[data-qa="threads_flexpane"], .p-threads_flexpane, [data-qa="thread_view"]');

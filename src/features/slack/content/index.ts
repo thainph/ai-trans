@@ -1,8 +1,8 @@
 // Content script for app.slack.com: adds "Send to Devdy" to Slack's own message
 // menu (right-click on a message, or the message's "More actions" ⋮ button)
 // and shows quick-send toasts. Only the thread's permalink is sent (built from
-// the DOM / the page URL, workspace host from Slack's localConfig_v2); Devdy
-// fetches and translates the thread itself.
+// the DOM / the page URL; workspace host from the page's permalinks, else
+// Slack's localConfig_v2); Devdy fetches and translates the thread itself.
 //
 // Debug: run `localStorage.setItem('context-kit-debug', '1')` on app.slack.com
 // and reload to log what the script detects.
@@ -11,7 +11,7 @@ import { isExtensionAlive } from '../../../shared/runtime';
 import { Toaster } from '../../../shared/toast';
 import { type ThreadLinkResult, workspaceHostFromLocalConfig } from '../core/thread-link';
 import { QUICK_SEND_TARGET, type QuickSendRequest, TOAST_TARGET, type ToastMessage } from '../quick-send-messages';
-import { findMenu, findMessageElement, injectMenuItem, threadLinkFor } from './message-dom';
+import { findMenu, findMessageElement, injectMenuItem, threadLinkFor, workspaceHostFromPage } from './message-dom';
 
 const MENU_LABEL = 'Send to Devdy';
 /** A menu that appears this soon after a click/right-click on a message belongs to it. */
@@ -41,13 +41,28 @@ const toaster = new Toaster((action) => {
   }
 });
 
-/** Workspace host of the team in the client URL (reads only `url`/`domain` of Slack's localConfig_v2). */
+/** Workspace host per team id ('' = no team in the URL), once found. */
+const hostCache = new Map<string, string>();
+
+/**
+ * Workspace host of the team in the client URL: the page's own timestamp
+ * permalinks / URL first, then `url`/`domain` of the team in Slack's
+ * localConfig_v2 (parsed without its tokens). The result stays in this script.
+ */
 function hostForTeam(teamId: string | undefined): string | null {
-  try {
-    return workspaceHostFromLocalConfig(localStorage.getItem('localConfig_v2'), teamId);
-  } catch {
-    return null;
+  const key = teamId ?? '';
+  const cached = hostCache.get(key);
+  if (cached) return cached;
+  let host = workspaceHostFromPage(document, location.href);
+  if (!host) {
+    try {
+      host = workspaceHostFromLocalConfig(localStorage.getItem('localConfig_v2'), teamId);
+    } catch {
+      host = null;
+    }
   }
+  if (host) hostCache.set(key, host);
+  return host;
 }
 
 function linkOf(msg: Element): ThreadLinkResult | null {

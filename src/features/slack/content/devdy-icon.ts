@@ -1,6 +1,5 @@
-// The ➤ "send to Devdy" icon used by the Slack content script. Same shape as the
-// ➤ button of the selection toolbar (translator content script), built with
-// createElementNS so no markup string is ever parsed into Slack's page.
+// The ➤ "send to Devdy" icon of the item injected into Slack's message menu,
+// built with createElementNS so no markup string is ever parsed into Slack's page.
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 export const DEVDY_ICON_ATTR = 'data-context-kit-icon';

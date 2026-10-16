@@ -10,6 +10,7 @@ import {
   injectMenuItem,
   messageTs,
   threadLinkFor,
+  workspaceHostFromPage,
 } from '../src/features/slack/content/message-dom';
 import { toastForDelivery } from '../src/features/slack/core/quick-send';
 
@@ -104,14 +105,73 @@ describe('threadLinkFor', () => {
   });
 
   it('keeps thread_ts/cid of a reply permalink (normalized)', () => {
-    document.body.innerHTML = channelMessage.replace(
-      'p1700000000000100"',
-      'p1700000100000200?thread_ts=1700000000.000100&amp;cid=C0DEV1234&amp;foo=bar"',
-    );
+    document.body.innerHTML = channelMessage
+      .replaceAll('1700000000.000100', '1700000100.000200')
+      .replace('p1700000000000100"', 'p1700000100000200?thread_ts=1700000000.000100&amp;cid=C0DEV1234&amp;foo=bar"');
     const msg = findMessageElement(document.getElementById('body1'))!;
     expect(threadLinkFor(msg, CHANNEL_URL, hosts)).toEqual({
       ok: true,
       url: 'https://acme.slack.com/archives/C0DEV1234/p1700000100000200?thread_ts=1700000000.000100&cid=C0DEV1234',
+    });
+  });
+
+  it('ignores another Slack permalink pasted in the message body', () => {
+    document.body.innerHTML = `
+      <div class="c-virtual_list__item" data-qa="virtual-list-item" data-item-key="1700000300.000300">
+        <div class="c-message_kit__background" data-qa="message_container">
+          <div class="c-message_kit__blocks"><div class="p-rich_text_section">see
+            <a id="pasted" href="https://acme.slack.com/archives/C0OTHER99/p1690000000000001">this</a></div></div>
+          <a class="c-timestamp" href="https://acme.slack.com/archives/C0DEV1234/p1700000300000300">9:05</a>
+        </div>
+      </div>`;
+    const msg = findMessageElement(document.getElementById('pasted'))!;
+    expect(messageTs(msg)).toBe('1700000300.000300');
+    expect(threadLinkFor(msg, CHANNEL_URL, hosts)).toEqual({
+      ok: true,
+      url: 'https://acme.slack.com/archives/C0DEV1234/p1700000300000300',
+    });
+  });
+
+  it('ignores the "View message" link of a shared-message unfurl', () => {
+    document.body.innerHTML = `
+      <div class="c-virtual_list__item" data-qa="virtual-list-item" data-item-key="1700000400.000400">
+        <div class="c-message_kit__background" data-qa="message_container">
+          <div class="c-message_kit__attachments"><div class="c-message_attachment">
+            <a class="c-timestamp" href="https://other.slack.com/archives/C0SHARED1/p1680000000000002">Shared</a>
+            <a id="view" href="https://other.slack.com/archives/C0SHARED1/p1680000000000002">View message</a>
+          </div></div>
+        </div>
+      </div>`;
+    const msg = findMessageElement(document.getElementById('view'))!;
+    // No own timestamp anchor: built from the ts + channel + workspace host, never the unfurl's link.
+    expect(threadLinkFor(msg, CHANNEL_URL, hosts)).toEqual({
+      ok: true,
+      url: 'https://acme.slack.com/archives/C0DEV1234/p1700000400000400',
+    });
+  });
+
+  it('a continuation message without a header timestamp is built from its ts', () => {
+    document.body.innerHTML = `
+      <div class="c-virtual_list__item" data-qa="virtual-list-item" id="message-list_1700000500.000500">
+        <div class="c-message_kit__background c-message_kit__message--continuation">
+          <div class="c-message_kit__blocks"><span id="cont">follow-up
+            <a href="https://acme.slack.com/archives/C0DEV1234/p1700000000000100">earlier</a></span></div>
+        </div>
+      </div>`;
+    const msg = findMessageElement(document.getElementById('cont'))!;
+    expect(messageTs(msg)).toBe('1700000500.000500');
+    expect(threadLinkFor(msg, CHANNEL_URL, hosts)).toEqual({
+      ok: true,
+      url: 'https://acme.slack.com/archives/C0DEV1234/p1700000500000500',
+    });
+  });
+
+  it('skips a timestamp anchor whose ts does not match the message', () => {
+    document.body.innerHTML = channelMessage.replace('p1700000000000100"', 'p1690000000000009"');
+    const msg = findMessageElement(document.getElementById('body1'))!;
+    expect(threadLinkFor(msg, CHANNEL_URL, hosts)).toEqual({
+      ok: true,
+      url: 'https://acme.slack.com/archives/C0DEV1234/p1700000000000100',
     });
   });
 
@@ -147,6 +207,18 @@ describe('threadLinkFor', () => {
     const msg = findMessageElement(document.getElementById('body2'))!;
     expect(threadLinkFor(msg, CHANNEL_URL, () => null)).toMatchObject({ ok: false, error: 'no_workspace' });
     expect(threadLinkFor(msg, 'https://example.com/', hosts)).toBeNull();
+  });
+});
+
+describe('workspaceHostFromPage', () => {
+  it('reads the host from timestamp permalinks, skipping message content', () => {
+    document.body.innerHTML = `
+      <div class="c-message_attachment"><a class="c-timestamp" href="https://other.slack.com/archives/C0SHARED1/p1680000000000002">x</a></div>
+      <a class="c-timestamp" href="https://acme.enterprise.slack.com/archives/C0DEV1234/p1700000000000100">9:00</a>`;
+    expect(workspaceHostFromPage(document, CHANNEL_URL)).toBe('acme.enterprise.slack.com');
+    expect(workspaceHostFromPage(document, 'https://acme.slack.com/archives/C0DEV1234')).toBe('acme.slack.com');
+    document.body.innerHTML = '<p>nothing</p>';
+    expect(workspaceHostFromPage(document, CHANNEL_URL)).toBeNull();
   });
 });
 
