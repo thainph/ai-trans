@@ -2,28 +2,16 @@ import { describe, expect, it } from 'vitest';
 import YAML from 'yaml';
 import {
   collectImageUrls,
-  firstLineTitle,
   imageExtension,
   planImages,
   rewriteImageLinks,
   webFrontMatter,
 } from '../src/features/web-to-md/core/web-capture';
 
-describe('firstLineTitle', () => {
-  it('uses the first non-empty line, collapsed and capped', () => {
-    expect(firstLineTitle('\n\n   Deploy   failed on staging  \nsecond line')).toBe('Deploy failed on staging');
-    expect(firstLineTitle('   \n\t')).toBeUndefined();
-    const long = 'あ'.repeat(200);
-    const t = firstLineTitle(long)!;
-    expect(Array.from(t)).toHaveLength(120);
-    expect(t.endsWith('…')).toBe(true);
-  });
-});
-
 describe('webFrontMatter', () => {
   const at = new Date('2026-10-09T10:00:00Z');
 
-  it('emits the Devdy web-page keys as valid YAML', () => {
+  it('emits the export keys as valid YAML', () => {
     const fm = webFrontMatter(
       {
         url: 'https://v2.tauri.app/security/capabilities/?utm_source=x#top',
@@ -33,11 +21,11 @@ describe('webFrontMatter', () => {
         description: 'How: to configure #capabilities',
         publishedAt: '2026-09-01',
       },
-      { title: 'Capabilities define: what a window may do', selection: true, capturedAt: at },
+      { selection: true, capturedAt: at },
     );
     const parsed = YAML.parse(fm.split('---')[1]!);
     expect(parsed).toEqual({
-      title: 'Capabilities define: what a window may do',
+      title: 'Capabilities | Tauri',
       url: 'https://v2.tauri.app/security/capabilities/?utm_source=x#top',
       site_name: 'Tauri',
       author: 'Jane "J" Doe',

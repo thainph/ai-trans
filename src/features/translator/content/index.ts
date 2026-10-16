@@ -1,5 +1,5 @@
 // Translator content script (every page, every frame): the floating selection
-// toolbar (T translate, G grammar, R reverse, ➤ send to Devdy), the result
+// toolbar (T translate, G grammar, R reverse), the result
 // popup (Shadow DOM — query it via `shadowRoot`, not `document`) and the
 // full-page translation commands sent by the popup.
 
@@ -31,15 +31,6 @@ import { randomRequestId } from './request-id';
 import { POPUP_CSS, TRIGGER_CSS } from './styles';
 
 type TextControl = HTMLInputElement | HTMLTextAreaElement;
-
-/** Action of the ➤ toolbar button ("Send selection to Devdy"), wired by the content entry. */
-type SelectionSender = (range: Range, text: string) => Promise<void>;
-let selectionSender: SelectionSender | null = null;
-
-/** Show the ➤ button on non-editable selections and run `send` when clicked. */
-export function setSelectionSender(send: SelectionSender): void {
-  selectionSender = send;
-}
 
 /** Shadow host of the selection toolbar (page CSS can't restyle it, ours doesn't leak). */
 let triggerBtn: HTMLDivElement | null = null;
@@ -164,17 +155,6 @@ function showTrigger(rect: DOMRect, anchorEl: Element | null): void {
     if (!grammar) gBtn.setAttribute('aria-disabled', 'true');
     gBtn.textContent = 'G';
     container.appendChild(gBtn);
-  }
-
-  // Send the selection to Devdy — page text only (not what you are typing).
-  if (!isEditable && selectionSender) {
-    const dBtn = triggerButton('ai-translator-trigger-devdy', 'Send selection to Devdy', onDevdyClick);
-    dBtn.setAttribute('aria-label', 'Send selection to Devdy');
-    dBtn.innerHTML =
-      '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" ' +
-      'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-      '<line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>';
-    container.appendChild(dBtn);
   }
 
   // Show reverse button if editable + has previous source lang
@@ -817,18 +797,6 @@ function onTriggerClick(): void {
   lastDetectedSourceLang = sourceLang;
 
   translateWithSavedTarget(text, rect, sourceLang);
-}
-
-function onDevdyClick(): void {
-  if (!isExtensionAlive()) {
-    cleanup();
-    return;
-  }
-  const text = currentSelection;
-  const range = selRange;
-  if (!text || !range || !selectionSender) return;
-  removeTrigger();
-  void selectionSender(range, text);
 }
 
 function onReverseTriggerClick(): void {

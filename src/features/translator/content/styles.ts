@@ -291,7 +291,7 @@ export const LOADING_CSS = `
   @keyframes fade-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 `;
 
-/** Selection toolbar (T / G / R / ➤), inside the trigger host's Shadow DOM. */
+/** Selection toolbar (T / G / R), inside the trigger host's Shadow DOM. */
 export const TRIGGER_CSS = `
   :host {
     all: initial;
@@ -376,17 +376,6 @@ export const TRIGGER_CSS = `
     background: transparent;
     color: #64748b;
     cursor: not-allowed;
-  }
-
-  /* Teal accent for Send to Devdy */
-  .ai-translator-trigger-devdy:hover {
-    background: rgba(20, 184, 166, 0.35);
-    color: #5eead4;
-  }
-
-  .ai-translator-trigger-devdy svg {
-    display: block;
-    pointer-events: none;
   }
 
   /* Divider between buttons */

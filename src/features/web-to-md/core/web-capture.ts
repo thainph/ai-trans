@@ -1,9 +1,7 @@
-// Web page / selection captures for Devdy's `POST /v1/web-pages` (pure, unit-tested).
-//
-// Front matter keys follow the Devdy contract: title, url, site_name, author,
-// published_at, captured_at, description, selection. Images referenced in the
-// Markdown are downloaded into `images/…` inside the zip and the links are
-// rewritten to those relative paths so Devdy renders them inline.
+// Web → MD export helpers (pure, unit-tested): the YAML front matter (title,
+// url, site_name, author, published_at, captured_at, description, selection)
+// and the images of the .zip export — downloaded into `images/…` with the
+// links rewritten to those relative paths.
 
 import { safeFileName } from '../../../shared/filename';
 import { frontMatter } from '../../../shared/yaml';
@@ -18,34 +16,16 @@ export interface PageMeta {
   publishedAt?: string;
 }
 
-/** Devdy's own fallback is the first body line, capped at 120 chars. */
-export const TITLE_MAX = 120;
 export const IMAGES_DIR = 'images';
-/** Image caps: stay under Devdy's 50 MB body / 200 entries. */
+/** Image caps of the .zip export (same total as the Slack export's attachments). */
 export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
-export const MAX_TOTAL_IMAGE_BYTES = 45 * 1024 * 1024;
-export const MAX_IMAGES = 199;
+export const MAX_TOTAL_IMAGE_BYTES = 200 * 1024 * 1024;
+export const MAX_IMAGES = 500;
 
-/** First non-empty line of the selected text, trimmed and capped (selection captures). */
-export function firstLineTitle(text: string, max = TITLE_MAX): string | undefined {
-  const line = text
-    .split(/\r?\n/)
-    .map((l) => l.replace(/\s+/g, ' ').trim())
-    .find(Boolean);
-  if (!line) return undefined;
-  const chars = Array.from(line);
-  return chars.length > max
-    ? `${chars
-        .slice(0, max - 1)
-        .join('')
-        .trimEnd()}…`
-    : line;
-}
-
-/** Devdy web-page front matter (also used by the Web → MD export), followed by a blank line. */
-export function webFrontMatter(meta: PageMeta, opts: { title?: string; selection: boolean; capturedAt: Date }): string {
+/** Front matter of the Web → MD export, followed by a blank line. */
+export function webFrontMatter(meta: PageMeta, opts: { selection: boolean; capturedAt: Date }): string {
   const head = frontMatter({
-    title: opts.title ?? meta.pageTitle,
+    title: meta.pageTitle,
     url: meta.url,
     site_name: meta.siteName,
     author: meta.author,
