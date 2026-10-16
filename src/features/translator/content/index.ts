@@ -165,13 +165,10 @@ function showTrigger(rect: DOMRect, anchorEl: Element | null): void {
     container.appendChild(rBtn);
   }
 
-  const btnCount = container.childElementCount;
-  if (btnCount === 1) container.classList.add('single');
-
   const scrollX = window.scrollX;
   const scrollY = window.scrollY;
   const btnSize = 34;
-  const totalWidth = btnSize * btnCount;
+  const totalWidth = btnSize * container.childElementCount;
   const containerHeight = btnSize;
   const gap = 6;
   const spaceBelow = window.innerHeight - rect.bottom;

@@ -318,10 +318,6 @@ export const TRIGGER_CSS = `
     }
   }
 
-  .ai-translator-trigger-container.single {
-    border-radius: 50%;
-  }
-
   .ai-translator-trigger {
     width: 34px;
     height: 34px;
