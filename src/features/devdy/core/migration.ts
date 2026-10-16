@@ -5,19 +5,26 @@
 
 /** chrome.storage.local keys of the old outbox. */
 export const LEGACY_OUTBOX_KEYS = ['devdyOutbox', 'devdyOutboxState'] as const;
-/** IndexedDB database that held the old payloads (store "devdy-outbox"). */
+/**
+ * IndexedDB database that held the old payloads (store "devdy-outbox"). The
+ * name is retired: nothing uses IndexedDB any more, so it is only deleted.
+ */
 export const LEGACY_DB_NAME = 'context-kit';
+/** chrome.storage.local flag: the migration ran (it runs once per profile). */
+export const MIGRATED_KEY = 'devdyLegacyMigrated';
 
 export interface MigrationDeps {
   getLocal(keys: readonly string[]): Promise<Record<string, unknown>>;
   removeLocal(keys: readonly string[]): Promise<void>;
+  setLocal(items: Record<string, unknown>): Promise<void>;
   deleteDatabase(name: string): Promise<void>;
   setNotice(text: string): Promise<void>;
 }
 
-/** Drop the old outbox; returns how many queued/failed exports were dropped. */
+/** Drop the old outbox (once); returns how many queued/failed exports were dropped. */
 export async function migrateLegacyOutbox(deps: MigrationDeps): Promise<number> {
-  const old = await deps.getLocal(LEGACY_OUTBOX_KEYS);
+  const old = await deps.getLocal([...LEGACY_OUTBOX_KEYS, MIGRATED_KEY]);
+  if (old[MIGRATED_KEY] === true) return 0;
   const entries = old.devdyOutbox;
   const dropped = Array.isArray(entries) ? entries.length : 0;
   if (LEGACY_OUTBOX_KEYS.some((k) => k in old)) await deps.removeLocal(LEGACY_OUTBOX_KEYS);
@@ -30,5 +37,6 @@ export async function migrateLegacyOutbox(deps: MigrationDeps): Promise<number> 
         'Send the threads again from Slack (message menu → Send to Devdy).',
     );
   }
+  await deps.setLocal({ [MIGRATED_KEY]: true });
   return dropped;
 }

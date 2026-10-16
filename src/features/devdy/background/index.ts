@@ -72,11 +72,12 @@ function deleteDatabase(name: string): Promise<void> {
   });
 }
 
-/** Drop the blob outbox of AI Trans ≤ 2.1 (storage keys + IndexedDB), once. */
+/** Drop the blob outbox of AI Trans ≤ 2.1 (storage keys + IndexedDB); guarded by `devdyLegacyMigrated`. */
 function migrate(): Promise<number> {
   return migrateLegacyOutbox({
     getLocal: (keys) => chrome.storage.local.get([...keys]),
     removeLocal: (keys) => chrome.storage.local.remove([...keys]),
+    setLocal: (items) => chrome.storage.local.set(items),
     deleteDatabase,
     setNotice: (text) => outbox.setNotice(text),
   });

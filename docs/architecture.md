@@ -263,8 +263,9 @@ Defined once in `src/shared/sender.ts`:
 - Bounds: links older than 7 days or with 20 attempts are dropped (notice in the Devdy tab); at most 50 links — new ones
   are refused beyond that ("queue is full"), queued ones are never evicted.
 - **Migration** (`core/migration.ts`, on install/update): the blob outbox of AI Trans ≤ 2.1 (`devdyOutbox` /
-  `devdyOutboxState` + IndexedDB `context-kit`) can't be sent any more, so it is deleted; if it held exports, a one-time
-  notice in the Devdy tab says how many were dropped.
+  `devdyOutboxState` + IndexedDB `context-kit`, a retired name) can't be sent any more, so it is deleted; if it held
+  exports, a one-time notice in the Devdy tab says how many were dropped. It runs once per profile (flag
+  `devdyLegacyMigrated` in `chrome.storage.local`).
 
 ## Build
 

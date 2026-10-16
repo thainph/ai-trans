@@ -551,7 +551,11 @@ describe('migration of the blob outbox (≤ 2.1)', () => {
       deps: {
         getLocal: async (keys: readonly string[]) =>
           Object.fromEntries(keys.filter((k) => k in stored).map((k) => [k, stored[k]])),
-        removeLocal: async (keys: readonly string[]) => void removed.push(...keys),
+        removeLocal: async (keys: readonly string[]) => {
+          removed.push(...keys);
+          for (const k of keys) delete stored[k];
+        },
+        setLocal: async (items: Record<string, unknown>) => void Object.assign(stored, items),
         deleteDatabase: async (name: string) => void deleted.push(name),
         setNotice: async (text: string) => void notices.push(text),
       },
@@ -584,6 +588,15 @@ describe('migration of the blob outbox (≤ 2.1)', () => {
     expect(await migrateLegacyOutbox(stateOnly.deps)).toBe(0);
     expect(stateOnly.removed).toEqual([...LEGACY_OUTBOX_KEYS]);
     expect(stateOnly.notices).toEqual([]);
+  });
+
+  it('runs only once (flag), so the database is not deleted on every install/update', async () => {
+    const m = migrationDeps({ devdyOutbox: [{ id: 'a' }] });
+    expect(await migrateLegacyOutbox(m.deps)).toBe(1);
+    expect(await migrateLegacyOutbox(m.deps)).toBe(0);
+    expect(await migrateLegacyOutbox(m.deps)).toBe(0);
+    expect(m.deleted).toEqual([LEGACY_DB_NAME]);
+    expect(m.notices).toHaveLength(1);
   });
 
   it('a failing database deletion does not block the rest', async () => {
