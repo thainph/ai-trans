@@ -1,6 +1,34 @@
 # Changelog
 
-## Unreleased
+## 2.2.0 — 2026-10-16 — Slack threads sent to Devdy as links, Web → MD export only
+
+Needs a Devdy build whose Inbox API lists `"slack-thread-link"` in `GET /health` `features` (Inbox API 2026-10-16) to
+send Slack threads.
+
+### Breaking
+
+- **Web pages and selections are no longer sent to Devdy** (Devdy removed `POST /v1/web-pages`). Removed: the Web → MD
+  tab's **Send to Devdy** button and the **➤** button of the selection toolbar (T / G / R stay). Web → MD now only
+  copies or exports (`.md`, or `.zip` with images).
+- **Slack: Devdy receives the thread link, not an export.** *Send to Devdy* in Slack's message menu now posts the
+  thread's permalink (`{"url": …}`; a reply's link carries `thread_ts` / `cid`) and Devdy fetches, downloads and
+  translates the thread itself with its Slack MCP token. Nothing is exported or downloaded by AI Trans for this. The
+  Slack popup tab no longer has **Send to Devdy** (export / copy only).
+- **The Devdy queue holds Slack links only.** Markdown/zip exports still queued by an older AI Trans can't be sent any
+  more: on update they are dropped (with the old IndexedDB storage) and the Devdy tab says once how many were lost.
+
+### Changed
+
+- Results in Slack follow Devdy's answer: *Sent — Devdy is fetching and translating the thread*, *Already in Devdy —
+  refreshing*, a warning when Devdy has no Slack token (add the Slack MCP server `SLACK_MCP_XOXP_TOKEN`, then Refresh),
+  *Update Devdy to send Slack threads* for an older Devdy, a clear refusal for direct messages (checked before sending),
+  and *Devdy is not running or the Inbox API is off — queued*. A rejected token opens the Devdy tab.
+- Only connection problems (incl. `503 server stopping`), an unpicked Devdy app and token problems are queued and
+  retried; other refusals of a new link are reported and not queued. Links already queued wait for an updated Devdy and
+  go out as soon as the Devdy tab sees `slack-thread-link`. The same link is queued once; at most 50 links.
+- The Devdy tab shows the connected app's features (**Translate**, **Slack thread links**) and the waiting links
+  (**Retry now**, **Remove**); the "Not accepted by Devdy" downloads are gone.
+- Web → MD zip export: images up to 200 MB in total / 500 images (the 45 MB / 199 limits only existed for Devdy).
 
 ### Fixed
 

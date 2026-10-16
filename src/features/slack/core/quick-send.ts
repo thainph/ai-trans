@@ -1,43 +1,33 @@
 // Pure helpers for quick sends (unit-tested).
 
 import type { ToastState } from '../../../shared/toast';
-import type { ExportResponse } from '../messages';
+import type { DeliveryResult } from '../../devdy/api';
 import { TOAST_TARGET, type ToastMessage } from '../quick-send-messages';
 
-/** Map an export response to the toast shown inside Slack (null = no change). */
-export function toastFor(msg: ExportResponse, key: string): ToastMessage | null {
-  const t = (state: ToastState, text: string, action?: ToastMessage['action']): ToastMessage => ({
+/** Toast shown inside Slack for the result of sending a thread link (Inbox API §9.2). */
+export function toastForDelivery(d: Pick<DeliveryResult, 'outcome' | 'message'>, key: string): ToastMessage {
+  const t = (state: ToastState, action?: ToastMessage['action']): ToastMessage => ({
     target: TOAST_TARGET,
     key,
     state,
-    text,
+    text: d.message,
     ...(action ? { action } : {}),
   });
-  if (msg.type === 'progress') return t('progress', msg.text);
-  if (msg.type === 'error') return t('error', msg.message);
-  if (msg.action !== 'devdy') return null;
-
-  const d = msg.devdy;
-  const extra = msg.warning ? ` ${msg.warning}` : '';
-  switch (d.kind) {
+  const o = d.outcome;
+  switch (o.kind) {
     case 'created':
-      return t('success', `Sent to Devdy (${msg.messageCount} messages${filesNote(msg.files)}).${extra}`);
-    case 'updated':
-      return t('success', `Updated in Devdy (${msg.messageCount} messages${filesNote(msg.files)}).${extra}`);
+    case 'existing':
+      // Saved, but Devdy can't fetch it yet (no Slack token): a warning, not a success.
+      return t(o.errorCode ? 'queued' : 'success');
     case 'unreachable':
-    case 'server_error':
-      return t('queued', d.message);
+      return t('queued');
     case 'choose_instance':
-      return t('queued', d.message, 'open-settings');
-    case 'no_token':
+    case 'token_missing':
+      return t('queued', 'open-settings');
     case 'unauthorized':
-      return t('error', d.message, 'open-settings');
+      return t('error', 'open-settings');
+    case 'outdated':
     case 'rejected':
-      return t('error', d.message);
+      return t('error');
   }
-}
-
-function filesNote(files?: { saved: number; notIncluded: number }): string {
-  if (!files) return '';
-  return `, ${files.saved} file${files.saved === 1 ? '' : 's'}`;
 }

@@ -67,16 +67,8 @@
       </button>
     </div>
 
-    <button id="devdy-send" type="button" class="btn btn-accent" style="margin-top: 8px" title="Send the thread (and attachments when Files is on) to the Devdy app">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" />
-      </svg>
-      <span>Send to Devdy</span>
-    </button>
-
     <p id="status" class="status-line" role="status" aria-live="polite"></p>
     <p id="error" class="alert" role="alert" hidden></p>
-    <button id="open-devdy" type="button" class="link-btn" hidden>Open Devdy settings →</button>
 
 
     <p class="hint">
@@ -84,6 +76,12 @@
         <circle cx="12" cy="12" r="10" /><line x1="12" y1="16" x2="12" y2="12" /><line x1="12" y1="8" x2="12.01" y2="8" />
       </svg>
       <span>Requires a logged-in <strong>app.slack.com</strong> tab</span>
+    </p>
+    <p class="hint">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" />
+      </svg>
+      <span>To send a thread to Devdy, use <strong>Send to Devdy</strong> in Slack’s message menu</span>
     </p>
     <script type="module" src="./popup.ts"></script>
   </body>

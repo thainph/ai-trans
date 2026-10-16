@@ -1,33 +1,29 @@
-// Outbox for Devdy exports: every export is stored first, then delivered.
-// If Devdy is not running (or the token is wrong / Devdy errors), the entry
-// stays queued and is retried with an exponential backoff; payloads Devdy
-// refuses (400/413…) are kept as "failed" records the user can download or
-// remove. The queue is bounded (age, attempts, total size). Dependencies are
-// injected so the logic is unit-testable.
+// Queue of Slack thread links for Devdy. A send is tried right away; when
+// Devdy can't take it *for now* (not running / Inbox API off / 503 "server
+// stopping", several apps and none chosen, token missing or rejected) the link
+// is kept in a small JSON queue and retried with an exponential backoff.
+// Anything else (4xx, 5xx storage errors, outdated Devdy) is reported and never
+// queued. Resending the same link is safe (Devdy refreshes the thread), so the
+// queue is deduplicated by URL. Dependencies are injected so the logic is
+// unit-testable.
 
 import {
-  type CaptureKind,
-  type CapturePayload,
   describeOutcome,
   isRetryable,
+  isSent,
   type ResolveResult,
   type SendOutcome,
+  supportsSlackThreadLink,
 } from './client';
 
-export interface OutboxEntry {
+export interface QueuedLink {
   id: string;
-  /** Endpoint; entries queued before web pages existed have none → slack-threads. */
-  kind?: CaptureKind;
-  title: string;
-  contentType: string;
+  /** Canonical Slack thread permalink. */
+  url: string;
   createdAt: string;
   /** Delivery attempts that reached Devdy and failed (retryable). */
   attempts: number;
   lastError?: string;
-  /** Payload size in bytes (entries queued by older versions have none). */
-  size?: number;
-  /** Devdy refused the payload: kept (never retried) so the user can download it. */
-  failed?: { status: number; message: string; at: string };
 }
 
 export interface OutboxState {
@@ -35,7 +31,7 @@ export interface OutboxState {
   paused?: boolean;
   /** Index into RETRY_DELAYS_MIN of the next automatic retry. */
   backoff?: number;
-  /** Last problem worth showing in the Devdy tab (dropped exports…). */
+  /** Last problem worth showing in the Devdy tab (dropped links, migration…). */
   notice?: string;
 }
 
@@ -47,27 +43,26 @@ export interface DevdySettings {
 }
 
 export interface OutboxDeps {
-  loadEntries(): Promise<OutboxEntry[]>;
-  saveEntries(entries: OutboxEntry[]): Promise<void>;
+  loadEntries(): Promise<QueuedLink[]>;
+  saveEntries(entries: QueuedLink[]): Promise<void>;
   loadState(): Promise<OutboxState>;
   saveState(state: OutboxState): Promise<void>;
   loadSettings(): Promise<DevdySettings>;
   savePort(port: number): Promise<void>;
-  putBlob(id: string, blob: Blob): Promise<void>;
-  getBlob(id: string): Promise<Blob | undefined>;
-  deleteBlob(id: string): Promise<void>;
-  listBlobIds(): Promise<string[]>;
   resolveDevdy(settings: DevdySettings): Promise<ResolveResult>;
-  postCapture(port: number, token: string, payload: CapturePayload): Promise<SendOutcome>;
+  postSlackThread(port: number, token: string, url: string): Promise<SendOutcome>;
   /** (Re)schedule the one-shot retry alarm in `minutes`, or cancel it (null). */
   scheduleRetry(minutes: number | null): Promise<void>;
   now?(): Date;
+  newId?(): string;
 }
 
 export interface DeliveryResult {
   outcome: SendOutcome;
   message: string;
-  /** Entries still waiting after this call. */
+  /** The link is (still) in the queue and will be retried. */
+  queued: boolean;
+  /** Links waiting after this call. */
   pending: number;
 }
 
@@ -79,30 +74,21 @@ export interface FlushResult {
 
 /** Automatic retry delays (minutes); the last one repeats. */
 export const RETRY_DELAYS_MIN = [1, 2, 5, 15, 60] as const;
-/** Queued exports not delivered within this time are dropped. */
+/** Queued links not delivered within this time are dropped. */
 export const OUTBOX_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-/** Failed delivery attempts (Devdy reached) before an export is dropped. */
+/** Failed delivery attempts (Devdy reached) before a link is dropped. */
 export const MAX_ATTEMPTS = 20;
-/** Total payload bytes kept in the outbox (queued + failed). */
-export const MAX_OUTBOX_BYTES = 300 * 1024 * 1024;
-/** Failed records kept for download; older ones are removed. */
-export const MAX_FAILED = 20;
+/** Links kept in the queue; new ones are refused beyond that (queued ones are never evicted). */
+export const MAX_ENTRIES = 50;
 
 const errorText = (o: SendOutcome): string => ('message' in o ? o.message : '');
-export const isQueued = (e: OutboxEntry): boolean => !e.failed;
-const isSent = (o: SendOutcome): boolean => o.kind === 'created' || o.kind === 'updated';
-const formatMb = (n: number) => `${Math.round(n / (1024 * 1024))} MB`;
+const isTokenProblem = (o: SendOutcome): boolean => o.kind === 'token_missing' || o.kind === 'unauthorized';
 
-const NO_TOKEN: SendOutcome = {
-  kind: 'no_token',
-  message: 'No Devdy token set. Paste it from Devdy → Settings → Inbox API.',
-};
+type Connection = { ok: true; port: number; token: string } | { ok: false; outcome: SendOutcome };
 
 export class DevdyOutbox {
-  /** Serializes every read-modify-write of the entry list and every delivery. */
+  /** Serializes every read-modify-write of the queue and every delivery. */
   private chain: Promise<unknown> = Promise.resolve();
-  /** Blob ids being written outside the lock (offscreen store-zip) and not enqueued yet. */
-  private readonly held = new Set<string>();
 
   constructor(private readonly deps: OutboxDeps) {}
 
@@ -117,49 +103,55 @@ export class DevdyOutbox {
   }
 
   /**
-   * Protect blob `id` from the orphan cleanup while it is written before
-   * `enqueue` (e.g. a zip stored by the offscreen document). Returns the release.
+   * Send `url` now; queue it when Devdy can't take it yet. After a successful
+   * send, links queued before are delivered too.
    */
-  hold(id: string): () => void {
-    this.held.add(id);
-    return () => this.held.delete(id);
-  }
-
-  /** Store a new export, then try to deliver it (and anything queued before it). */
-  enqueue(
-    entry: Omit<OutboxEntry, 'createdAt' | 'attempts' | 'size' | 'failed'>,
-    blob: Blob | null,
-  ): Promise<DeliveryResult> {
+  send(url: string): Promise<DeliveryResult> {
     return this.exclusive(async () => {
-      if (blob) await this.deps.putBlob(entry.id, blob);
-      const size = blob?.size ?? (await this.deps.getBlob(entry.id))?.size ?? 0;
-      let entries = await this.deps.loadEntries();
+      const state = await this.deps.loadState();
+      let list = this.prune(await this.deps.loadEntries(), state);
+      const conn = await this.connect();
+      const outcome = conn.ok ? await this.deps.postSlackThread(conn.port, conn.token, url) : conn.outcome;
+      let result = outcome;
+      let queued = false;
+      let sentAny = false;
 
-      // Make room: drop the oldest failed records first; never evict queued exports.
-      const used = () => entries.reduce((sum, e) => sum + (e.size ?? 0), 0);
-      while (used() + size > MAX_OUTBOX_BYTES && entries.some((e) => e.failed)) {
-        const oldest = entries.find((e) => e.failed)!;
-        entries = entries.filter((e) => e !== oldest);
-        await this.deps.deleteBlob(oldest.id);
-      }
-      if (used() + size > MAX_OUTBOX_BYTES) {
-        await this.deps.saveEntries(entries);
-        await this.deps.deleteBlob(entry.id);
-        this.held.delete(entry.id);
-        const outcome: SendOutcome = {
-          kind: 'rejected',
-          status: 0,
-          message: `Not queued: the Devdy queue is full (${formatMb(used())} waiting). Start Devdy so queued exports can be sent, then try again.`,
-        };
-        return { outcome, message: describeOutcome(outcome), pending: entries.filter(isQueued).length };
+      if (isRetryable(outcome)) {
+        const existing = list.find((e) => e.url === url);
+        if (existing) {
+          list = list.map((e) => (e === existing ? { ...e, lastError: errorText(outcome) } : e));
+          queued = true;
+        } else if (list.length >= MAX_ENTRIES) {
+          result = {
+            kind: 'rejected',
+            status: 0,
+            message: `Not queued: the Devdy queue is full (${list.length} links waiting). Start Devdy so they can be sent, then try again.`,
+          };
+        } else {
+          list.push({
+            id: this.deps.newId?.() ?? crypto.randomUUID(),
+            url,
+            createdAt: this.now().toISOString(),
+            attempts: conn.ok && outcome.kind !== 'unauthorized' ? 1 : 0,
+            lastError: errorText(outcome),
+          });
+          queued = true;
+        }
+        if (isTokenProblem(outcome)) state.paused = true;
+      } else {
+        // Sent, or refused for good: a queued copy of the same link has nothing left to do.
+        // (An outdated Devdy says nothing about the link: a queued copy waits for the update.)
+        if (outcome.kind !== 'outdated') list = list.filter((e) => e.url !== url);
+        if (isSent(outcome)) {
+          sentAny = true;
+          state.paused = false;
+          if (conn.ok && list.length) list = (await this.deliver(conn, list, state)).list;
+        }
       }
 
-      entries.push({ ...entry, createdAt: this.now().toISOString(), attempts: 0, size });
-      await this.deps.saveEntries(entries);
-      this.held.delete(entry.id);
-      const results = await this.deliverAll(false);
-      const outcome = results.get(entry.id) ?? { kind: 'unreachable' as const, message: 'Not sent yet.' };
-      return { outcome, message: describeOutcome(outcome), pending: await this.queuedCount() };
+      await this.deps.saveEntries(list);
+      await this.finish(state, list.length, sentAny, false);
+      return { outcome: result, message: describeOutcome(result), queued, pending: list.length };
     });
   }
 
@@ -169,30 +161,47 @@ export class DevdyOutbox {
    */
   flush(opts: { auto?: boolean } = {}): Promise<FlushResult> {
     return this.exclusive(async () => {
-      await this.removeOrphans();
-      const results = await this.deliverAll(!!opts.auto);
-      const sent = [...results.values()].filter(isSent).length;
-      const last = [...results.values()].at(-1);
-      return { sent, pending: await this.queuedCount(), lastOutcome: last };
+      const auto = !!opts.auto;
+      const state = await this.deps.loadState();
+      let list = this.prune(await this.deps.loadEntries(), state);
+      if (list.length === 0 || (auto && state.paused)) {
+        await this.deps.saveEntries(list);
+        await this.finish(state, list.length, false, auto);
+        return { sent: 0, pending: list.length };
+      }
+
+      const conn = await this.connect();
+      let sent = 0;
+      let lastOutcome: SendOutcome | undefined;
+      if (!conn.ok) {
+        lastOutcome = conn.outcome;
+        list = list.map((e) => ({ ...e, lastError: describeOutcome(conn.outcome) }));
+        if (isTokenProblem(conn.outcome)) state.paused = true;
+      } else {
+        const r = await this.deliver(conn, list, state);
+        list = r.list;
+        sent = r.sent;
+        lastOutcome = r.lastOutcome;
+        if (sent) state.paused = false;
+      }
+      await this.deps.saveEntries(list);
+      await this.finish(state, list.length, sent > 0, auto);
+      return { sent, pending: list.length, lastOutcome };
     });
   }
 
-  /** Current entries (queued and failed). Lock-free: never waits behind an upload. */
-  entries(): Promise<OutboxEntry[]> {
+  /** Queued links. Lock-free: never waits behind a send. */
+  entries(): Promise<QueuedLink[]> {
     return this.deps.loadEntries();
   }
 
-  /** Delete blobs no entry references (left behind by a crash between store-zip and enqueue). */
-  cleanup(): Promise<number> {
-    return this.exclusive(() => this.removeOrphans());
-  }
-
-  /** Remove a failed record (or a queued entry) and its payload. */
+  /** Remove a queued link. */
   remove(id: string): Promise<void> {
     return this.exclusive(async () => {
       const entries = await this.deps.loadEntries();
-      await this.deps.saveEntries(entries.filter((e) => e.id !== id));
-      await this.deps.deleteBlob(id);
+      const left = entries.filter((e) => e.id !== id);
+      await this.deps.saveEntries(left);
+      if (left.length === 0) await this.deps.scheduleRetry(null);
     });
   }
 
@@ -204,6 +213,13 @@ export class DevdyOutbox {
     });
   }
 
+  /** Show `text` in the Devdy tab until dismissed. */
+  setNotice(text: string): Promise<void> {
+    return this.exclusive(async () => {
+      await this.deps.saveState({ ...(await this.deps.loadState()), notice: text });
+    });
+  }
+
   clearNotice(): Promise<void> {
     return this.exclusive(async () => {
       const state = await this.deps.loadState();
@@ -211,146 +227,91 @@ export class DevdyOutbox {
     });
   }
 
-  private async queuedCount(): Promise<number> {
-    return (await this.deps.loadEntries()).filter(isQueued).length;
-  }
-
-  private async removeOrphans(): Promise<number> {
-    const referenced = new Set((await this.deps.loadEntries()).map((e) => e.id));
-    let removed = 0;
-    for (const id of await this.deps.listBlobIds()) {
-      if (referenced.has(id) || this.held.has(id)) continue;
-      await this.deps.deleteBlob(id);
-      removed++;
+  /**
+   * Find the Devdy to send to. Reachability first (with Devdy down, a missing
+   * token is not the problem yet), then the "slack-thread-link" feature, then the token.
+   */
+  private async connect(): Promise<Connection> {
+    const settings = await this.deps.loadSettings();
+    const found = await this.deps.resolveDevdy(settings);
+    if (found.kind === 'none') {
+      return { ok: false, outcome: { kind: 'unreachable', message: 'Devdy is not running or the Inbox API is off.' } };
     }
-    return removed;
-  }
-
-  /** Drop queued entries past the TTL / attempt limit and expired failed records. */
-  private async prune(entries: OutboxEntry[], state: OutboxState): Promise<OutboxEntry[]> {
-    const now = this.now().getTime();
-    const expired = (e: OutboxEntry) => now - Date.parse(e.createdAt) > OUTBOX_TTL_MS;
-    const dropped: OutboxEntry[] = [];
-    const kept: OutboxEntry[] = [];
-    for (const e of entries) {
-      if (expired(e) || (isQueued(e) && e.attempts >= MAX_ATTEMPTS)) {
-        await this.deps.deleteBlob(e.id);
-        if (isQueued(e)) dropped.push(e);
-      } else {
-        kept.push(e);
-      }
+    if (found.kind === 'ambiguous') {
+      const ports = found.instances.map((i) => i.port).join(', ');
+      return {
+        ok: false,
+        outcome: { kind: 'choose_instance', message: `Several Devdy apps are running (ports ${ports}).` },
+      };
     }
-    // Keep only the newest failed records.
-    const failed = kept.filter((e) => e.failed);
-    const tooMany = new Set(failed.slice(0, Math.max(0, failed.length - MAX_FAILED)));
-    for (const e of tooMany) await this.deps.deleteBlob(e.id);
-    if (dropped.length) {
-      const titles = dropped.map((e) => `“${e.title}”`).join(', ');
-      state.notice =
-        `Dropped ${dropped.length} export${dropped.length === 1 ? '' : 's'} that could not be delivered ` +
-        `within 7 days / ${MAX_ATTEMPTS} attempts: ${titles}${dropped.at(-1)?.lastError ? ` (last error: ${dropped.at(-1)!.lastError})` : ''}`;
+    const { port, health } = found.instance;
+    if (port !== settings.port) await this.deps.savePort(port);
+    if (!supportsSlackThreadLink(health)) {
+      return {
+        ok: false,
+        outcome: { kind: 'outdated', message: `Devdy ${health.version ?? ''} does not support Slack thread links.` },
+      };
     }
-    return kept.length !== entries.length || tooMany.size ? kept.filter((e) => !tooMany.has(e)) : entries;
+    if (!settings.token) {
+      return {
+        ok: false,
+        outcome: { kind: 'token_missing', message: 'No Devdy token set. Paste it from Devdy → Settings → Inbox API.' },
+      };
+    }
+    return { ok: true, port, token: settings.token };
   }
 
   /**
-   * Deliver queued entries oldest-first. Devdy down / no instance / token
-   * problems stop the round (every entry would fail the same way); a server
-   * error only concerns that entry, so the next ones are still tried.
+   * Deliver queued links oldest-first. Retryable problems concern Devdy as a
+   * whole (down, stopping, bad token), and an outdated Devdy refuses every
+   * link: both stop the round and keep the rest queued. Links refused for good
+   * are dropped (with a notice).
    */
-  private async deliverAll(auto: boolean): Promise<Map<string, SendOutcome>> {
-    const results = new Map<string, SendOutcome>();
-    const state = await this.deps.loadState();
-    const loaded = await this.deps.loadEntries();
-    let list = await this.prune(loaded, state);
-    if (list !== loaded) await this.deps.saveEntries(list);
-
-    const queued = list.filter(isQueued);
-    if (queued.length === 0 || (auto && state.paused)) {
-      await this.finish(state, queued.length, false, auto);
-      return results;
-    }
-
-    const settings = await this.deps.loadSettings();
-    let stopWith: SendOutcome | null = null;
-    let port: number | undefined;
-
-    // Reachability first: with Devdy down, a missing token is not the problem yet.
-    const found = await this.deps.resolveDevdy(settings);
-    if (found.kind === 'none') {
-      stopWith = { kind: 'unreachable', message: 'Devdy is not running.' };
-    } else if (found.kind === 'ambiguous') {
-      const ports = found.instances.map((i) => i.port).join(', ');
-      stopWith = { kind: 'choose_instance', message: `Several Devdy apps are running (ports ${ports}).` };
-    } else {
-      port = found.instance.port;
-      if (port !== settings.port) await this.deps.savePort(port);
-      if (!settings.token) stopWith = NO_TOKEN;
-    }
-
-    const update = (id: string, fn: (e: OutboxEntry) => OutboxEntry | null) => {
-      list = list.flatMap((e) => {
-        if (e.id !== id) return [e];
-        const next = fn(e);
-        return next ? [next] : [];
-      });
-    };
-
-    let sentAny = false;
-    for (const entry of queued) {
-      if (stopWith) {
-        results.set(entry.id, stopWith);
-        update(entry.id, (e) => ({ ...e, lastError: errorText(stopWith!) }));
+  private async deliver(
+    conn: { port: number; token: string },
+    list: QueuedLink[],
+    state: OutboxState,
+  ): Promise<{ list: QueuedLink[]; sent: number; lastOutcome?: SendOutcome }> {
+    const kept: QueuedLink[] = [];
+    const refused: string[] = [];
+    let sent = 0;
+    let lastOutcome: SendOutcome | undefined;
+    let stop: SendOutcome | null = null;
+    for (const entry of list) {
+      if (stop) {
+        kept.push({ ...entry, lastError: describeOutcome(stop) });
         continue;
       }
-      const blob = await this.deps.getBlob(entry.id);
-      if (!blob) {
-        // Lost payload (e.g. storage cleared): nothing to resend.
-        results.set(entry.id, { kind: 'rejected', status: 0, message: 'The queued export data is missing.' });
-        update(entry.id, () => null);
-        await this.deps.saveEntries(list);
-        continue;
-      }
-      const outcome = await this.deps.postCapture(port!, settings.token!, {
-        kind: entry.kind ?? 'slack-threads',
-        body: blob,
-        contentType: entry.contentType,
-        idempotencyKey: entry.id,
-      });
-      results.set(entry.id, outcome);
+      const outcome = await this.deps.postSlackThread(conn.port, conn.token, entry.url);
+      lastOutcome = outcome;
       if (isSent(outcome)) {
-        sentAny = true;
-        // Persist right away: a service worker killed mid-loop must not resend it.
-        update(entry.id, () => null);
-        await this.deps.saveEntries(list);
-        await this.deps.deleteBlob(entry.id);
-      } else if (isRetryable(outcome)) {
-        // A token problem says nothing about the payload: it doesn't count as an attempt.
-        const counts = outcome.kind !== 'unauthorized';
-        update(entry.id, (e) => ({
-          ...e,
-          attempts: counts ? e.attempts + 1 : e.attempts,
-          lastError: errorText(outcome),
-        }));
-        if (outcome.kind !== 'server_error') stopWith = outcome; // Devdy gone / bad token: stop here
+        sent++;
+      } else if (isRetryable(outcome) || outcome.kind === 'outdated') {
+        // A token problem says nothing about the link: it doesn't count as an attempt.
+        const counts = outcome.kind === 'unreachable';
+        kept.push({ ...entry, attempts: entry.attempts + (counts ? 1 : 0), lastError: describeOutcome(outcome) });
+        if (isTokenProblem(outcome)) state.paused = true;
+        stop = outcome;
       } else {
-        const message = describeOutcome(outcome);
-        const status = outcome.kind === 'rejected' ? outcome.status : 0;
-        update(entry.id, (e) => ({
-          ...e,
-          lastError: message,
-          failed: { status, message, at: this.now().toISOString() },
-        }));
-        await this.deps.saveEntries(list);
+        refused.push(`${entry.url} (${describeOutcome(outcome)})`);
       }
     }
+    if (refused.length) {
+      state.notice = `Devdy refused ${refused.length} queued link${refused.length === 1 ? '' : 's'}: ${refused.join(', ')}`;
+    }
+    return { list: kept, sent, lastOutcome };
+  }
 
-    // Entries enqueued concurrently can't exist (exclusive), so this is the full list.
-    await this.deps.saveEntries(list);
-    if (stopWith?.kind === 'unauthorized' || stopWith?.kind === 'no_token') state.paused = true;
-    else if (sentAny) state.paused = false;
-    await this.finish(state, list.filter(isQueued).length, sentAny, auto);
-    return results;
+  /** Drop links past the TTL / attempt limit (with a notice). */
+  private prune(entries: QueuedLink[], state: OutboxState): QueuedLink[] {
+    const now = this.now().getTime();
+    const dropped = entries.filter((e) => now - Date.parse(e.createdAt) > OUTBOX_TTL_MS || e.attempts >= MAX_ATTEMPTS);
+    if (dropped.length === 0) return entries;
+    const last = dropped.at(-1)?.lastError;
+    state.notice =
+      `Dropped ${dropped.length} Slack link${dropped.length === 1 ? '' : 's'} that could not be delivered ` +
+      `within 7 days / ${MAX_ATTEMPTS} attempts: ${dropped.map((e) => e.url).join(', ')}${last ? ` (last error: ${last})` : ''}`;
+    return entries.filter((e) => !dropped.includes(e));
   }
 
   /** Save the state and (re)schedule the retry alarm with the backoff. */

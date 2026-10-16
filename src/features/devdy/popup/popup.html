@@ -14,7 +14,7 @@
       </span>
       <div>
         <div class="app-title">Devdy</div>
-        <div class="app-subtitle">Send Slack threads and web pages to Devdy</div>
+        <div class="app-subtitle">Send Slack thread links to Devdy</div>
       </div>
     </header>
 
@@ -26,6 +26,10 @@
           <button id="refresh" type="button" class="link-btn">Refresh</button>
         </div>
         <div id="detail" class="muted-text"></div>
+        <div id="features" class="feature-row" hidden>
+          <span id="feat-translate" class="feature"></span>
+          <span id="feat-slack" class="feature"></span>
+        </div>
       </div>
     </div>
 
@@ -44,16 +48,12 @@
     </div>
 
     <div class="section" id="queue-section" hidden>
-      <span class="field-label">Queue</span>
       <div class="row-between">
-        <span id="queue" class="muted-text"></span>
+        <span class="field-label">Queue</span>
         <button id="retry" type="button" class="link-btn">Retry now</button>
       </div>
-    </div>
-
-    <div class="section" id="failed-section" hidden>
-      <span class="field-label">Not accepted by Devdy</span>
-      <ul id="failed" class="failed-list"></ul>
+      <p id="queue" class="muted-text"></p>
+      <ul id="queue-list" class="queue-list"></ul>
     </div>
 
     <div class="section" id="notice-section" hidden>
@@ -70,9 +70,8 @@
     <div class="how">
       <span class="field-label">How to send</span>
       <ul>
-        <li><strong>Slack thread:</strong> right-click a message → <em>Send to Devdy</em>, or the Slack tab.</li>
-        <li><strong>Selected text:</strong> select it on any page → <em>➤</em> in the floating toolbar.</li>
-        <li><strong>Whole page:</strong> Web → MD tab → <em>Send to Devdy</em>.</li>
+        <li><strong>Slack thread:</strong> right-click a message (or its <em>⋮</em> menu) → <em>Send to Devdy</em>. Only the thread link is sent; Devdy fetches and translates the thread with its own Slack token.</li>
+        <li>Needs a Devdy build with Slack thread links (<em>slack-thread-link</em>).</li>
       </ul>
     </div>
 
@@ -82,10 +81,13 @@
       .status-card .muted-text { margin-top: 4px; }
       .how ul { margin: 6px 0 0; padding-left: 18px; font-size: 12px; color: var(--text-muted); line-height: 1.6; }
       .how strong { color: var(--text); font-weight: 600; }
-      .failed-list { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-      .failed-list li { font-size: 12px; }
-      .failed-list .failed-title { font-weight: 600; overflow-wrap: anywhere; }
-      .failed-list .btn-row { margin-top: 2px; gap: 10px; }
+      .feature-row { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 6px; font-size: 12px; }
+      .feature.on { color: var(--text); }
+      .feature.off { color: var(--text-muted); }
+      .queue-list { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+      .queue-list li { font-size: 12px; }
+      .queue-list .queue-url { font-weight: 600; overflow-wrap: anywhere; }
+      .queue-list .btn-row { margin-top: 2px; gap: 10px; }
     </style>
     <script type="module" src="./popup.ts"></script>
   </body>

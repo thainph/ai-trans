@@ -1,6 +1,5 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it } from 'vitest';
-import { pageMeta, selectionHtml } from '../src/features/web-to-md/content/selection';
 import { extractInPage } from '../src/features/web-to-md/core/extract';
 import { bestImageSrc, largestFromSrcset } from '../src/features/web-to-md/core/image-src';
 
@@ -30,26 +29,9 @@ describe('image sources', () => {
   });
 });
 
-describe('selectionHtml', () => {
-  it('clones the selected fragment with absolute, real image URLs', () => {
-    document.body.innerHTML = `
-      <article><p id="p1">Deploy failed <b>badly</b></p>
-      <figure><img id="i" src="data:image/gif;base64,R0lGOD" data-src="img/fig1.png" srcset="x.png 1x"></figure>
-      <p id="p2">Second paragraph</p><p id="after">not selected</p></article>`;
-    const range = document.createRange();
-    range.setStartBefore(document.getElementById('p1')!);
-    range.setEndAfter(document.getElementById('p2')!);
-    const html = selectionHtml(range, 'https://example.com/docs/page.html');
-    expect(html).toContain('Deploy failed <b>badly</b>');
-    expect(html).toContain('src="https://example.com/docs/img/fig1.png"');
-    expect(html).not.toContain('srcset');
-    expect(html).not.toContain('not selected');
-    // the live page is untouched
-    expect(document.getElementById('i')!.getAttribute('src')).toBe('data:image/gif;base64,R0lGOD');
-  });
-});
+describe('page metadata (extractInPage)', () => {
+  const meta = () => extractInPage('article', 'meta').meta;
 
-describe('pageMeta', () => {
   it('reads og/meta tags with sensible fallbacks', () => {
     document.head.innerHTML = `
       <title>Fallback title</title>
@@ -59,7 +41,7 @@ describe('pageMeta', () => {
       <meta name="description" content="How to">
       <meta property="article:published_time" content="2026-09-01">`;
     setUrl('https://v2.tauri.app/x');
-    expect(pageMeta()).toEqual({
+    expect(meta()).toEqual({
       url: 'https://v2.tauri.app/x',
       pageTitle: 'Capabilities',
       siteName: 'Tauri',
@@ -72,28 +54,6 @@ describe('pageMeta', () => {
   it('falls back to <title> and the host name', () => {
     document.head.innerHTML = '<title> Plain page </title>';
     setUrl('https://www.example.com/a');
-    expect(pageMeta()).toMatchObject({
-      pageTitle: 'Plain page',
-      siteName: 'example.com',
-      author: undefined,
-    });
-  });
-
-  it('matches the metadata the Web → MD tab extracts (same DOM, same values)', () => {
-    setUrl('https://www.example.com/post');
-    document.head.innerHTML = `
-      <title>Doc title</title>
-      <meta name="og:description" content="  From og  ">
-      <meta property="article:author" content="Kim">`;
-    document.body.innerHTML = '<main><p>Body text</p></main>';
-    const fromTab = extractInPage('article', 'content').meta;
-    expect(pageMeta()).toEqual(fromTab);
-    expect(fromTab).toMatchObject({
-      url: 'https://www.example.com/post',
-      pageTitle: 'Doc title',
-      siteName: 'example.com',
-      author: 'Kim',
-      description: 'From og',
-    });
+    expect(meta()).toMatchObject({ pageTitle: 'Plain page', siteName: 'example.com', author: undefined });
   });
 });

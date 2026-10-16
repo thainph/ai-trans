@@ -8,16 +8,15 @@ A Chrome extension (Manifest V3) that merges three older extensions (`ai-transla
 | Tab | What it does |
 |---|---|
 | 🌐 **Translate** | Translate the selected text or a whole page with OpenAI, Gemini, Ollama (local models) or the Devdy app; fix English grammar while you type. |
-| 📄 **Web → MD** | Turn the current page into Markdown: copy it, download it (`.md`, or a `.zip` with images) or send it to Devdy. |
-| 💬 **Slack** | Export a Slack thread to Markdown (with reactions and attachments), or send it straight to Devdy. |
-| ➤ **Devdy** | Connect to the Devdy app on your machine: token, app choice, delivery queue. |
+| 📄 **Web → MD** | Turn the current page into Markdown: copy it or download it (`.md`, or a `.zip` with images). |
+| 💬 **Slack** | Export a Slack thread to Markdown (with reactions and attachments). Inside Slack, **Send to Devdy** sends the thread's link to Devdy. |
+| ➤ **Devdy** | Connect to the Devdy app on your machine: token, app choice, features, queue of Slack links. |
 
 See [CHANGELOG.md](CHANGELOG.md) for recent changes.
 
 > The extension was previously called **Context Kit**. Internal identifiers (storage keys such as `contextKitLastTab`,
-> message channels `context-kit-*`, the IndexedDB database `context-kit`, the `context-kit-debug` flag, the
-> `[context-kit]` log prefix, the package name) keep the `context-kit` prefix on purpose, so saved settings and queued
-> exports survive the rename.
+> message channels `context-kit-*`, the `context-kit-debug` flag, the `[context-kit]` log prefix, the package name)
+> keep the `context-kit` prefix on purpose, so saved settings survive the rename.
 
 ## Installation
 
@@ -58,7 +57,6 @@ model, a **Translation Style** (Casual / Polite / Business) and a **Target Langu
 | **T** | always | Translate the selection into the target language. The result popup lets you switch the target language and the style, and **Copy** the result. |
 | **G** | the selection is inside an input field (input, textarea, rich editor) | Check the English grammar; **Replace** writes the corrected text back where you are typing. |
 | **R** | the selection is inside an input field, after at least one translation | Reverse-translate into the language of the text you translated last. E.g. read a Japanese message → translate it to Vietnamese → type your reply in Vietnamese → **R** translates the reply into Japanese. |
-| **➤** | the selection is page text (not an input field) | Send the selection to Devdy (see the Devdy tab). |
 
 The result popup can be resized from any edge; its size is remembered. Closing it cancels the request in flight.
 
@@ -112,7 +110,8 @@ With Devdy:
      (image links point into the zip). Images that fail to download keep their original URL; no images, or a zip that
      can't be built → a plain `.md`.
    - **Copy** — copy the Markdown to the clipboard.
-   - **Send to Devdy** — send the whole page to Devdy, images included.
+
+Web pages can't be sent to Devdy any more (Devdy dropped that API); export or copy them instead.
 
 **Preview** shows the first 4 000 characters with the character count and an estimated token count.
 For Claude artifacts (content inside an iframe that can't be read) the tab offers a button to open the content page —
@@ -126,7 +125,7 @@ Requires a logged-in `app.slack.com` tab (the export uses that session).
 
 1. Paste a thread link (*Copy link* on a message, like `https://<team>.slack.com/archives/C…/p…`).
 2. Pick **Options**: **Reactions**, **Files** (download attachments), **Zip files** (put the files in a zip on Export).
-3. Click **Export** (save a file), **Copy** (text only) or **Send to Devdy**.
+3. Click **Export** (save a file) or **Copy** (text only).
 
 With **Files** + **Zip files** on and attachments in the thread, **Export** saves a zip:
 
@@ -141,53 +140,71 @@ slack-thread-dev-20231115-0513.zip
 Files left out of the zip (external files such as Google Drive, files over 25 MB, beyond the 200 MB total, failed
 downloads) keep their Slack link with a `_(not included: …)_` note. If no file could be downloaded you get a plain `.md`.
 
-**Quick send inside Slack:** right-click a message (or click ⋮ *More actions*) → Slack's menu gets a **Send to Devdy**
-item (right after *Copy link*). It sends the whole thread containing that message, always with reactions and
-attachments; progress and the result appear as a notification in the bottom-right corner. If a Slack redesign hides the
-item, you can still send from the Slack tab in the popup.
+**Send to Devdy inside Slack:** right-click a message (or click ⋮ *More actions*) → Slack's menu gets a **Send to
+Devdy** item (right after *Copy link*, with a ➤ icon). It sends **only the thread's link** — the permalink of that
+message, like Slack's *Copy link* (a reply's link carries the thread's root: `?thread_ts=…&cid=…`). Devdy then fetches
+the whole thread with its own Slack token, downloads the files and translates it; AI Trans exports nothing and downloads
+nothing for this. The result appears as a notification in the bottom-right corner:
+
+| Notification | Meaning |
+|---|---|
+| *Sent — Devdy is fetching and translating the thread* | New thread in Devdy. |
+| *Already in Devdy — refreshing* | Devdy already had it and fetches it again (new replies, edits). |
+| *Saved, but Devdy has no Slack token…* | Add the Slack MCP server (`SLACK_MCP_XOXP_TOKEN`) in Devdy, then **Refresh** there. |
+| *Devdy is not running or the Inbox API is off — queued* | Sent automatically once Devdy is back (see the queue below). |
+| *Update Devdy to send Slack threads* | The running Devdy is too old (or doesn't match): update it. |
+| *Direct messages (DMs) can't be sent to Devdy* | Devdy only takes channel threads (public or private). |
+| token rejected | the popup opens on the Devdy tab so you can paste the token again. |
+
+If a Slack redesign hides the item, copy the thread with the Slack tab instead.
 
 > **Debugging:** if *Send to Devdy* doesn't appear, open the DevTools console on `app.slack.com`, run
 > `localStorage.setItem('context-kit-debug', '1')`, reload the page and look for `[context-kit]` log lines.
 
 ### ➤ Devdy
 
-Devdy is an app running on your machine that stores Slack threads and web pages as context. AI Trans talks to it through
-a local API on `127.0.0.1`, never over the internet.
+Devdy is an app running on your machine that stores Slack threads (and translates them) as context for AI sessions.
+AI Trans talks to it through a local API on `127.0.0.1`, never over the internet.
+
+**Requirements:** a Devdy build whose Inbox API supports Slack thread links — its `GET /health` lists
+`"slack-thread-link"` in `features` (the Devdy tab shows ✓/✗ for **Slack thread links** and **Translate**). With an older
+Devdy, *Send to Devdy* is refused with "Update Devdy to send Slack threads" and nothing is sent. For Devdy to fetch the
+threads, add the Slack MCP server (`SLACK_MCP_XOXP_TOKEN`) in Devdy.
 
 **Setup:** in Devdy open *Settings → Inbox API*, copy the token, paste it into **Inbox API token** in the Devdy tab and
 click **Save**. No project needed — Devdy assigns one later.
 
-**Three ways to send:**
-
-| What | How |
-|---|---|
-| A Slack thread | right-click a message → **Send to Devdy**, or Slack tab → **Send to Devdy** |
-| Selected text | the **➤** button of the floating toolbar (titled after the first line of the selection) |
-| A whole page | Web → MD tab → **Send to Devdy** |
-
-Sending the same Slack thread or the same page URL again **updates** the earlier copy in Devdy instead of duplicating it.
+**Sending:** Slack → right-click a message → **Send to Devdy** (see [💬 Slack](#-slack)). Sending the same thread again
+is safe: Devdy refreshes it instead of duplicating it.
 
 **Several Devdy apps running** (e.g. a release and a dev build): the Devdy tab shows a **Devdy app** picker. Until you
-pick one, the extension doesn't guess: sends wait in the queue.
+pick one, the extension doesn't guess: links wait in the queue.
 
-**The queue:** every send is stored first, so nothing is lost when Devdy isn't running.
+**The queue** (only for problems that go away by themselves):
 
-- Devdy closed, no app picked, or a temporary Devdy error → the send stays queued and is retried after 1, 2, 5, 15 and
-  then every 60 minutes. **Retry now** sends immediately; saving a token or picking an app does too.
+- Devdy not running / Inbox API off (including "server stopping"), no app picked, or a missing/wrong token → the link is
+  queued and retried after 1, 2, 5, 15 and then every 60 minutes. **Retry now** sends immediately; saving a token or
+  picking an app does too. The Devdy tab lists the waiting links; **Remove** drops one.
 - Missing or wrong token → automatic retries pause until you save a valid token.
-- Devdy refuses the content (e.g. too large) → it moves to **Not accepted by Devdy**: download it to keep it, or
-  **Dismiss** it.
-- Sends still undelivered after 7 days or 20 attempts are dropped, with a notice in the Devdy tab. The queue holds at
-  most 300 MB; when it is full, new sends are refused — open Devdy so the queue can drain.
+- A **new** link Devdy can't take for other reasons (not a thread link, DM, outdated Devdy…) is reported right away and
+  not queued. Links **already** in the queue stay there while the running Devdy is outdated, and are sent as soon as a
+  Devdy with Slack thread links is seen (opening the Devdy tab checks it, besides the automatic retries); a queued link
+  Devdy refuses for good (e.g. not a thread link) is dropped with a notice.
+- The same link is queued once. Links still undelivered after 7 days or 20 attempts are dropped, with a notice in the
+  Devdy tab; the queue holds at most 50 links.
+- Updating from AI Trans ≤ 2.1: Markdown/zip exports still queued by the old version can't be sent any more; they are
+  dropped and the Devdy tab says so once.
 
 ## Privacy & security
 
 - **Text to translate** goes only to the provider you chose (OpenAI, Gemini, Ollama on your machine, or the Devdy app on
   your machine, which uses its own engine). API keys are
   stored in the browser's `chrome.storage.sync`.
-- **Devdy** is only contacted on `127.0.0.1` (your machine); its token lives in `chrome.storage.local`.
+- **Devdy** is only contacted on `127.0.0.1` (your machine); its token lives in `chrome.storage.local`. Only the Slack
+  thread link is sent to it — no message content, files or cookies.
 - **Slack:** the export runs inside your Slack tab with your session; the Slack token never leaves the page.
-  Attachments are only downloaded from `*.slack.com`.
+  Attachments are only downloaded from `*.slack.com`. To build a thread link, the Slack content script reads only the
+  workspace address from Slack's local settings.
 - **Web page images:** cookies are sent only for images on the page's exact origin (scheme + host + port); private
   addresses (localhost, LAN, `*.local`…) are blocked so a page can't use the extension to probe your local network.
 - The translate toolbar and result popup are isolated from page scripts and only react to real user input.
@@ -200,12 +217,9 @@ pick one, the extension doesn't guess: sends wait in the queue.
 | Selection translation | 100 000 characters per request (Devdy: sent in parts of ≤ 8 000 characters) |
 | Page translation | segments over 4 000 characters are skipped; content loaded later: at most 20 requests/minute |
 | Slack attachments (export) | 25 MB per file, 200 MB total |
-| Slack → Devdy | 45 MB total, 199 files |
-| Web page images (export / Devdy) | 10 MB per image, 45 MB total, 199 images |
-| `blob:` images in a selection | 5 MB per image, 10 MB total |
+| Web page images (export) | 10 MB per image, 200 MB total, 500 images |
 | Markdown of one page | 30 × 1024 × 1024 characters (≈ 30 MB) |
-| One Devdy request | 50 MB |
-| Devdy queue | 300 MB, 7 days, 20 attempts, 20 failed records |
+| Devdy queue | 50 links, 7 days, 20 attempts |
 
 ## Development
 
@@ -235,9 +249,9 @@ src/
   shared/                feature-neutral code (messaging, sender, yaml, toast, styles…)
   features/
     translator/          selection / page translation, grammar check
-    web-to-md/           web page → Markdown, selection capture
-    slack/               Slack thread → Markdown, quick send inside Slack
-    devdy/               Devdy client and outbox; api.ts is the API for other features
+    web-to-md/           web page → Markdown (copy / .md / .zip export)
+    slack/               Slack thread → Markdown, "Send to Devdy" (thread link) inside Slack
+    devdy/               Devdy client and link queue; api.ts is the API for other features
 tests/                   vitest
 scripts/check-dist.mjs   checks dist/ after a build
 docs/architecture.md     detailed architecture
@@ -254,7 +268,7 @@ Enforced by `tests/dependencies.test.ts`:
 - `src/features/<name>/` imports only `src/shared/`, its own folder and `src/features/devdy/api.ts`. Features never import
   each other.
 - Cross-feature wiring happens in the entry points (`src/background/`, `src/offscreen/`, `src/popup/`, `src/content/`),
-  e.g. `content/all-frames.ts` connects the Translator's ➤ button to Web → MD.
+  e.g. the offscreen document serves both the Slack and the Web → MD zip exports.
 
 ### Adding a feature
 
@@ -275,5 +289,5 @@ Enforced by `tests/dependencies.test.ts`:
 ### More documentation
 
 - [docs/architecture.md](docs/architecture.md) — messaging and sender checks, Translator internals, offscreen document,
-  image fetch policy, Devdy outbox.
+  image fetch policy, Devdy link queue.
 - [CLAUDE.md](CLAUDE.md) — concise conventions for AI agents working on the repo (storage keys, where each limit lives).

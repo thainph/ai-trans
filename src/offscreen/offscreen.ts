@@ -1,10 +1,8 @@
 // Offscreen document: fetches Slack-hosted attachments and web images and
-// builds the export zip (blob: URL for chrome.downloads, or IndexedDB for the
-// Devdy outbox). Runs as an extension page, so cross-origin fetches to
+// builds the export zip (blob: URL for chrome.downloads). Runs as an extension page, so cross-origin fetches to
 // files.slack.com are allowed by host permissions and carry the user's Slack
 // cookies. Each fetched file goes straight into the job's streaming zip.
 
-import { putBlob } from '../features/devdy/core/blob-store';
 import { isAllowedFileUrl } from '../features/slack/core/attachments';
 import { imageExtension, isFetchableImageUrl } from '../features/web-to-md/core/web-capture';
 import { errorMessage } from '../shared/errors';
@@ -15,7 +13,6 @@ import {
   type FetchImageResponse,
   OFFSCREEN_TARGET,
   type OffscreenRequest,
-  type StoreZipResponse,
 } from '../shared/offscreen/protocol';
 import { fromExtensionPage } from '../shared/sender';
 import { fetchImage as fetchImageResponse } from './image-fetch';
@@ -139,16 +136,6 @@ function buildZip(req: Extract<OffscreenRequest, { type: 'build-zip' }>): BuildZ
   }
 }
 
-async function storeZip(req: Extract<OffscreenRequest, { type: 'store-zip' }>): Promise<StoreZipResponse> {
-  try {
-    const blob = job(req.jobId).zip.finish(req.texts);
-    await putBlob(req.blobId, blob);
-    return { ok: true, size: blob.size };
-  } catch (e) {
-    return { ok: false, error: errorMessage(e) };
-  }
-}
-
 function release(jobId: string): void {
   const j = jobs.get(jobId);
   if (j?.blobUrl) URL.revokeObjectURL(j.blobUrl);
@@ -157,7 +144,7 @@ function release(jobId: string): void {
 }
 
 onTargetMessage<OffscreenRequest>(OFFSCREEN_TARGET, (msg, sender) => {
-  // Fetches with the user's cookies and IndexedDB writes: only for the service worker.
+  // Fetches with the user's cookies: only for the service worker.
   if (!fromExtensionPage(sender)) return { ok: false, error: 'Not allowed.' } satisfies Result;
   switch (msg.type) {
     case 'fetch-file':
@@ -166,8 +153,6 @@ onTargetMessage<OffscreenRequest>(OFFSCREEN_TARGET, (msg, sender) => {
       return fetchImage(msg);
     case 'build-zip':
       return buildZip(msg);
-    case 'store-zip':
-      return storeZip(msg);
     case 'release':
       release(msg.jobId);
       return { ok: true } satisfies Result;

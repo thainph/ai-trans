@@ -1,13 +1,12 @@
 // Web → MD tab: extract the active page (all frames), convert it to Markdown,
-// then export (.md or .zip with images), copy, or send it to Devdy.
+// then export it (.md, or .zip with images) or copy it.
 
 import { errorMessage } from '../../../shared/errors';
 import { filenamePart } from '../../../shared/filename';
-import { requestOpenTab } from '../../../shared/popup-tabs';
 import { htmlToMarkdown } from '../core/converter';
 import { type ExtractMode, type ExtractResult, extractInPage } from '../core/extract';
 import { type PageMeta, webFrontMatter } from '../core/web-capture';
-import { type DownloadPageResponse, type SendPageResponse, WEB_TARGET, type WebRequest } from '../messages';
+import { type DownloadPageResponse, WEB_TARGET, type WebRequest } from '../messages';
 
 const $ = <T extends HTMLElement>(id: string): T => {
   const el = document.getElementById(id);
@@ -23,12 +22,10 @@ const keepImagesOpt = $<HTMLInputElement>('keepImages');
 const keepLinksOpt = $<HTMLInputElement>('keepLinks');
 const downloadBtn = $<HTMLButtonElement>('download');
 const copyBtn = $<HTMLButtonElement>('copy');
-const devdyBtn = $<HTMLButtonElement>('devdy');
-const openDevdyBtn = $<HTMLButtonElement>('openDevdy');
 const openContentBtn = $<HTMLButtonElement>('openContent');
 
-/** What "Send to Devdy" posts (body without the local front matter). */
-let lastCapture: Omit<Extract<WebRequest, { type: 'send-page' }>, 'target' | 'type'> | null = null;
+/** URL of the page last converted (images of the same site are fetched with cookies). */
+let lastPageUrl: string | undefined;
 let lastFilename = 'page.md';
 
 function setStatus(msg: string, isError = false): void {
@@ -164,13 +161,7 @@ async function generate(): Promise<string | null> {
   doc += md;
 
   lastFilename = `${filenamePart(title, 'page')}.md`;
-  lastCapture = {
-    // Selection: just the excerpt (Devdy titles it from its first line).
-    markdown: selection ? md : `# ${title}\n\n${md}`,
-    selection,
-    selectionText: selection ? best.text || '' : undefined,
-    page,
-  };
+  lastPageUrl = page.url;
 
   previewEl.textContent = doc.length > 4000 ? `${doc.slice(0, 4000)}\n… (preview truncated)` : doc;
   previewEl.classList.remove('muted');
@@ -194,7 +185,7 @@ downloadBtn.addEventListener('click', async () => {
         type: 'download-page',
         markdown: doc,
         filename: lastFilename,
-        pageUrl: lastCapture?.page.url,
+        pageUrl: lastPageUrl,
       };
       const res = (await chrome.runtime.sendMessage(req)) as DownloadPageResponse | undefined;
       if (res?.ok && res.zipped) {
@@ -232,34 +223,6 @@ copyBtn.addEventListener('click', async () => {
   } catch (e) {
     setStatus(`Copy error: ${errorMessage(e)}`, true);
   }
-});
-
-// Send to Devdy (POST /v1/web-pages via the background outbox)
-const NEEDS_SETTINGS = ['no_token', 'unauthorized', 'choose_instance'];
-devdyBtn.addEventListener('click', async () => {
-  const doc = await generate();
-  if (!doc || !lastCapture) return;
-  devdyBtn.disabled = true;
-  setStatus('Sending to Devdy…');
-  try {
-    const req: WebRequest = { target: WEB_TARGET, type: 'send-page', ...lastCapture };
-    const res = (await chrome.runtime.sendMessage(req)) as SendPageResponse | undefined;
-    if (!res?.ok) {
-      setStatus(`Could not send: ${(res && !res.ok && res.error) || 'no response'}`, true);
-      return;
-    }
-    const kind = res.result.delivery.kind;
-    setStatus(res.text, kind === 'rejected' || NEEDS_SETTINGS.includes(kind));
-    openDevdyBtn.hidden = !NEEDS_SETTINGS.includes(kind);
-  } catch (e) {
-    setStatus(`Could not send: ${errorMessage(e)}`, true);
-  } finally {
-    devdyBtn.disabled = false;
-  }
-});
-// Switch the popup shell to the Devdy tab (token / instance settings).
-openDevdyBtn.addEventListener('click', () => {
-  requestOpenTab('devdy');
 });
 
 // Build the preview as soon as the tab opens.
