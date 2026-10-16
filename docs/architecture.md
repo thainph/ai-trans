@@ -153,15 +153,22 @@ Defined once in `src/shared/sender.ts`:
   with a fixed ➤ icon (`content/devdy-icon.ts`).
 - **Thread link** (`threadLinkFor()` in `content/message-dom.ts`, pure builders in `core/thread-link.ts`), computed
   when the menu opens:
-  1. the message's timestamp anchor (`…/archives/<channel>/p<16 digits>`; Slack adds `?thread_ts=<root>&cid=<channel>`
-     for replies) is parsed and rebuilt canonically (unknown query parameters dropped);
-  2. otherwise the link is built from the message ts (`data-msg-ts` / `data-item-key`…), the channel (open thread
-     `/thread/<channel>-<root ts>` in the client URL, `data-qa-channel-id`, or the client URL's channel) and the
-     workspace host. A message in the thread pane whose ts differs from the open thread's root is a **reply**: the link
-     gets `?thread_ts=<root ts>&cid=<channel>`; otherwise it is the root message permalink.
-  - Workspace host: the anchor's host, else `url` / `domain` of the team in Slack's `localStorage.localConfig_v2`
-    (`workspaceHostFromLocalConfig()`; the token is never read out). Only `<ws>.slack.com` / `<ws>.enterprise.slack.com`
-    are accepted (`app.slack.com` is not a workspace).
+  1. the message's **own** timestamp anchor (`…/archives/<channel>/p<16 digits>`; Slack adds
+     `?thread_ts=<root>&cid=<channel>` for replies), parsed and rebuilt canonically (unknown query parameters dropped).
+     Selectors are tried one at a time in priority order (`a.c-timestamp` → `[data-qa="timestamp"] a` →
+     `a[data-qa="message_timestamp"]` → `a[data-ts]`, then any `/archives/` link only when the ts is known); anchors in
+     the message content (text, blocks, files, attachments, unfurls, shared-message previews — `CONTENT_SELECTOR`) are
+     ignored; when the ts is known from attributes (`data-msg-ts`, `data-ts`, `data-item-key`, the element id), only an
+     anchor whose `p<ts>` matches counts;
+  2. otherwise (e.g. a continuation message without a header timestamp) the link is built from the message ts, the
+     channel (open thread `/thread/<channel>-<root ts>` in the client URL, `data-qa-channel-id`, or the client URL's
+     channel) and the workspace host. A message in the thread pane whose ts differs from the open thread's root is a
+     **reply**: the link gets `?thread_ts=<root ts>&cid=<channel>`; otherwise it is the root message permalink.
+  - Workspace host: the anchor's host, else the page's own timestamp permalinks or URL (`workspaceHostFromPage()`,
+    content anchors skipped), else `url` / `domain` of the team in Slack's `localStorage.localConfig_v2`
+    (`workspaceHostFromLocalConfig()`, parsed with a reviver that drops token-like keys). Cached per team id in the
+    content script and never sent anywhere else. Only `<ws>.slack.com` / `<ws>.enterprise.slack.com` are accepted
+    (`app.slack.com` is not a workspace).
   - DM channels (`D…`) give an error result: clicking the item shows a toast and sends nothing (Devdy can't fetch DMs).
   - No message content, file or cookie is read for this.
 
