@@ -30,7 +30,7 @@ export interface DevdyStatus {
   port?: number;
   version?: string;
   /** Optional Devdy features (from /health) of the connected app. */
-  features: { translate: boolean; slackThreadLink: boolean };
+  features: { translate: boolean; grammar: boolean; slackThreadLink: boolean };
   /** Every Devdy app answering on 47821…47830. */
   instances: { port: number; version?: string }[];
   /** The user pinned `port`. */

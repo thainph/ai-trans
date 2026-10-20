@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DevdyTranslateError } from '../src/features/devdy/core/translate';
-import { translateBatchWithDevdy, translateTextWithDevdy } from '../src/features/translator/background/devdy';
+import {
+  checkGrammarWithDevdy,
+  translateBatchWithDevdy,
+  translateTextWithDevdy,
+} from '../src/features/translator/background/devdy';
 import { rejectReason } from '../src/features/translator/background/sender';
 import { type StreamPort, serveStreamPort } from '../src/features/translator/background/stream-port';
 import { packItems } from '../src/features/translator/core/devdy-pack';
@@ -23,10 +27,19 @@ const devdyTranslate = vi.hoisted(() =>
     }) => Promise<string>
   >(),
 );
+const devdyCheckGrammar = vi.hoisted(() =>
+  vi.fn<
+    (req: { text: string; explainLang: string | null; signal?: AbortSignal }) => Promise<{
+      corrected: string;
+      issues: { original: string; suggestion: string; explanation: string }[];
+    }>
+  >(),
+);
 vi.mock('../src/features/devdy/api', async () => {
   const t = await import('../src/features/devdy/core/translate');
   return {
     devdyTranslate,
+    devdyCheckGrammar,
     DevdyTranslateError: t.DevdyTranslateError,
     DEVDY_TRANSLATE_MAX_CHARS: t.DEVDY_TRANSLATE_MAX_CHARS,
   };
@@ -34,6 +47,35 @@ vi.mock('../src/features/devdy/api', async () => {
 
 beforeEach(() => {
   devdyTranslate.mockReset();
+  devdyCheckGrammar.mockReset();
+});
+
+describe('checkGrammarWithDevdy', () => {
+  it('checks ≤ 8000-char segments in order, keeps outer whitespace and merges the issues', async () => {
+    devdyCheckGrammar.mockImplementation(async ({ text }) => ({
+      corrected: ` <${text.length}> `,
+      issues: [{ original: text.slice(0, 1), suggestion: '!', explanation: '' }],
+    }));
+    const ctrl = new AbortController();
+    const text = `  ${'a'.repeat(5000)}\n${'b'.repeat(5000)}\n\n`;
+    const out = await checkGrammarWithDevdy(text, 'vietnamese', ctrl.signal);
+    expect(devdyCheckGrammar.mock.calls.map(([r]) => [r.text.length, r.explainLang, r.signal])).toEqual([
+      [5000, 'vi', ctrl.signal],
+      [5000, 'vi', ctrl.signal],
+    ]);
+    expect(out).toEqual({
+      corrected: '<5000>\n<5000>',
+      issues: [
+        { original: 'a', suggestion: '!', explanation: '' },
+        { original: 'b', suggestion: '!', explanation: '' },
+      ],
+    });
+  });
+
+  it('propagates Devdy errors', async () => {
+    devdyCheckGrammar.mockRejectedValue(new DevdyTranslateError('unsupported', '', undefined, 'grammar'));
+    await expect(checkGrammarWithDevdy('He go.', 'english')).rejects.toMatchObject({ code: 'unsupported' });
+  });
 });
 
 describe('translateTextWithDevdy', () => {

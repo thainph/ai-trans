@@ -21,6 +21,7 @@ const summary = $<HTMLSpanElement>('summary');
 const detail = $<HTMLDivElement>('detail');
 const featuresRow = $<HTMLDivElement>('features');
 const featTranslate = $<HTMLSpanElement>('feat-translate');
+const featGrammar = $<HTMLSpanElement>('feat-grammar');
 const featSlack = $<HTMLSpanElement>('feat-slack');
 const refreshBtn = $<HTMLButtonElement>('refresh');
 const instanceSection = $<HTMLDivElement>('instance-section');
@@ -126,6 +127,7 @@ function renderFeatures(st: DevdyStatus): void {
     el.textContent = `${on ? '✓' : '✗'} ${label}${on ? '' : ` — ${missing}`}`;
   };
   show(featTranslate, st.features.translate, 'Translate', 'not available');
+  show(featGrammar, st.features.grammar, 'Grammar check', 'not available');
   show(featSlack, st.features.slackThreadLink, 'Slack thread links', 'update Devdy to send Slack threads');
 }
 

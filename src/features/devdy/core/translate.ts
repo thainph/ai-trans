@@ -16,7 +16,7 @@ import { base, type FetchFn, readError } from './client';
 /** Longest `text` Devdy accepts (Unicode characters after trim). */
 export const DEVDY_TRANSLATE_MAX_CHARS = 8000;
 /** Devdy gives up after 90 s; we wait a little longer for its own error. */
-const JSON_TIMEOUT_MS = 120_000;
+export const JSON_TIMEOUT_MS = 120_000;
 /** SSE: no byte (keep-alive comments included, every 15 s) for this long → give up. */
 const STREAM_IDLE_TIMEOUT_MS = 100_000;
 
@@ -25,20 +25,20 @@ export type DevdyTranslateErrorCode =
   | 'unreachable'
   /** Several Devdy apps answer and none is pinned in the Devdy tab. */
   | 'choose_instance'
-  /** /health has no "translate" feature (older Devdy). */
+  /** /health has no "translate" (or "grammar") feature (older Devdy). */
   | 'unsupported'
   | 'no_token'
   /** 401 */
   | 'unauthorized'
   /** 413 */
   | 'too_long'
-  /** 429: 4 translations already in flight. */
+  /** 429: 4 translations / grammar checks already in flight. */
   | 'busy'
-  /** 503 `translation engine unavailable: …` */
+  /** 503 `translation engine unavailable: …` / `grammar engine unavailable: …` */
   | 'engine_unavailable'
   /** 503 `server stopping` (Inbox API turned off mid-request). */
   | 'stopping'
-  /** 502 / SSE error: the engine failed. */
+  /** 502 / SSE error: the engine failed (grammar: also `invalid grammar result`). */
   | 'engine_error'
   /** 504 / SSE `timeout` / no data for too long. */
   | 'timeout'
@@ -51,7 +51,10 @@ export type DevdyTranslateErrorCode =
   /** Aborted by the caller. */
   | 'cancelled';
 
-/** Error of a Devdy translation; `message` is the user-facing text. */
+/** What a Devdy engine request was for (only changes the user-facing wording). */
+export type DevdyTask = 'translate' | 'grammar';
+
+/** Error of a Devdy translation / grammar check; `message` is the user-facing text. */
 export class DevdyTranslateError extends Error {
   constructor(
     readonly code: DevdyTranslateErrorCode,
@@ -59,8 +62,9 @@ export class DevdyTranslateError extends Error {
     readonly detail = '',
     /** HTTP status when the error came from a response. */
     readonly status?: number,
+    readonly task: DevdyTask = 'translate',
   ) {
-    super(describeTranslateError(code, detail));
+    super(describeTranslateError(code, detail, task));
     this.name = 'DevdyTranslateError';
   }
 }
@@ -107,15 +111,22 @@ function shortDetail(detail: string, max = 200): string {
 }
 
 /** One-line user message per error code. */
-export function describeTranslateError(code: DevdyTranslateErrorCode, detail = ''): string {
+export function describeTranslateError(
+  code: DevdyTranslateErrorCode,
+  detail = '',
+  task: DevdyTask = 'translate',
+): string {
   const d = shortDetail(detail);
+  const work = task === 'grammar' ? 'grammar check' : 'translation';
   switch (code) {
     case 'unreachable':
       return 'Devdy is not running or its Inbox API is turned off (Devdy → Settings → Inbox API).';
     case 'choose_instance':
       return 'Several Devdy apps are running — pick one in AI Trans → Devdy.';
     case 'unsupported':
-      return 'This Devdy version cannot translate. Update Devdy to a build with the translate feature.';
+      return task === 'grammar'
+        ? 'This Devdy version cannot check grammar. Update Devdy to a build with the grammar feature.'
+        : 'This Devdy version cannot translate. Update Devdy to a build with the translate feature.';
     case 'no_token':
       return 'No Devdy token set. Paste it in AI Trans → Devdy (from Devdy → Settings → Inbox API).';
     case 'unauthorized':
@@ -123,19 +134,21 @@ export function describeTranslateError(code: DevdyTranslateErrorCode, detail = '
     case 'too_long':
       return `The text is too long for Devdy (max ${DEVDY_TRANSLATE_MAX_CHARS.toLocaleString('en-US')} characters). Select a shorter passage.`;
     case 'busy':
-      return 'Devdy is busy with other translations. Try again in a moment.';
+      return task === 'grammar'
+        ? 'Devdy is busy with other translations or grammar checks. Try again in a moment.'
+        : 'Devdy is busy with other translations. Try again in a moment.';
     case 'engine_unavailable':
-      return `Devdy's translation engine is unavailable${d ? ` (${d.replace(/^translation engine unavailable:\s*/i, '')})` : ''}. Check the translation settings in Devdy (Claude/Codex sign-in, Node/CLI path).`;
+      return `Devdy's translation engine is unavailable${d ? ` (${d.replace(/^(translation|grammar) engine unavailable:\s*/i, '')})` : ''}. Check the translation settings in Devdy (Claude/Codex sign-in, Node/CLI path).`;
     case 'stopping':
       return 'Devdy’s Inbox API was turned off. Turn it back on in Devdy → Settings → Inbox API.';
     case 'engine_error':
-      return d ? `Devdy translation failed: ${d}` : 'Devdy translation failed.';
+      return d ? `Devdy ${work} failed: ${d}` : `Devdy ${work} failed.`;
     case 'timeout':
-      return 'Devdy did not finish the translation in time. Try again.';
+      return `Devdy did not finish the ${work} in time. Try again.`;
     case 'bad_request':
       return `Devdy rejected the request${d ? ` (${d})` : ''}.`;
     case 'interrupted':
-      return 'The connection to Devdy closed before the translation finished. Try again.';
+      return `The connection to Devdy closed before the ${work} finished. Try again.`;
     case 'protocol':
       return `Unexpected response from Devdy${d ? ` (${d})` : ''}.`;
     case 'cancelled':
@@ -250,22 +263,61 @@ function parseResult(j: unknown): TranslateResult | null {
 }
 
 /** Text Devdy would refuse before calling the engine (empty / too long). */
-export function checkTranslateText(text: string): DevdyTranslateError | null {
+export function checkTranslateText(text: string, task: DevdyTask = 'translate'): DevdyTranslateError | null {
   const trimmed = text.trim();
-  if (!trimmed) return new DevdyTranslateError('bad_request', 'text is empty');
-  if ([...trimmed].length > DEVDY_TRANSLATE_MAX_CHARS) return new DevdyTranslateError('too_long');
+  if (!trimmed) return new DevdyTranslateError('bad_request', 'text is empty', undefined, task);
+  if ([...trimmed].length > DEVDY_TRANSLATE_MAX_CHARS) return new DevdyTranslateError('too_long', '', undefined, task);
   return null;
 }
 
 /** A signal aborted by `signal` or by `timeout.abort()` (whichever comes first). */
-function linkedController(signal?: AbortSignal): AbortController {
+export function linkedController(signal?: AbortSignal): AbortController {
   const ctrl = new AbortController();
   if (signal?.aborted) ctrl.abort(signal.reason);
   else signal?.addEventListener('abort', () => ctrl.abort(signal.reason), { once: true });
   return ctrl;
 }
 
-async function post(
+export interface EngineRequest {
+  task: DevdyTask;
+  /** `/v1/translate` or `/v1/grammar`. */
+  path: string;
+  body: { text: string } & Record<string, unknown>;
+  accept: string;
+  /** Aborted by the caller or by our timeout. */
+  signal: AbortSignal;
+  /** The caller's own signal (tells a cancel from a timeout). */
+  callerSignal: AbortSignal | undefined;
+  fetchFn: FetchFn;
+}
+
+/** POST a text to one of Devdy's engine endpoints; non-2xx answers become DevdyTranslateError. */
+export async function postEngine(port: number, token: string, req: EngineRequest): Promise<Response> {
+  // Call fetch unbound: `req.fetchFn(…)` would run it with `this = req` → "Illegal invocation" in Chrome.
+  const { task, signal, callerSignal, fetchFn } = req;
+  const refused = checkTranslateText(req.body.text, task);
+  if (refused) throw refused;
+  let res: Response;
+  try {
+    res = await fetchFn(`${base(port)}${req.path}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: req.accept },
+      body: JSON.stringify(req.body),
+      signal,
+    });
+  } catch (err) {
+    if (callerSignal?.aborted) throw new DevdyTranslateError('cancelled', '', undefined, task);
+    if (signal.aborted) throw new DevdyTranslateError('timeout', '', undefined, task);
+    throw new DevdyTranslateError('unreachable', err instanceof Error ? err.message : String(err), undefined, task);
+  }
+  if (!res.ok) {
+    const message = await readError(res);
+    throw new DevdyTranslateError(codeForStatus(res.status, message), message, res.status, task);
+  }
+  return res;
+}
+
+function post(
   port: number,
   token: string,
   input: TranslateInput,
@@ -274,26 +326,15 @@ async function post(
   callerSignal: AbortSignal | undefined,
   fetchFn: FetchFn,
 ): Promise<Response> {
-  const tooLong = checkTranslateText(input.text);
-  if (tooLong) throw tooLong;
-  let res: Response;
-  try {
-    res = await fetchFn(`${base(port)}/v1/translate`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: accept },
-      body: JSON.stringify({ text: input.text, targetLang: input.targetLang }),
-      signal,
-    });
-  } catch (err) {
-    if (callerSignal?.aborted) throw new DevdyTranslateError('cancelled');
-    if (signal.aborted) throw new DevdyTranslateError('timeout');
-    throw new DevdyTranslateError('unreachable', err instanceof Error ? err.message : String(err));
-  }
-  if (!res.ok) {
-    const message = await readError(res);
-    throw new DevdyTranslateError(codeForStatus(res.status, message), message, res.status);
-  }
-  return res;
+  return postEngine(port, token, {
+    task: 'translate',
+    path: '/v1/translate',
+    body: { text: input.text, targetLang: input.targetLang },
+    accept,
+    signal,
+    callerSignal,
+    fetchFn,
+  });
 }
 
 /** Translate in one response (JSON mode). */

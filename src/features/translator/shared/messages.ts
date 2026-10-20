@@ -16,6 +16,14 @@ interface LangPair {
   style: TranslationStyle;
 }
 
+/** One fix of a grammar check: `original` is the passage as written (no offsets). */
+export interface GrammarIssue {
+  original: string;
+  suggestion: string;
+  /** Short reason, in the translator's target language (may be empty). */
+  explanation: string;
+}
+
 /** Error of a request aborted by its sender (`cancel`, revert, port disconnect). */
 export const CANCELLED = 'Cancelled';
 
@@ -41,7 +49,8 @@ export type TranslatorRequest =
 export interface TranslatorResponses {
   translate: Result<{ translation: string }>;
   'translate-batch': Result<{ translations: BatchTranslation[] }>;
-  'grammar-check': Result<{ corrected: string }>;
+  /** `issues`: what was fixed and why (Devdy only; the other providers return the corrected text alone). */
+  'grammar-check': Result<{ corrected: string; issues?: GrammarIssue[] }>;
   cancel: Result;
   'fetch-ollama-models': Result<{ models: string[] }>;
   'devdy-status': Result<{ status: DevdyStatusView }>;

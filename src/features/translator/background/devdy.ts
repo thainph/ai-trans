@@ -1,20 +1,20 @@
 // Translator with the Devdy provider (service worker side): selection texts
-// split into ≤ 8000-char segments translated one after another, and full-page
-// batches packed into marker-delimited documents (core/devdy-pack.ts).
+// split into ≤ 8000-char segments translated one after another, full-page
+// batches packed into marker-delimited documents (core/devdy-pack.ts), and
+// grammar checks (same segments, corrected in the text's own language).
 // Devdy is reached only through the Devdy service API.
 
 import {
   DEVDY_TRANSLATE_MAX_CHARS,
   DevdyTranslateError,
   type DevdyTranslateErrorCode,
+  devdyCheckGrammar,
   devdyTranslate,
 } from '../../devdy/api';
 import { DEVDY_PACK_CHARS, packItems, planPacks, unpackItems } from '../core/devdy-pack';
 import { devdyTargetLang } from '../shared/languages';
-import type { BatchTranslation } from '../shared/messages';
+import type { BatchTranslation, GrammarIssue } from '../shared/messages';
 import { CANCELLED, splitForTranslation, splitOuterWhitespace } from './llm';
-
-export const DEVDY_NO_GRAMMAR = 'Grammar check is not available with the Devdy provider.';
 
 export interface DevdyTextOptions {
   signal?: AbortSignal;
@@ -42,6 +42,33 @@ export async function translateTextWithDevdy(
     onSegment?.(part);
   }
   return parts.join('').trim();
+}
+
+/**
+ * Grammar check of a selection of any length (≤ MAX_TEXT_CHARS): ≤ 8000-char
+ * segments checked one after another and joined back (outer whitespace kept).
+ * The text stays in its own language; explanations are in the translator
+ * language `explainLang`.
+ */
+export async function checkGrammarWithDevdy(
+  text: string,
+  explainLang: string,
+  signal?: AbortSignal,
+): Promise<{ corrected: string; issues: GrammarIssue[] }> {
+  const lang = devdyTargetLang(explainLang);
+  const parts: string[] = [];
+  const issues: GrammarIssue[] = [];
+  for (const segment of splitForTranslation(text, DEVDY_TRANSLATE_MAX_CHARS)) {
+    const { lead, core, trail } = splitOuterWhitespace(segment);
+    if (!core) {
+      parts.push(segment);
+      continue;
+    }
+    const result = await devdyCheckGrammar({ text: core, explainLang: lang, signal });
+    parts.push(lead + result.corrected.trim() + trail);
+    issues.push(...result.issues);
+  }
+  return { corrected: parts.join('').trim(), issues };
 }
 
 /** Errors that only concern one packed request: its items are retried later. */

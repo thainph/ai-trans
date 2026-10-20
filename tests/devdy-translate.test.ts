@@ -5,8 +5,10 @@ import {
   type FetchFn,
   parseHealth,
   type ResolveResult,
+  supportsGrammar,
   supportsTranslate,
 } from '../src/features/devdy/core/client';
+import { checkGrammar, parseGrammarResult } from '../src/features/devdy/core/grammar';
 import {
   checkTranslateText,
   codeForStatus,
@@ -293,6 +295,7 @@ describe('devdy translate: service', () => {
       savePort: async () => {},
       translateJson: async () => ({ text: 'ok' }),
       translateStream: async () => ({ text: 'streamed' }),
+      checkGrammar: async () => ({ corrected: 'fixed', issues: [] }),
       sleep: async () => {},
       ...over,
     };
@@ -380,6 +383,41 @@ describe('devdy translate: service', () => {
     await expect(noToken.translate({ text: 'a', targetLang: null })).rejects.toMatchObject({ code: 'no_token' });
   });
 
+  it('grammar: needs the "grammar" feature, same retries as translations', async () => {
+    const grammarInst = (features: string[]) => async (): Promise<ResolveResult> => ({
+      kind: 'ok',
+      instance: inst(47821, features),
+    });
+    const old = new DevdyTranslator(deps({ resolveDevdy: grammarInst(['translate']) }));
+    const err = await old.checkGrammar({ text: 'a', explainLang: 'vi' }).catch((e: unknown) => e);
+    expect(err).toMatchObject({ code: 'unsupported', task: 'grammar' });
+    expect((err as Error).message).toMatch(/cannot check grammar/);
+
+    let n = 0;
+    const seen: unknown[] = [];
+    const t = new DevdyTranslator(
+      deps({
+        resolveDevdy: grammarInst(['translate', 'grammar']),
+        checkGrammar: async (_port, token, input) => {
+          seen.push([token, input]);
+          if (++n === 1) throw new DevdyTranslateError('busy', '', 429, 'grammar');
+          return { corrected: 'He goes.', issues: [] };
+        },
+      }),
+    );
+    expect(await t.checkGrammar({ text: 'He go.', explainLang: 'vi' })).toEqual({ corrected: 'He goes.', issues: [] });
+    expect(seen).toEqual([
+      ['tok', { text: 'He go.', explainLang: 'vi' }],
+      ['tok', { text: 'He go.', explainLang: 'vi' }],
+    ]);
+
+    const none = new DevdyTranslator(deps({ resolveDevdy: async () => ({ kind: 'none' }) }));
+    await expect(none.checkGrammar({ text: 'a', explainLang: null })).rejects.toMatchObject({
+      code: 'unreachable',
+      task: 'grammar',
+    });
+  });
+
   it('reports the status for the Translate tab', async () => {
     const ok = new DevdyTranslator(deps());
     expect(await ok.status(async () => true)).toEqual({ state: 'ready', port: 47821, version: '1.0' });
@@ -392,5 +430,110 @@ describe('devdy translate: service', () => {
     expect((await none.status(async () => true)).state).toBe('not_running');
     const old = new DevdyTranslator(deps({ resolveDevdy: async () => ({ kind: 'ok', instance: inst(47821, []) }) }));
     expect((await old.status(async () => true)).state).toBe('unsupported');
+  });
+});
+
+describe('devdy engine requests: fetch binding', () => {
+  // Chrome's fetch throws "Illegal invocation" when called as a method of another object.
+  function strictFetch(this: unknown, _url: RequestInfo | URL, _init?: RequestInit): Promise<Response> {
+    if (this !== undefined && this !== globalThis) throw new TypeError('Illegal invocation');
+    return Promise.resolve(json(200, { text: 'ok', corrected: 'ok', issues: [] }));
+  }
+
+  it('calls fetch unbound (translate JSON / SSE, grammar)', async () => {
+    const fetchFn = strictFetch as FetchFn;
+    await expect(translateJson(1, 't', { text: 'x', targetLang: null }, { fetchFn })).resolves.toMatchObject({
+      text: 'ok',
+    });
+    await expect(translateStream(1, 't', { text: 'x', targetLang: null }, { fetchFn })).resolves.toMatchObject({
+      text: 'ok',
+    });
+    await expect(checkGrammar(1, 't', { text: 'x', explainLang: null }, { fetchFn })).resolves.toMatchObject({
+      corrected: 'ok',
+    });
+  });
+});
+
+describe('devdy grammar: requests', () => {
+  it('feature flag', () => {
+    expect(supportsGrammar(parseHealth({ app: 'devdy', features: ['translate', 'grammar'] }))).toBe(true);
+    expect(supportsGrammar(parseHealth({ app: 'devdy', features: ['translate'] }))).toBe(false);
+    expect(supportsGrammar(parseHealth({ app: 'devdy' }))).toBe(false);
+  });
+
+  it('posts text + explainLang and parses the result', async () => {
+    const fetchFn = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) =>
+      json(200, {
+        corrected: 'He goes to school every day.',
+        issues: [
+          { original: 'go', suggestion: 'goes', explanation: 'Ngôi thứ ba số ít.' },
+          { original: '', suggestion: 'x', explanation: '' },
+          { original: 'same', suggestion: 'same', explanation: '' },
+          { original: 'a', suggestion: 'b' },
+          'junk',
+        ],
+        explainLang: 'vi',
+      }),
+    );
+    const r = await checkGrammar(
+      47821,
+      'tok',
+      { text: 'He go to school every day.', explainLang: 'vi' },
+      { fetchFn: fetchFn as FetchFn },
+    );
+    expect(r).toEqual({
+      corrected: 'He goes to school every day.',
+      issues: [
+        { original: 'go', suggestion: 'goes', explanation: 'Ngôi thứ ba số ít.' },
+        { original: 'a', suggestion: 'b', explanation: '' },
+      ],
+      explainLang: 'vi',
+    });
+    const [url, init] = fetchFn.mock.calls[0]!;
+    expect(String(url)).toBe('http://127.0.0.1:47821/v1/grammar');
+    expect(init?.headers).toMatchObject({ Authorization: 'Bearer tok', 'Content-Type': 'application/json' });
+    expect(JSON.parse(String(init?.body))).toEqual({ text: 'He go to school every day.', explainLang: 'vi' });
+  });
+
+  it('errors are coded and worded for the grammar check', async () => {
+    const cases: [number, string, string, RegExp][] = [
+      [429, 'too many requests in flight', 'busy', /translations or grammar checks/],
+      [502, 'invalid grammar result', 'engine_error', /^Devdy grammar check failed: invalid grammar result/],
+      [
+        503,
+        'grammar engine unavailable: Claude sidecar not found',
+        'engine_unavailable',
+        /\(Claude sidecar not found\)/,
+      ],
+      [503, 'server stopping', 'stopping', /turned off/],
+      [504, 'timeout', 'timeout', /finish the grammar check/],
+    ];
+    for (const [status, error, code, message] of cases) {
+      const fetchFn = (async () => json(status, { error })) as FetchFn;
+      const err = await checkGrammar(47821, 'tok', { text: 'x', explainLang: null }, { fetchFn }).catch((e) => e);
+      expect(err).toBeInstanceOf(DevdyTranslateError);
+      expect(err).toMatchObject({ code, status, task: 'grammar' });
+      expect(err.message).toMatch(message);
+    }
+  });
+
+  it('refuses empty / too long text before calling Devdy', async () => {
+    const fetchFn = vi.fn() as unknown as FetchFn;
+    await expect(checkGrammar(1, 't', { text: '  ', explainLang: null }, { fetchFn })).rejects.toMatchObject({
+      code: 'bad_request',
+    });
+    await expect(
+      checkGrammar(1, 't', { text: 'a'.repeat(DEVDY_TRANSLATE_MAX_CHARS + 1), explainLang: null }, { fetchFn }),
+    ).rejects.toMatchObject({ code: 'too_long' });
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it('rejects a response without corrected text', async () => {
+    expect(parseGrammarResult({ issues: [] })).toBeNull();
+    expect(parseGrammarResult({ corrected: 'ok' })).toEqual({ corrected: 'ok', issues: [] });
+    const fetchFn = (async () => json(200, { text: 'nope' })) as FetchFn;
+    await expect(checkGrammar(1, 't', { text: 'x', explainLang: null }, { fetchFn })).rejects.toMatchObject({
+      code: 'protocol',
+    });
   });
 });
