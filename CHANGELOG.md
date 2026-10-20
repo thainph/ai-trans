@@ -1,5 +1,28 @@
 # Changelog
 
+## 2.3.0 — 2026-10-20 — Grammar check with Devdy
+
+Needs a Devdy build whose Inbox API lists `"grammar"` in `GET /health` `features` (Inbox API 2026-10-20).
+
+### Added
+
+- **Grammar check (G) with the Devdy provider** (`POST /v1/grammar`): the text is corrected in its own language (not
+  only English, never translated); **Replace** writes the corrected text back. Under it, the popup lists each fix
+  (original → suggestion) with Devdy's short explanation, written in the Translate tab's target language. Selections
+  over 8 000 characters are checked in parts, one after another.
+- The Devdy tab shows the **Grammar check** feature of the connected app.
+
+### Changed
+
+- **G** is no longer greyed out with Devdy. An older Devdy without the grammar feature gets a clear *Update Devdy*
+  message instead; other errors (busy, engine unavailable, `invalid grammar result`, timeout…) are worded for the
+  grammar check.
+
+### Fixed
+
+- The selection toolbar with a single button (**T** only, outside input fields) has the same rounded-rectangle shape
+  as the toolbar with several buttons, instead of a circle.
+
 ## 2.2.0 — 2026-10-16 — Slack threads sent to Devdy as links, Web → MD export only
 
 Needs a Devdy build whose Inbox API lists `"slack-thread-link"` in `GET /health` `features` (Inbox API 2026-10-16) to
