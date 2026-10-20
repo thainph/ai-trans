@@ -99,7 +99,11 @@ Defined once in `src/shared/sender.ts`:
 - **Devdy provider** (`provider: 'devdy'`, `background/devdy.ts`): no LLM call — requests go through the Devdy service
   API (`features/devdy/api.ts`: `devdyTranslate`, `devdyTranslateStatus`, `openSettings`). Engine/model/style are
   Devdy's; only the target language is sent (`devdyTargetLang()`: `vi en ja zh ko fr de es` codes, else the English
-  name). Grammar check throws (the G button is shown disabled), the style selectors are hidden.
+  name). The style selectors are hidden.
+  - Grammar check (`checkGrammarWithDevdy`, via `devdyCheckGrammar`): ≤ 8 000-char segments checked sequentially,
+    joined back (outer whitespace kept); `explainLang` = the saved target language (`devdyTargetLang()`). The
+    `grammar-check` response carries `issues` (`original` / `suggestion` / `explanation`) only with Devdy; the content
+    script lists them under `#result` (outside it, so Copy / Replace take only the corrected text).
   - Selection: the content script opens the stream port; the SW splits the text into ≤ 8 000-char segments
     (`splitForTranslation`), translates them **sequentially** over SSE, posts each `delta`, a `segment` when one part is
     final and `done` with the full text (the popup replaces what it rendered). The non-streamed `translate` request
@@ -202,13 +206,14 @@ Defined once in `src/shared/sender.ts`:
 
 ## Devdy
 
-- Local Inbox API (contract: Devdy `docs/inbox-api.md`, version 2026-10-16) on `http://127.0.0.1:{47821..47830}`, Bearer
+- Local Inbox API (contract: Devdy `docs/inbox-api.md`, version 2026-10-20) on `http://127.0.0.1:{47821..47830}`, Bearer
   token. Apps are discovered with `GET /health` (800 ms timeout) on that port range.
 - App choice (`resolveDevdy()`): a pinned port (`devdyPortPinned`) is used exclusively; otherwise the single running app;
   several apps and no pin → links stay queued (`choose_instance`), never guessed.
 - Other features only use `features/devdy/api.ts` (`outbox`, `openSettings`, `devdyTranslate`…).
-- `/health` `features` is kept (`parseHealth()`): `supportsTranslate()` needs `"translate"`, `supportsSlackThreadLink()`
-  needs `"slack-thread-link"`. Older Devdy builds lack one or both (or the whole field); the Devdy tab shows both flags.
+- `/health` `features` is kept (`parseHealth()`): `supportsTranslate()` needs `"translate"`, `supportsGrammar()` needs
+  `"grammar"`, `supportsSlackThreadLink()` needs `"slack-thread-link"`. Older Devdy builds lack some of them (or the
+  whole field); the Devdy tab shows the three flags.
 
 ### Slack thread links (`core/client.ts`)
 
@@ -248,6 +253,17 @@ Defined once in `src/shared/sender.ts`:
   once; the feature check is repeated once before reporting "unsupported"; 429 is retried 3 times after 1.5 s. Aborting
   the fetch frees Devdy's slot, but its engine still finishes that turn (FIFO on one session) — hence the sparing page
   translation. A 20 s `chrome.runtime` ping keeps the SW alive while a request waits in Devdy's queue.
+
+### Grammar check (`core/grammar.ts`)
+
+- `POST /v1/grammar` with `{"text","explainLang"}` → `{"corrected","issues":[{"original","suggestion","explanation"}],
+  "explainLang"}`; JSON only (no SSE), 120 s client timeout. The text is corrected in its own language; `corrected` is
+  authoritative, issues with an empty `original` or `original === suggestion` are dropped.
+- Shares `/v1/translate`'s engine session and limits (8 000 chars, 4 requests in flight counted together, 90 s), its
+  request helper (`postEngine()`) and error codes. `DevdyTranslateError.task` (`'grammar'`) only changes the wording
+  (`cannot check grammar`, `grammar check failed: invalid grammar result`…).
+- `DevdyTranslator.checkGrammar()` runs the same instance choice / re-probe / 429 retries as `translate()`, with the
+  `"grammar"` feature check.
 
 ### Link queue (`features/devdy/core/outbox.ts`)
 
