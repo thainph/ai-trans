@@ -20,7 +20,7 @@ import {
   DEFAULT_SETTINGS,
   isProvider,
   PROVIDERS,
-  providerHasGrammar,
+  providerGrammarIsEnglishOnly,
   providerHasStyle,
   SEEDED_SETTINGS,
 } from '../src/features/translator/shared/settings';
@@ -39,11 +39,11 @@ describe('translator settings: devdy provider', () => {
     expect(SEEDED_SETTINGS.provider).toBe('openai');
   });
 
-  it('devdy has neither style nor grammar check', () => {
+  it('devdy has no style; its grammar check is not English-only', () => {
     expect(providerHasStyle('devdy')).toBe(false);
-    expect(providerHasGrammar('devdy')).toBe(false);
+    expect(providerGrammarIsEnglishOnly('devdy')).toBe(false);
     expect(providerHasStyle('openai')).toBe(true);
-    expect(providerHasGrammar('ollama')).toBe(true);
+    expect(providerGrammarIsEnglishOnly('ollama')).toBe(true);
   });
 
   it('maps target languages to Devdy codes or names', () => {

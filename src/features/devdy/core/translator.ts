@@ -1,14 +1,21 @@
-// Devdy translation service: which Devdy to call (cached for a while, probed
-// again after a connection error), token / feature checks and retries of 429.
+// Devdy translation / grammar service: which Devdy to call (cached for a while,
+// probed again after a connection error), token / feature checks and retries of 429.
 // Dependencies are injected → unit-tested; wired in background/translate.ts.
 
-import { type DevdyInstance, type ResolveResult, supportsTranslate } from './client';
+import { type DevdyHealth, type DevdyInstance, type ResolveResult, supportsGrammar, supportsTranslate } from './client';
+import type { GrammarInput, GrammarOptions, GrammarResult } from './grammar';
 import type { DevdySettings } from './outbox';
-import { DevdyTranslateError, type TranslateInput, type TranslateOptions, type TranslateResult } from './translate';
+import {
+  type DevdyTask,
+  DevdyTranslateError,
+  type TranslateInput,
+  type TranslateOptions,
+  type TranslateResult,
+} from './translate';
 
 /** A resolved Devdy is reused this long before /health is probed again. */
 export const INSTANCE_TTL_MS = 30_000;
-/** 429 (4 translations in flight): retries and the pause before each one. */
+/** 429 (4 translations / grammar checks in flight): retries and the pause before each one. */
 export const BUSY_RETRIES = 3;
 export const BUSY_RETRY_DELAY_MS = 1500;
 
@@ -24,6 +31,7 @@ export interface DevdyTranslatorDeps {
     input: TranslateInput,
     opts: TranslateOptions & { onDelta?: (delta: string) => void },
   ): Promise<TranslateResult>;
+  checkGrammar(port: number, token: string, input: GrammarInput, opts: GrammarOptions): Promise<GrammarResult>;
   /** Abort-aware pause (resolves early / rejects when `signal` aborts). */
   sleep(ms: number, signal?: AbortSignal): Promise<void>;
   now?: () => number;
@@ -33,6 +41,10 @@ export interface DevdyTranslateRequest extends TranslateInput {
   signal?: AbortSignal;
   /** Stream (SSE) and report each chunk; without it the JSON mode is used. */
   onDelta?: (delta: string) => void;
+}
+
+export interface DevdyGrammarRequest extends GrammarInput {
+  signal?: AbortSignal;
 }
 
 export type DevdyTranslateState =
@@ -83,30 +95,55 @@ export class DevdyTranslator {
    * again and retries once (Devdy may have restarted on another port); 429 is
    * retried up to BUSY_RETRIES times after a short pause.
    */
-  async translate(req: DevdyTranslateRequest): Promise<TranslateResult> {
+  translate(req: DevdyTranslateRequest): Promise<TranslateResult> {
+    const input = { text: req.text, targetLang: req.targetLang };
+    return this.run('translate', supportsTranslate, req.signal, (port, token) =>
+      req.onDelta
+        ? this.deps.translateStream(port, token, input, { signal: req.signal, onDelta: req.onDelta })
+        : this.deps.translateJson(port, token, input, { signal: req.signal }),
+    );
+  }
+
+  /** Grammar check of one text (≤ 8000 chars); same instance choice and retries as `translate`. */
+  checkGrammar(req: DevdyGrammarRequest): Promise<GrammarResult> {
+    const input = { text: req.text, explainLang: req.explainLang };
+    return this.run('grammar', supportsGrammar, req.signal, (port, token) =>
+      this.deps.checkGrammar(port, token, input, { signal: req.signal }),
+    );
+  }
+
+  private async run<T>(
+    task: DevdyTask,
+    supports: (health: DevdyHealth) => boolean,
+    signal: AbortSignal | undefined,
+    call: (port: number, token: string) => Promise<T>,
+  ): Promise<T> {
     const settings = await this.deps.loadSettings();
+    const error = (code: 'cancelled' | 'unsupported' | 'no_token') =>
+      new DevdyTranslateError(code, '', undefined, task);
     let fresh = false;
     let busy = 0;
     for (;;) {
-      if (req.signal?.aborted) throw new DevdyTranslateError('cancelled');
-      const instance = await this.instance(settings, fresh);
-      if (!supportsTranslate(instance.health)) {
+      if (signal?.aborted) throw error('cancelled');
+      let instance: DevdyInstance;
+      try {
+        instance = await this.instance(settings, fresh);
+      } catch (err) {
+        // Same code, worded for this task.
+        if (err instanceof DevdyTranslateError) throw new DevdyTranslateError(err.code, err.detail, err.status, task);
+        throw err;
+      }
+      if (!supports(instance.health)) {
         // Maybe Devdy was updated since it was cached: check once more.
         if (!fresh) {
           fresh = true;
           continue;
         }
-        throw new DevdyTranslateError('unsupported');
+        throw error('unsupported');
       }
-      if (!settings.token) throw new DevdyTranslateError('no_token');
-      const input = { text: req.text, targetLang: req.targetLang };
+      if (!settings.token) throw error('no_token');
       try {
-        return req.onDelta
-          ? await this.deps.translateStream(instance.port, settings.token, input, {
-              signal: req.signal,
-              onDelta: req.onDelta,
-            })
-          : await this.deps.translateJson(instance.port, settings.token, input, { signal: req.signal });
+        return await call(instance.port, settings.token);
       } catch (err) {
         if (!(err instanceof DevdyTranslateError)) throw err;
         if (err.code === 'unreachable' && !fresh) {
@@ -116,7 +153,7 @@ export class DevdyTranslator {
         if (err.code === 'unreachable') this.invalidate();
         if (err.code === 'busy' && busy < BUSY_RETRIES) {
           busy++;
-          await this.deps.sleep(BUSY_RETRY_DELAY_MS, req.signal);
+          await this.deps.sleep(BUSY_RETRY_DELAY_MS, signal);
           continue;
         }
         throw err;

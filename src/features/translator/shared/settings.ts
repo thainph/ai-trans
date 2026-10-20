@@ -45,8 +45,8 @@ export function isProvider(v: unknown): v is Provider {
 
 /** Devdy applies its own translation style: the style setting is ignored. */
 export const providerHasStyle = (provider: Provider): boolean => provider !== 'devdy';
-/** Devdy has no grammar check. */
-export const providerHasGrammar = (provider: Provider): boolean => provider !== 'devdy';
+/** Devdy checks grammar in any language (the LLM providers' prompt is English-only). */
+export const providerGrammarIsEnglishOnly = (provider: Provider): boolean => provider !== 'devdy';
 
 /** Defaults written to storage on install/update (never secrets). */
 export const SEEDED_SETTINGS: Partial<TranslatorSettings> = {

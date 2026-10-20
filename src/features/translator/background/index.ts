@@ -8,6 +8,7 @@ import { buildBatchInput, buildBatchPrompt, parseBatchResponse } from '../core/b
 import { languageName } from '../shared/languages';
 import {
   type BatchTranslation,
+  type GrammarIssue,
   type StreamTranslateEvent,
   type StreamTranslateRequest,
   TRANSLATOR_TARGET,
@@ -18,12 +19,13 @@ import {
   DEFAULT_SETTINGS,
   isProvider,
   type LLMProvider,
+  loadSettings,
   type Provider,
   SEEDED_SETTINGS,
   type TranslationStyle,
   type TranslatorSettings,
 } from '../shared/settings';
-import { DEVDY_NO_GRAMMAR, translateBatchWithDevdy, translateTextWithDevdy } from './devdy';
+import { checkGrammarWithDevdy, translateBatchWithDevdy, translateTextWithDevdy } from './devdy';
 import {
   buildRequestBody,
   buildTranslatePrompt,
@@ -121,9 +123,7 @@ onTargetMessage<TranslatorRequest>(TRANSLATOR_TARGET, (request, sender) => {
       );
     case 'grammar-check':
       return reply<'grammar-check'>(
-        cancellable(sender, request.requestId, (signal) => handleGrammarCheck(request.text, signal)).then(
-          (corrected) => ({ corrected }),
-        ),
+        cancellable(sender, request.requestId, (signal) => handleGrammarCheck(request.text, signal)),
       );
     case 'devdy-status':
       return reply<'devdy-status'>(devdyTranslateStatus().then((status) => ({ status })));
@@ -333,9 +333,15 @@ async function handleTranslateBatch(
   return parseBatchResponse(raw, texts);
 }
 
-async function handleGrammarCheck(text: string, signal?: AbortSignal): Promise<string> {
-  // Never fall back silently to another provider.
-  if ((await activeProvider()) === 'devdy') throw new Error(DEVDY_NO_GRAMMAR);
+async function handleGrammarCheck(
+  text: string,
+  signal?: AbortSignal,
+): Promise<{ corrected: string; issues?: GrammarIssue[] }> {
+  if ((await activeProvider()) === 'devdy') {
+    // Any language, corrected as is; explanations in the user's target language.
+    const { targetLang } = await loadSettings('targetLang');
+    return checkGrammarWithDevdy(text, targetLang, signal);
+  }
   const systemPrompt =
     'You are an English grammar and spelling corrector. Fix grammar, spelling, ' +
     'and punctuation while preserving the original meaning and tone. Return ONLY ' +
@@ -343,7 +349,7 @@ async function handleGrammarCheck(text: string, signal?: AbortSignal): Promise<s
     'If it is already correct, return it unchanged.';
 
   const { text: corrected } = await callLLM(systemPrompt, text, false, signal);
-  return corrected;
+  return { corrected };
 }
 
 const TRUNCATED_NOTICE = '\n\n⚠️ The translation may be incomplete: the AI model stopped at its output limit.';

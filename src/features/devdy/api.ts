@@ -3,8 +3,9 @@
 
 export { outbox } from './background';
 export { openSettings } from './background/open-settings';
-export { devdyTranslate, devdyTranslateStatus } from './background/translate';
+export { devdyCheckGrammar, devdyTranslate, devdyTranslateStatus } from './background/translate';
 export type { SendOutcome } from './core/client';
+export type { GrammarIssue, GrammarResult } from './core/grammar';
 export type { DeliveryResult } from './core/outbox';
 export {
   DEVDY_TRANSLATE_MAX_CHARS,

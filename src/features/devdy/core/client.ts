@@ -1,10 +1,11 @@
-// Client for Devdy's local Inbox API (contract: Devdy docs/inbox-api.md, 2026-10-16).
+// Client for Devdy's local Inbox API (contract: Devdy docs/inbox-api.md, 2026-10-20).
 //
-//   GET  /health            → {"app":"devdy","version":"…","api":1,"features":["translate","slack-thread-link"]}   (no token)
+//   GET  /health            → {"app":"devdy","version":"…","api":1,"features":["translate","grammar","slack-thread-link"]}   (no token)
 //   GET  /v1/projects       → [{"id","name"}]                         (Bearer token)
 //   POST /v1/slack-threads  → JSON {"url"} → 202 {"id","status":"created"|"existing","fetchStatus","errorCode"?}
 //                             (only when features has "slack-thread-link"; Devdy fetches/translates the thread itself)
 //   POST /v1/translate      → see core/translate.ts (only when features has "translate")
+//   POST /v1/grammar        → see core/grammar.ts (only when features has "grammar")
 //
 // Loopback only, on the first free port in 47821…47830. Must be called from an
 // extension context (service worker / offscreen): Devdy only accepts a
@@ -22,12 +23,15 @@ export interface DevdyHealth {
   app: 'devdy';
   version?: string;
   api?: number;
-  /** Optional features ("translate", "slack-thread-link"); missing on older Devdy builds. */
+  /** Optional features ("translate", "grammar", "slack-thread-link"); missing on older Devdy builds. */
   features?: string[];
 }
 
 /** Devdy feature flag of `POST /v1/translate`. */
 export const TRANSLATE_FEATURE = 'translate';
+
+/** Devdy feature flag of `POST /v1/grammar`. */
+export const GRAMMAR_FEATURE = 'grammar';
 
 /** Devdy feature flag of `POST /v1/slack-threads` taking a JSON thread link. */
 export const SLACK_THREAD_LINK_FEATURE = 'slack-thread-link';
@@ -35,6 +39,11 @@ export const SLACK_THREAD_LINK_FEATURE = 'slack-thread-link';
 /** Translation is available only when /health lists the "translate" feature. */
 export function supportsTranslate(health: DevdyHealth | null | undefined): boolean {
   return !!health?.features?.includes(TRANSLATE_FEATURE);
+}
+
+/** Grammar check is available only when /health lists the "grammar" feature. */
+export function supportsGrammar(health: DevdyHealth | null | undefined): boolean {
+  return !!health?.features?.includes(GRAMMAR_FEATURE);
 }
 
 /**

@@ -9,6 +9,7 @@ import { isExtensionAlive } from '../../../shared/runtime';
 import { isLanguageId, LANGUAGES, otherTarget } from '../shared/languages';
 import {
   callTranslator,
+  type GrammarIssue,
   type PageStateResponse,
   type StreamTranslateEvent,
   TRANSLATOR_PAGE_TARGET,
@@ -20,7 +21,7 @@ import {
   isProvider,
   loadSettings,
   type Provider,
-  providerHasGrammar,
+  providerGrammarIsEnglishOnly,
   providerHasStyle,
   saveSettings,
   type TranslationStyle,
@@ -145,14 +146,11 @@ function showTrigger(rect: DOMRect, anchorEl: Element | null): void {
 
   // Grammar check — only in editable fields (correct the text you are writing)
   if (isEditable) {
-    const grammar = providerHasGrammar(currentProvider);
     const gBtn = triggerButton(
       'ai-translator-trigger-grammar',
-      grammar ? 'Check English Grammar' : 'Grammar check is not available with the Devdy provider',
-      grammar ? onGrammarClick : () => undefined,
+      providerGrammarIsEnglishOnly(currentProvider) ? 'Check English Grammar' : 'Check Grammar',
+      onGrammarClick,
     );
-    // aria-disabled (not `disabled`) so the tooltip still shows on hover.
-    if (!grammar) gBtn.setAttribute('aria-disabled', 'true');
     gBtn.textContent = 'G';
     container.appendChild(gBtn);
   }
@@ -165,13 +163,10 @@ function showTrigger(rect: DOMRect, anchorEl: Element | null): void {
     container.appendChild(rBtn);
   }
 
-  const btnCount = container.childElementCount;
-  if (btnCount === 1) container.classList.add('single');
-
   const scrollX = window.scrollX;
   const scrollY = window.scrollY;
   const btnSize = 34;
-  const totalWidth = btnSize * btnCount;
+  const totalWidth = btnSize * container.childElementCount;
   const containerHeight = btnSize;
   const gap = 6;
   const spaceBelow = window.innerHeight - rect.bottom;
@@ -233,9 +228,10 @@ async function createPopup(
 
   const isGrammar = mode === 'grammar';
   const sourceLabel = isLanguageId(sourceLang) ? LANGUAGES[sourceLang].label : '?';
+  // Devdy corrects any language: no "EN" badge.
   const headerInner = isGrammar
     ? `<div class="lang-pair">
-          <span class="lang-badge source">EN</span>
+          ${providerGrammarIsEnglishOnly(saved.provider) ? '<span class="lang-badge source">EN</span>' : ''}
           <span class="grammar-label">Grammar</span>
         </div>`
     : `<div class="lang-pair">
@@ -271,6 +267,7 @@ async function createPopup(
       <div class="result" id="result">
         <div class="loading"><span class="spinner"></span> ${loadingLabel}</div>
       </div>
+      ${isGrammar ? '<ul class="issues" id="issues" hidden></ul>' : ''}
       <div class="footer">
         ${footerInner}
       </div>
@@ -575,14 +572,17 @@ function showResponse<T extends object>(
   request: Promise<Result<T> | undefined>,
   pick: (value: T) => string,
   failure: string,
+  onResult?: (value: T) => void,
 ): void {
   const current = () => activeRequestId === requestId;
   request.then(
     (response) => {
       if (!current()) return;
       activeRequestId = null;
-      if (response?.ok) showResult(pick(response));
-      else showError((response && !response.ok && response.error) || failure);
+      if (response?.ok) {
+        showResult(pick(response));
+        onResult?.(response);
+      } else showError((response && !response.ok && response.error) || failure);
     },
     (err: unknown) => {
       if (!current()) return;
@@ -684,6 +684,7 @@ function checkGrammar(text: string): void {
   if (copyBtn) copyBtn.disabled = true;
   const replaceBtn = shadowRoot.getElementById('replaceBtn') as HTMLButtonElement | null;
   if (replaceBtn) replaceBtn.disabled = true;
+  showGrammarIssues(undefined);
 
   const requestId = newRequestId();
   showResponse(
@@ -691,7 +692,39 @@ function checkGrammar(text: string): void {
     callTranslator({ type: 'grammar-check', text, requestId }),
     (r) => r.corrected,
     'Grammar check failed',
+    (r) => showGrammarIssues(r.issues),
   );
+}
+
+/** List what was fixed (Devdy only). Kept out of #result: Replace / Copy take #result's text. */
+function showGrammarIssues(issues: GrammarIssue[] | undefined): void {
+  const list = shadowRoot?.getElementById('issues');
+  if (!list) return;
+  list.replaceChildren();
+  list.hidden = !issues;
+  if (!issues) return;
+  if (issues.length === 0) {
+    const li = document.createElement('li');
+    li.className = 'issue-none';
+    li.textContent = 'No issues found.';
+    list.appendChild(li);
+    return;
+  }
+  for (const issue of issues) {
+    const li = document.createElement('li');
+    const original = document.createElement('del');
+    original.textContent = issue.original;
+    const suggestion = document.createElement('ins');
+    suggestion.textContent = issue.suggestion;
+    li.append(original, ' → ', suggestion);
+    if (issue.explanation) {
+      const why = document.createElement('div');
+      why.className = 'issue-why';
+      why.textContent = issue.explanation;
+      li.appendChild(why);
+    }
+    list.appendChild(li);
+  }
 }
 
 function onGrammarClick(): void {

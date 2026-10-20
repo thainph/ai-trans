@@ -177,6 +177,47 @@ export const POPUP_CSS = `
     font-size: 13px;
   }
 
+  /* Grammar fixes listed under the corrected text (Devdy) */
+  .issues {
+    flex: 0 1 auto;
+    max-height: 40%;
+    overflow-y: auto;
+    margin: 0;
+    padding: 8px 14px 8px 30px;
+    border-top: 1px solid #e5e7eb;
+    font-size: 12px;
+    line-height: 1.5;
+    color: #374151;
+  }
+
+  .issues[hidden] {
+    display: none;
+  }
+
+  .issues li + li {
+    margin-top: 4px;
+  }
+
+  .issues del {
+    color: #b91c1c;
+  }
+
+  .issues ins {
+    color: #15803d;
+    text-decoration: none;
+    font-weight: 600;
+  }
+
+  .issue-why {
+    color: #6b7280;
+  }
+
+  .issues .issue-none {
+    list-style: none;
+    margin-left: -16px;
+    color: #6b7280;
+  }
+
   .action-btn {
     margin-top: 8px;
     padding: 4px 10px;
@@ -318,10 +359,6 @@ export const TRIGGER_CSS = `
     }
   }
 
-  .ai-translator-trigger-container.single {
-    border-radius: 50%;
-  }
-
   .ai-translator-trigger {
     width: 34px;
     height: 34px;
@@ -368,14 +405,6 @@ export const TRIGGER_CSS = `
   .ai-translator-trigger-grammar:hover {
     background: rgba(34, 197, 94, 0.35);
     color: #86efac;
-  }
-
-  /* Not available with the current provider (tooltip says why) */
-  .ai-translator-trigger[aria-disabled="true"],
-  .ai-translator-trigger[aria-disabled="true"]:hover {
-    background: transparent;
-    color: #64748b;
-    cursor: not-allowed;
   }
 
   /* Divider between buttons */

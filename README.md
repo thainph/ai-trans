@@ -55,7 +55,7 @@ model, a **Translation Style** (Casual / Polite / Business) and a **Target Langu
 | Button | Shown when | What it does |
 |---|---|---|
 | **T** | always | Translate the selection into the target language. The result popup lets you switch the target language and the style, and **Copy** the result. |
-| **G** | the selection is inside an input field (input, textarea, rich editor) | Check the English grammar; **Replace** writes the corrected text back where you are typing. |
+| **G** | the selection is inside an input field (input, textarea, rich editor) | Check the grammar (English with OpenAI / Gemini / Ollama, any language with Devdy); **Replace** writes the corrected text back where you are typing. |
 | **R** | the selection is inside an input field, after at least one translation | Reverse-translate into the language of the text you translated last. E.g. read a Japanese message → translate it to Vietnamese → type your reply in Vietnamese → **R** translates the reply into Japanese. |
 
 The result popup can be resized from any edge; its size is remembered. Closing it cancels the request in flight.
@@ -87,8 +87,9 @@ With Devdy:
 
 - The selection translation appears **progressively** in the result popup. Selections over 8 000 characters are split
   at paragraph/sentence boundaries and translated one part after another.
-- **G (grammar check) is not available** — the button is greyed out (its tooltip says why); AI Trans never switches to
-  another provider behind your back.
+- **G (grammar check)** corrects the text in its own language (needs a Devdy build with the **grammar** feature). The
+  popup shows the corrected text plus each fix (original → suggestion) with a short explanation in your target
+  language; **Replace** writes the corrected text back. Selections over 8 000 characters are checked part by part.
 - **Page translation** packs many page texts into each request (Devdy translates one request at a time, shared with the
   Devdy app), so it is slower than with an API provider; texts that come back unusable are retried, then left as they
   are.

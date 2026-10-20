@@ -11,6 +11,7 @@ import {
   postSlackThread,
   resolveDevdy,
   resolveFromInstances,
+  supportsGrammar,
   supportsSlackThreadLink,
   supportsTranslate,
 } from '../core/client';
@@ -102,7 +103,7 @@ async function status(deliver = false): Promise<DevdyStatus> {
     notice: state.notice,
     instances,
     pinned: !!settings.pinned,
-    features: { translate: false, slackThreadLink: false },
+    features: { translate: false, grammar: false, slackThreadLink: false },
   };
 
   if (resolved.kind === 'none') {
@@ -118,7 +119,11 @@ async function status(deliver = false): Promise<DevdyStatus> {
     connected: true,
     port,
     version: health.version,
-    features: { translate: supportsTranslate(health), slackThreadLink: supportsSlackThreadLink(health) },
+    features: {
+      translate: supportsTranslate(health),
+      grammar: supportsGrammar(health),
+      slackThreadLink: supportsSlackThreadLink(health),
+    },
   };
   if (!settings.token) return connected;
   const res = await listProjects(port, settings.token);
